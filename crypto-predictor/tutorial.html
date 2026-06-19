@@ -1,0 +1,333 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8">
+<title>Crypto Predictor — Tutorial</title>
+<style>
+@page { size: A4; margin: 18mm 16mm; }
+html { font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+       font-size: 10.5pt; color: #1a1a1a; line-height: 1.45; }
+body { max-width: 180mm; margin: 0 auto; }
+h1 { font-size: 20pt; margin: 0 0 .2em 0; border-bottom: 2px solid #222; padding-bottom: .2em; }
+h2 { font-size: 14pt; margin-top: 1.4em; color: #0a3d62; border-bottom: 1px solid #dcdcdc; padding-bottom: .15em; }
+h3 { font-size: 11.5pt; margin-top: 1em; color: #2c5777; }
+h4 { font-size: 10.5pt; margin-top: .8em; color: #444; }
+p  { margin: .4em 0; }
+ul, ol { margin: .3em 0 .6em 1.2em; }
+li { margin: .15em 0; }
+code { font-family: "JetBrains Mono", Menlo, Consolas, monospace; font-size: 9pt;
+       background: #f3f3f3; padding: 1px 4px; border-radius: 3px; }
+pre  { background: #f7f7f7; border: 1px solid #e1e1e1; padding: 8px 10px;
+       border-radius: 4px; overflow-x: auto; font-size: 8.5pt; line-height: 1.3;
+       white-space: pre; page-break-inside: avoid; }
+pre code { background: transparent; padding: 0; }
+table { border-collapse: collapse; width: 100%; margin: .6em 0; font-size: 9.5pt; }
+th, td { border: 1px solid #d5d5d5; padding: 4px 8px; text-align: left; vertical-align: top; }
+th { background: #f0f4f8; }
+hr { border: none; border-top: 1px solid #bbb; margin: 1.2em 0; }
+strong { color: #111; }
+blockquote { border-left: 3px solid #f9a825; margin: .6em 0; padding: .2em .8em;
+             color: #555; background: #fffdf4; }
+h2, h3, h4 { page-break-after: avoid; }
+</style></head><body>
+<h1>Crypto Predictor — Tutorial</h1>
+<p>App educativa que predice el precio de criptomonedas al cierre de cada hora UTC
+y compara contra Kalshi (mercado real). <strong>Sin dinero real</strong>, sin apuestas — sólo
+señales y aprendizaje sobre incertidumbre cuantificada.</p>
+<p>Símbolos soportados: <strong>BTC, ETH, XRP, DOGE, SOL</strong>. Sólo BTC tiene mercado Kalshi
+(serie KXBTCD, horaria); el resto se predice &quot;ciego&quot; contra el modelo.</p>
+<p>URL local: <code>http://100.122.62.70:8001</code> (Tailscale)</p>
+<hr />
+<h2>1 · Modelo en una línea</h2>
+<blockquote>
+<p>El precio en <code>T+h</code> minutos se modela como <strong>log-Student-t df=4</strong> con
+deriva cero. La volatilidad por minuto (σ_1m) se estima con <strong>EWMA λ=0.97</strong>
+sobre los últimos candles de 1 minuto. La σ del horizonte completo se escala
+con √h.</p>
+</blockquote>
+<p><strong>¿Qué implica &quot;deriva cero&quot;?</strong>
+La mediana del modelo es siempre el precio actual. El modelo no predice
+dirección — solo dispersión. Si tiene que apostar a si BTC sube o baja en una
+hora, la respuesta neutra es 50/50. La señal direccional, si la quieres,
+viene del <strong>momentum</strong> (sección 4.3), no del modelo base.</p>
+<p><strong>¿Por qué Student-t df=4 y no Normal?</strong>
+Los precios de cripto tienen colas más gordas que la normal. Con t-df=4 el
+modelo asigna más probabilidad a eventos extremos (movimientos de ±2σ o más),
+lo cual mejora el Brier y baja la frecuencia de &quot;sorpresas&quot; (ver <code>/calibration</code>,
+sección 5.3).</p>
+<hr />
+<h2>2 · Página principal <code>/?symbol=BTCUSDT</code></h2>
+<p>Cada símbolo tiene la misma estructura. Refresh manual cada ~30 s; la consulta
+de threshold (sección 2.2) se actualiza vía JS cada <strong>1 s</strong>.</p>
+<h3>2.1 Cabecera</h3>
+<pre><code>BTCUSDT · cierre 14:00 UTC
+[ BTC ] [ ETH ] [ XRP ] [ DOGE ] [ SOL ]
+Modelo: log-Student-t df=4 con drift cero. σ_1m via EWMA λ=0.97 sobre N candles 1m.
+Refresh 30s. Última obs UTC YYYY-MM-DD HH:MM. Horizonte hasta cierre: XX.X min.
+</code></pre>
+<ul>
+<li><strong>target HH:00 UTC</strong>: la próxima hora en punto. Cuando se cruza, el modelo
+re-apunta automáticamente a la siguiente.</li>
+<li><strong>horizonte</strong>: minutos restantes hasta el cierre. Importante para entender
+por qué σ se hace más pequeña a medida que se acerca XX:00.</li>
+</ul>
+<h3>2.2 Consulta — hasta 3 thresholds</h3>
+<p>Caja con tres inputs (<code>t1</code>, <code>t2</code>, <code>t3</code>). Puedes escribir precios absolutos
+(<code>81500</code>) o relativos (<code>+0.5%</code>, <code>-100</code>). Para cada threshold se muestra:</p>
+<table>
+<thead>
+<tr>
+<th>panel</th>
+<th>qué significa</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>YES (&gt;)</strong></td>
+<td>Nuestra P(precio al cierre &gt; threshold)</td>
+</tr>
+<tr>
+<td><strong>NO (≤)</strong></td>
+<td>1 − YES</td>
+</tr>
+<tr>
+<td><strong>KALSHI</strong></td>
+<td>P implícita por el precio del mercado Kalshi (solo BTC). Interpola entre strikes</td>
+</tr>
+<tr>
+<td><strong>edge</strong></td>
+<td>YES − Kalshi, en pp. Positivo = nosotros vemos más probable que el mercado</td>
+</tr>
+</tbody>
+</table>
+<p>Fila meta: precio actual, <strong>Δ%</strong> (cuánto está el threshold del spot), <strong>z</strong>
+(cuántas σ de distancia), <strong>σ_h</strong> (sigma del horizonte completo).</p>
+<blockquote>
+<p>Regla de lectura rápida: <code>|z|&lt;1</code> cerca del precio → ~50/50; <code>|z|≈1</code> → ~30/70;
+<code>|z|≈2</code> → ~15/85; <code>|z|&gt;3</code> → cola, &lt;5%.</p>
+</blockquote>
+<h3>2.3 Precio actual</h3>
+<p>Hero numérico con <strong>σ del horizonte</strong> y <strong>σ por minuto</strong>. Útil para ver si la
+vol está alta o baja en términos absolutos (BTC suele rondar 0.3–0.7 %/h).</p>
+<h3>2.4 Proyección 15 / 30 / 60 min con fan chart</h3>
+<p>Tarjeta añadida 2026-05-12. Muestra:</p>
+<ul>
+<li><strong>SVG fan</strong>: dos bandas concéntricas (p10–p90 ancha, p25–p75 estrecha)
+alrededor del precio actual. La línea amarilla discontinua dentro es la
+mediana (= precio actual). La línea sólida es la trayectoria si el
+<strong>momentum reciente</strong> se mantuviera constante.</li>
+<li><strong>Tabla</strong>: por horizonte (+15, +30, +60 min) muestra el rango p25–p75,
+el rango p10–p90, el momentum proyectado, y una <strong>señal</strong>:</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>señal</th>
+<th>interpretación</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>dentro p25-p75</td>
+<td>momentum compatible con vol normal; sin sesgo direccional</td>
+</tr>
+<tr>
+<td>sobre p75 / bajo p25</td>
+<td>tendencia algo fuerte; alerta amarilla</td>
+</tr>
+<tr>
+<td>rompe p90 / rompe p10</td>
+<td>la tendencia reciente excede lo que la vol normal explicaría; sesgo direccional fuerte (alerta roja)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Importante</strong>: la mediana del modelo NO se mueve con el momentum.
+El momentum es información complementaria — si la tendencia es fuerte y
+persistente, la mediana del modelo está probablemente sesgada hacia abajo
+(o arriba). Usa esta señal para decidir si vale la pena fiarse del modelo
+o esperar a que la EWMA absorba el cambio.</p>
+<h3>2.5 Velas 1 m</h3>
+<p>Gráfica de los últimos 60 minutos. Verde = cierre ≥ apertura; rojo = cierre &lt;
+apertura.</p>
+<h3>2.6 Bandas predichas al cierre</h3>
+<p>Histograma horizontal con marcas en p05, p25, p50, p75, p95. La línea amarilla
+es el precio actual. Si sale del rango p05–p95, sería un evento ≲5 % por cola.</p>
+<h3>2.7 Cuantiles al cierre</h3>
+<p>Cinco números: p05 / p25 / p50 / p75 / p95. Tu intervalo de confianza 90 % es
+p05 → p95. Tu intervalo más probable (50 %) es p25 → p75.</p>
+<hr />
+<h2>3 · <code>/hourly-call</code> — point-call horario</h2>
+<p>A cada hora en punto el sistema publica un <strong>número decimal</strong> tal que BTC tiene
+~70 % de probabilidad de <strong>NO sobrepasarlo</strong> al cierre de la próxima hora.
+(<code>p70</code>: cuantil 70 % de la distribución predicha.)</p>
+<h3>3.1 Card principal</h3>
+<ul>
+<li><strong>Hero</strong>: el valor de la call (<code>call_value</code>).</li>
+<li><strong>Precio al hacer la call</strong>, <strong>σ del horizonte</strong> y <strong>spread implícito</strong>
+(cuánto está la call por encima del precio actual, en %).</li>
+</ul>
+<h3>3.2 Métricas</h3>
+<ul>
+<li><strong>Racha</strong>: número de horas consecutivas en que el precio real ≤ call.</li>
+<li><strong>Tasa empírica</strong>: hits / settled. <strong>Objetivo: 70 %</strong>. Si la tasa cae a
+~60 % o menos = el modelo subestima la cola alta (revisar λ o df).</li>
+</ul>
+<h3>3.3 Edge vs Kalshi</h3>
+<p>Para el strike de Kalshi más cercano a la call:</p>
+<table>
+<thead>
+<tr>
+<th>columna</th>
+<th>qué es</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Kalshi NO</strong></td>
+<td>Probabilidad implícita por Kalshi de que BTC ≤ strike al cierre</td>
+</tr>
+<tr>
+<td><strong>nuestra NO</strong></td>
+<td>Probabilidad que da nuestro modelo (debe rondar 70 % por construcción)</td>
+</tr>
+<tr>
+<td><strong>edge</strong></td>
+<td>nuestra − Kalshi, en pp. <strong>Positivo = el modelo cree que NO es más probable de lo que el mercado precia.</strong></td>
+</tr>
+</tbody>
+</table>
+<p>Si Kalshi tiene un quote interpolado en el strike exacto de nuestra call,
+también lo muestra.</p>
+<h3>3.4 Historial</h3>
+<p>Tabla con las últimas 30 calls — cierre, precio al momento, call hecha,
+precio real al cierre, Δ$, edge, y resultado (✓ win / ✗ loss / pend).</p>
+<hr />
+<h2>4 · <code>/calibration</code> — ¿está bien calibrado el modelo?</h2>
+<p>Toda la página vive de <strong>predicciones settleadas</strong> (después de que pase su
+cierre y comparemos contra Binance). Las métricas tardan ~24 h en estabilizarse
+para un símbolo nuevo.</p>
+<h3>4.1 Brier global</h3>
+<p>Promedio de <code>(P − outcome)²</code> para todos los pares (predicción, resultado).</p>
+<ul>
+<li><strong>0</strong> = predicciones perfectas</li>
+<li><strong>0.25</strong> = random coin flip</li>
+<li>Buen modelo cripto: típicamente <strong>0.15–0.20</strong>.</li>
+</ul>
+<h3>4.2 Últimas N horas cerradas</h3>
+<p>Para cada cierre: predicción más temprana de esa hora (lead alto), precio real,
+Δ%, σ%, <strong>|z|</strong>, P(≥real).</p>
+<ul>
+<li><strong>|z|</strong>: cuántas σ se movió el precio respecto a la predicción.
+Si el modelo está calibrado, <strong>media de |z| ≈ 0.8</strong> (E|Z| para una t).</li>
+<li><strong>P(≥real)</strong>: si el modelo es correcto, este valor está <strong>uniformemente
+distribuido</strong> entre 0 y 100 % a lo largo de muchas horas (test PIT).</li>
+<li>Colores: |z|&gt;2 rojo (sorpresa), |z|&lt;1 verde (predicción razonable).</li>
+</ul>
+<h3>4.3 Vs Kalshi (solo BTC)</h3>
+<p>Compara Brier por threshold del modelo vs Kalshi, y cuenta cuántas veces
+&quot;gana&quot; cada uno cuando las probabilidades divergen &gt;X pp. <strong>El modelo no
+necesita ganar a Kalshi para ser útil</strong> — usalo para detectar cuándo nuestra
+predicción es marcadamente diferente del consenso.</p>
+<h3>4.4 Colas</h3>
+<p>Tabla <code>|z| &gt; k</code> observada vs esperada bajo t-df=4. Si el ratio observed/expected</p>
+<blockquote>
+<p>1.5× en varios niveles, <strong>σ está subestimada</strong> (subir λ o bajar df).</p>
+</blockquote>
+<h3>4.5 Top shocks</h3>
+<p>Las N predicciones con mayor |z|. Útil para hacer post-mortem de eventos
+raros (caída/subida fuerte, news…).</p>
+<h3>4.6 Reliability por bucket</h3>
+<p>Bucketiza P predicha en intervalos (0–10 %, 10–20 %, …, 90–100 %) y
+compara la P media de cada bucket contra la frecuencia real de ocurrencia.</p>
+<ul>
+<li>Bucket bien calibrado: |P̄ − frec| &lt; 0.05.</li>
+<li>Gap rojo: en ese rango el modelo está sesgado.</li>
+</ul>
+<hr />
+<h2>5 · <code>/history?symbol=BTCUSDT&amp;target=&lt;unix&gt;</code> — zoom de una hora</h2>
+<p>Llegas aquí pinchando el cierre en <code>/calibration</code>. Muestra:</p>
+<ul>
+<li>Precio real al cierre (o &quot;aún no settleado&quot;).</li>
+<li>Todas las predicciones registradas para esa hora — cuándo se hicieron
+(<code>made UTC</code>), cuánto faltaba al cierre (<code>lead</code>), el precio en ese momento,
+σ%, Δ% vs real, y P(≥real).</li>
+</ul>
+<p>Útil para ver cómo evolucionó la predicción a lo largo de la hora: si σ creció
+rápido cerca del cierre = EWMA captó vol elevada.</p>
+<hr />
+<h2>6 · APIs JSON (uso programático)</h2>
+<p>Endpoints sin auth, mismo origen:</p>
+<pre><code>GET /api/query?symbol=BTCUSDT&amp;t1=81500&amp;t2=82000
+  → JSON con now_price, σ%, target_at, queries[].p_above, .kalshi_p, .edge_pct
+
+GET /candles?symbol=BTCUSDT&amp;limit=60
+  → JSON con velas 1m: time, open, high, low, close
+</code></pre>
+<hr />
+<h2>7 · Cómo tomar decisiones</h2>
+<p><strong>No es una recomendación financiera.</strong> Pero como ayuda mental:</p>
+<ol>
+<li><strong>Antes de mirar el modelo, fíjate en σ_h.</strong> Si es alta (&gt;0.7 %/h) la
+incertidumbre es grande y casi nada está &quot;seguro&quot;.</li>
+<li><strong>Mira el momentum</strong>. Si el rango proyectado +60 min está dentro de p25-p75,
+no hay señal direccional fuerte. Si rompe p90/p10, hay tendencia
+significativa que el modelo aún no incorporó.</li>
+<li><strong>Compara con Kalshi cuando exista quote.</strong> Edge ≥5 pp y consistente entre
+thresholds vecinos = el mercado y nosotros estamos contando una historia
+distinta. Investiga (¿news, halving, regulatorio?) antes de confiar ciegamente.</li>
+<li><strong>Revisa <code>/calibration</code> periódicamente.</strong> Si Brier global sube, o las colas
+están desinfladas, el modelo necesita ajuste antes de usarlo en serio.</li>
+<li><strong>No &quot;perseguir&quot; un horizonte de 1 h</strong>. Si quieres tomar una decisión
+discreta (hold/wait/etc.), el horizonte natural del modelo es <strong>hasta
+XX:00</strong>. Forzar predicciones a 5 min con un modelo calibrado a 60 min
+degrada la calidad.</li>
+</ol>
+<hr />
+<h2>8 · Limitaciones honestas</h2>
+<ul>
+<li><strong>No incluye fees, slippage, ni microestructura.</strong> Las P son sobre el
+precio mark de Binance al cierre, no sobre lo que ejecutarías.</li>
+<li><strong>Sin información fundamental.</strong> El modelo es 100 % estadístico — no sabe
+de noticias, halving, ETF flows, ni twitter sentiment.</li>
+<li><strong>EWMA se adapta con lag.</strong> Tras un cambio de régimen (vol shock), σ_1m
+tarda 30–60 min en re-calibrarse. Durante ese rato las colas estarán
+subestimadas.</li>
+<li><strong>Kalshi puede tener spreads anchos.</strong> Cuando Kalshi tiene poco volumen, su
+&quot;P implícita&quot; es ruidosa. Ignora el edge cuando la mid-quote es &lt;1 ¢ o &gt;99 ¢.</li>
+</ul>
+<hr />
+<h2>9 · Cheatsheet final</h2>
+<table>
+<thead>
+<tr>
+<th>quieres saber…</th>
+<th>mira…</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>¿Probabilidad de BTC&gt;X a HH:00?</td>
+<td><code>/?symbol=BTCUSDT&amp;t1=X</code></td>
+</tr>
+<tr>
+<td>¿Probabilidad a corto (15–60 min)?</td>
+<td>tarjeta de proyección en <code>/</code></td>
+</tr>
+<tr>
+<td>¿Hay tendencia direccional fuerte?</td>
+<td>columna <strong>señal</strong> en tabla proyección</td>
+</tr>
+<tr>
+<td>¿Cuánto error suelo tener?</td>
+<td><code>/calibration</code> → media</td>
+</tr>
+<tr>
+<td>¿Mi point-call de hoy?</td>
+<td><code>/hourly-call</code></td>
+</tr>
+<tr>
+<td>¿Qué pasó en una hora concreta?</td>
+<td><code>/history?symbol=BTCUSDT&amp;target=…</code></td>
+</tr>
+</tbody>
+</table>
+
+</body></html>

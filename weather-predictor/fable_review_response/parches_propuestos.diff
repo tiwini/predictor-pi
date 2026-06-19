@@ -1,0 +1,238 @@
+--- weather-predictor/external_models.py	2026-06-04 00:43:30.000000000 +0000
++++ wp-patched/external_models.py	2026-06-11 12:43:01.703915796 +0000
+@@ -203,3 +203,36 @@
+ 
+     _cache_set(key, result)
+     return result
++
++
++# ── Anchor en el POSTERIOR (no solo por-bin) ──
++# Desplaza el ensemble entero hacia la mediana externa cuando discrepamos
++# fuerte. ext_diff convención: pred_med - ext_med (negativo = vamos fríos).
++POSTERIOR_SHIFT_THRESHOLD_F = 1.5  # |ext_diff| mínimo para empezar a mover
++POSTERIOR_SHIFT_SLOPE = 0.25       # peso por °F de exceso sobre el umbral
++POSTERIOR_SHIFT_CAP = 0.50         # nunca movemos más de la mitad del gap
++POSTERIOR_HEAT_BONUS = 0.15        # extra si clim p>=85 y vamos fríos (feedback_heatwave_externals_win)
++POSTERIOR_MAX_SPREAD_F = 5.4       # si los externos no se ponen de acuerdo, no anclamos
++
++
++def posterior_shift_weight(ext_diff, ext_spread, clim_percentile):
++    """Peso lambda en [0, CAP] para shift = lambda * (ext_med - pred_med).
++
++    Rampa continua (sin acantilado en el umbral), con umbral mas bajo en
++    regimen caliente-subestimado (feedback_heatwave_externals_win), y
++    guardia de spread: si los 6 modelos externos discrepan >3 grados C entre
++    si, su mediana no es ancla fiable.
++    """
++    if ext_diff is None:
++        return 0.0
++    if ext_spread is not None and ext_spread > POSTERIOR_MAX_SPREAD_F:
++        return 0.0
++    heat_under = (clim_percentile is not None and clim_percentile >= 85
++                  and ext_diff < 0)
++    thr = 1.0 if heat_under else POSTERIOR_SHIFT_THRESHOLD_F
++    if abs(ext_diff) < thr:
++        return 0.0
++    w = (abs(ext_diff) - thr) * POSTERIOR_SHIFT_SLOPE
++    if heat_under:
++        w += POSTERIOR_HEAT_BONUS
++    return min(POSTERIOR_SHIFT_CAP, max(0.0, w))
+--- weather-predictor/predictor.py	2026-06-04 00:34:59.000000000 +0000
++++ wp-patched/predictor.py	2026-06-11 12:41:55.994807148 +0000
+@@ -691,6 +691,41 @@
+             daily_maxes = [v - bias_correction_f for v in daily_maxes]
+     except Exception:
+         bias_info = None
++
++    # ─── Anclaje externo en el posterior (post-bias) ───
++    # Mueve daily_maxes hacia la mediana de los 6 modelos externos cuando
++    # |pred - ext_med| >= 1.5°F. Esto corrige TODO lo derivado del posterior
++    # (pred mostrada, bin modal, climatología, our_p_for_bin) en el mismo día,
++    # sin el lag de 1+ días del bias tracker. El blend por-bin de
++    # external_models.blend_with_external sigue activo pero se auto-atenúa:
++    # _anchor_context recalcula ext_diff sobre la distribución ya desplazada.
++    ext_shift_f = 0.0
++    ext_shift_info = None
++    try:
++        import external_models as _ext
++        mm = _ext.fetch_multi_model_max(station)
++        if mm is not None and mm.median is not None and daily_maxes:
++            _sm = sorted(daily_maxes)
++            _pred_med = _sm[len(_sm) // 2]
++            _ext_diff = _pred_med - mm.median
++            _clim_pct = None
++            if _climate_percentile is not None:
++                try:
++                    _cs = _climate_percentile(station, today, _pred_med)
++                    _clim_pct = _cs.percentile if _cs is not None else None
++                except Exception:
++                    _clim_pct = None
++            _lam = _ext.posterior_shift_weight(_ext_diff, mm.spread, _clim_pct)
++            if _lam > 0.0:
++                ext_shift_f = _lam * (mm.median - _pred_med)
++                daily_maxes = [v + ext_shift_f for v in daily_maxes]
++            ext_shift_info = {
++                "ext_med": mm.median, "ext_spread": mm.spread,
++                "ext_diff_pre": _ext_diff, "clim_pct": _clim_pct,
++                "lambda": _lam, "shift_f": ext_shift_f,
++            }
++    except Exception:
++        ext_shift_info = None
+     if prob_rising >= 0.50:
+         peak_status = "📈 subiendo"
+     elif prob_rising >= 0.10:
+--- weather-predictor/bias_tracker.py	2026-06-07 15:38:07.000000000 +0000
++++ wp-patched/bias_tracker.py	2026-06-11 12:43:01.707613012 +0000
+@@ -31,6 +31,9 @@
+ # subestima persistentemente.
+ REGIME_K = 4
+ REGIME_MIN_ABS = 1.5
++REGIME_SHRINK = 0.5      # encogemos la media del bloque: autocorr lag-1 del
++                         # error diario es ~0 o negativa, corregir 1:1 sobreajusta
++REGIME_CAP_F = 2.5       # nunca corregimos mas de esto por bias historico
+ 
+ # Conditional bias by climatology percentile. KLGA is bimodal: cold on warm
+ # days and warm on cold days. Splitting samples by climatology percentile
+@@ -122,15 +125,17 @@
+ 
+ 
+ def _extreme_bias(rows: list) -> float:
+-    """Worst-case bias: error con mayor |magnitud| del bloque (preserva signo).
++    """Bias de regimen: media del bloque, encogida y con tope.
+ 
+-    Lo usamos sólo en regime_break — donde los errores son del mismo signo, la
+-    media EWMA suaviza los días extremos. En heatwaves activas el "peor caso"
+-    refleja mejor el shift que la media."""
++    Antes usabamos el peor caso (max |err|), pero la simulacion sobre los
++    ultimos 30 dias muestra que sobrecorrige: la autocorrelacion lag-1 del
++    error diario es negativa (-0.25 pooled), asi que el error de ayer NO se
++    repite entero hoy. Media * SHRINK con tope es estrictamente mejor."""
+     if not rows:
+         return 0.0
+     errs = [pred - actual for _, actual, pred in rows]
+-    return max(errs, key=abs)
++    b = REGIME_SHRINK * (sum(errs) / len(errs))
++    return max(-REGIME_CAP_F, min(REGIME_CAP_F, b))
+ 
+ 
+ def _detect_regime_break(rows: list) -> bool:
+--- weather-predictor/bets.py	2026-06-04 00:54:25.000000000 +0000
++++ wp-patched/bets.py	2026-06-11 12:43:01.715367696 +0000
+@@ -21,6 +21,7 @@
+ MAX_MODELS_SPREAD_F = 5.4  # 3°C; si modelos externos discrepan más, skip auto-bet
+ STREAK_LOOKBACK_DAYS = 30
+ STREAK_BLOCK_AT = 3  # ≥N pérdidas seguidas mismo (estación,dirección) → bloqueo
++EXT_GATE_F = 1.5  # |pred - ext_med| sobre esto bloquea bets contra-externos
+ 
+ 
+ @dataclass
+@@ -97,7 +98,8 @@
+     return "mid"
+ 
+ 
+-def _streak_blocks(station_id: str, direction: str) -> int:
++def _streak_blocks(station_id: str, direction: str,
++                   our_pred_f: float | None = None) -> int:
+     """Devuelve n_losses de la racha actual si ≥STREAK_BLOCK_AT, sino 0."""
+     if direction == "mid":
+         return 0
+@@ -114,7 +116,7 @@
+         c.close()
+     streak = 0
+     for side, lo, hi, won in rows:
+-        if _direction(side, lo, hi) != direction:
++        if _direction(side, lo, hi, our_pred_f) != direction:
+             continue
+         if won == 0:
+             streak += 1
+@@ -154,7 +156,8 @@
+               our_p: float, kalshi_p: float,
+               edge_thr: float = EDGE_THR, stake: float = STAKE,
+               models_spread_f: float | None = None,
+-              our_pred_f: float | None = None) -> bool:
++              our_pred_f: float | None = None,
++              ext_diff_f: float | None = None) -> bool:
+     """Register a new hypothetical bet if |edge| is big enough and no bet yet
+     exists for (station, date, ticker). Returns True if a bet was created.
+ 
+@@ -180,7 +183,15 @@
+         return False
+     # Streak-block: salta si esta (estación, dirección) tiene racha de pérdidas.
+     direction = _direction(side, bin_lo, bin_hi, our_pred_f)
+-    if _streak_blocks(station_id, direction):
++    # Gate direccional vs externos (espejo de lectura.bias_blocks_bet, que
++    # antes solo existia en el CLI manual): no apostar frio si los externos
++    # corren >= EXT_GATE_F por encima de nuestra pred, ni caliente al reves.
++    if ext_diff_f is not None and direction != "mid":
++        if direction == "cold" and ext_diff_f <= -EXT_GATE_F:
++            return False
++        if direction == "hot" and ext_diff_f >= EXT_GATE_F:
++            return False
++    if _streak_blocks(station_id, direction, our_pred_f):
+         _cleanup_blocked(station_id, target_date, direction=direction)
+         return False
+     # Overnight skip flag (divergencia con ensemble detectada anoche).
+--- lectura.py	2026-06-11 01:49:41.737286501 +0000
++++ wp-patched/lectura_patched.py	2026-06-11 12:43:01.710564667 +0000
+@@ -145,7 +145,8 @@
+ EDGE_MIN_DEFAULT = 10.0
+ 
+ 
+-def classify_bet_direction(edge_label: str | None, edge_side: str | None) -> str:
++def classify_bet_direction(edge_label: str | None, edge_side: str | None,
++                           pred: float | None = None) -> str:
+     """'cold' = bet apuesta a temp BAJA · 'hot' = apuesta a temp ALTA · 'mid' = bin medio.
+ 
+     Resolución: YES sobre tail bajo (or below) = cold, NO sobre tail bajo = hot, etc.
+@@ -160,6 +161,17 @@
+         return "cold" if is_yes else "hot"
+     if "or above" in el or el.endswith("above"):
+         return "hot" if is_yes else "cold"
++    # Bin medio: si conocemos la pred, clasificamos por posicion del bin
++    # (espejo de bets._direction con our_pred_f). Un NO sobre un bin entero
++    # por ENCIMA de la pred es apuesta fria -> debe pasar por bias/ext block.
++    if pred is not None:
++        nums = re.findall(r"\d+(?:\.\d+)?", el)
++        if len(nums) >= 2:
++            lo, hi = float(nums[0]), float(nums[1])
++            if lo > pred:
++                return "hot" if is_yes else "cold"
++            if hi < pred:
++                return "cold" if is_yes else "hot"
+     return "mid"
+ 
+ 
+@@ -371,7 +383,8 @@
+     for sid, s, score, notes in results:
+         edge = abs(s["edge_pp"]) if s.get("edge_pp") is not None else 0
+         min_edge = EDGE_MIN_BY_STATION.get(sid, EDGE_MIN_DEFAULT)
+-        direction = classify_bet_direction(s.get("edge_label"), s.get("edge_side"))
++        direction = classify_bet_direction(s.get("edge_label"), s.get("edge_side"),
++                                           pred=s.get("pred"))
+ 
+         # bloqueos duros antes de evaluar edge/score
+         bias_block, bias_reason = bias_blocks_bet(s, direction)
+--- weather-predictor/predictor_web.py	2026-06-04 00:45:48.000000000 +0000
++++ wp-patched/predictor_web.py	2026-06-11 12:43:21.946222169 +0000
+@@ -3523,11 +3523,21 @@
+     anchor_ctx = _anchor_context(station, snap.ensemble_daily_maxes)
+     sm = sorted(snap.ensemble_daily_maxes) if snap.ensemble_daily_maxes else []
+     pred_med = sm[len(sm) // 2] if sm else None
++    # Isotonica ANTES del blend — el comparison view ya la aplicaba pero el
++    # camino de auto-bets usaba our_p crudo de kalshi.record (sin calibrar).
++    # Es decir: las bets se disparaban con las probabilidades mas
++    # sobreconfiadas del sistema. Mismo orden que comparison_view.
++    import isotonic as _iso
++    _cal = _iso.get(station.id)
++    _cal_active = (_cal is not None and _cal.n_fit >= _iso.MIN_N
++                   and _cal.n_days >= _iso.MIN_DAYS)
++    _cal_for_apply = _cal if _cal_active else None
+     for r in rows:
+         op_ = r.get("our_p")
+         ym = r.get("yes_mid")
+         if op_ is None or ym is None:
+             continue
++        op_ = _iso.apply(_cal_for_apply, op_)
+         if anchor_ctx is not None and _external_models is not None:
+             op_, _ = _external_models.blend_with_external(
+                 op_, anchor_ctx["ext_med"], anchor_ctx["ext_spread"],

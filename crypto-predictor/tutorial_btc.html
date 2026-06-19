@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8">
+<title>BTC Predictor — Guía rápida</title>
+<style>
+body{max-width:820px;margin:2rem auto;padding:0 1.5rem;
+     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+     color:#1f2328;line-height:1.55;background:#fff}
+h1,h2,h3{color:#0c4a6e;margin-top:2rem}
+h1{border-bottom:2px solid #0c4a6e;padding-bottom:.3rem}
+h2{border-bottom:1px solid #d0d7de;padding-bottom:.2rem}
+code{background:#f6f8fa;padding:1px 5px;border-radius:3px;font-size:.9em;
+     font-family:Menlo,Consolas,monospace}
+pre code{display:block;padding:.7rem;overflow-x:auto}
+table{border-collapse:collapse;margin:1rem 0;width:100%}
+th,td{border:1px solid #d0d7de;padding:.45rem .7rem;text-align:left}
+th{background:#f6f8fa}
+img{max-width:100%;border:1px solid #d0d7de;border-radius:6px;
+    margin:.6rem 0;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+blockquote{border-left:4px solid #0969da;padding:.4rem 1rem;color:#57606a;
+           background:#f6f8fa;margin:1rem 0}
+a{color:#0969da}
+hr{border:0;border-top:1px solid #d0d7de;margin:2rem 0}
+@media print { body{max-width:none;margin:0;padding:1rem} h1,h2{page-break-after:avoid} img{page-break-inside:avoid} }
+</style>
+</head><body>
+<h1>BTC Predictor — Guía rápida (para ti)</h1>
+<p>App educativa que predice el precio de Bitcoin y te ayuda a decidir si apostar
+en los mercados horarios y de 15 minutos de Kalshi. <strong>Sin dinero real</strong>.</p>
+<blockquote>
+<p>URL local: <code>http://100.122.62.70:8001</code> (tienes que estar en Tailscale)</p>
+</blockquote>
+<p>Esta guía no explica cómo funciona el modelo por dentro — para eso está
+<code>tutorial.pdf</code>. Aquí sólo verás <strong>qué puedes hacer</strong> con cada pantalla y
+<strong>cómo leer los números</strong> para tomar decisiones.</p>
+<hr />
+<h2>¿Qué problemas resuelve?</h2>
+<ol>
+<li><strong>¿Va a estar el precio arriba o abajo de X a tal hora?</strong> → /hourly-call (cierre 60 min) y /intra15 (cierres de 15 min)</li>
+<li><strong>¿Vale la pena la apuesta que veo en Kalshi?</strong> → en cualquiera de las dos vistas: pega el precio YES/NO y te dice el edge y un badge de recomendación</li>
+<li><strong>¿Qué tan bien estoy acertando?</strong> → /calibration</li>
+<li><strong>¿Qué pasa si el precio sube X% en Y minutos?</strong> → / (página principal: what-if + fan chart)</li>
+</ol>
+<hr />
+<h2>1 · Página principal <code>/</code></h2>
+<p><img alt="Página principal" src="tutorial_btc_assets/index.png" /></p>
+<h3>Lo que ves arriba</h3>
+<ul>
+<li><strong>Hero verde grande</strong> = precio actual de Bitcoin en <strong>Coinbase</strong> (marcado <code>KALSHI-ALIGNED</code>). Este es el precio que Kalshi usa para liquidar — es el que importa para apostar.</li>
+<li><strong>Binance (modelo)</strong> = el precio de la otra exchange, normalmente unos cuantos dólares arriba. Es el que el modelo usa para sus cálculos. La diferencia (<code>basis +XX bps</code>) suele ser pequeña (10–25 bps).</li>
+</ul>
+<blockquote>
+<p>💡 <strong>Para dummies:</strong> si Kalshi te dice "BTC ≥ $75,500" mira el precio Coinbase, no el de Binance.</p>
+</blockquote>
+<h3>Tabs arriba</h3>
+<ul>
+<li><code>BTC</code> <code>ETH</code> <code>XRP</code> ... — cambia de cripto. Solo BTC tiene mercado Kalshi.</li>
+<li><code>calibration</code> — qué tan bueno fue el modelo (sección 4)</li>
+<li><code>hourly-call</code> — la apuesta horaria (sección 2)</li>
+<li><code>intra15</code> — las apuestas de 15 minutos (sección 3)</li>
+</ul>
+<h3>Tarjetas que te interesan</h3>
+<ul>
+<li><strong>Quantiles / niveles</strong> — el modelo dice "hay 90% de probabilidad de que BTC esté entre $X y $Y al cierre". Útil para ver si tu strike de Kalshi cae dentro o fuera del rango.</li>
+<li><strong>What-if</strong> (formulario abajo) — pones un precio y una hora y te devuelve <code>P(above)</code> y <code>P(below)</code>. Sirve cuando Kalshi te ofrece un strike rarito que no aparece en los otros tabs.</li>
+<li><strong>Fan chart</strong> — gráfico SVG con bandas de incertidumbre. Visualmente: cuanto más se abre el abanico, más insegura está la predicción.</li>
+<li><strong>Signals / tension</strong> — resumen direccional. Score entre -5 (bearish) y +5 (bullish).</li>
+</ul>
+<hr />
+<h2>2 · <code>/hourly-call</code> — la apuesta de cada hora</h2>
+<p><img alt="Hourly call" src="tutorial_btc_assets/hourly_call.png" /></p>
+<p>Kalshi tiene un mercado cada hora: "¿BTC va a estar por encima de $X al cierre?". Esta vista te ayuda a decidir.</p>
+<h3>Cómo se lee</h3>
+<ul>
+<li><strong>Hero amarillo</strong> = el valor "call". El modelo dice que hay 70% de probabilidad de que BTC <strong>no</strong> sobrepase ese número al cierre de la próxima hora.</li>
+<li><strong>Racha actual</strong> = cuántas calls seguidas hemos acertado (precio real ≤ call).</li>
+<li><strong>Tasa empírica</strong> = % de aciertos histórico. Si está cerca de 70% el modelo va bien calibrado.</li>
+</ul>
+<h3>El bloque "edge vs Kalshi"</h3>
+<ul>
+<li><strong>strike</strong> = el strike más cercano de Kalshi al valor que predijimos</li>
+<li><strong>Kalshi NO</strong> = lo que el mercado paga por el contrato NO</li>
+<li><strong>nuestra NO</strong> = lo que el modelo cree que vale (70% por construcción)</li>
+<li><strong>edge</strong> = diferencia en puntos porcentuales (pp). <strong>Positivo = el modelo cree que NO está barato → apuesta NO</strong>.</li>
+</ul>
+<h3>El badge de recomendación 🔥 / ✓ / ⚠ / 🚫</h3>
+<p>Basado en backtest de 414 calls:</p>
+<table>
+<thead>
+<tr>
+<th>Badge</th>
+<th>Cuándo aparece</th>
+<th>Qué hacer</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>🔥 <strong>APUESTA FUERTE</strong></td>
+<td>edge ≥ 0 <strong>y</strong> cierre 09/16/17/18 AST (money hours, WR 88-100%)</td>
+<td>Apostar con confianza</td>
+</tr>
+<tr>
+<td>✓ <strong>APUESTA</strong></td>
+<td>edge ≥ 0 (resto de horas)</td>
+<td>Apostar normalmente</td>
+</tr>
+<tr>
+<td>⚠ <strong>HORA MALA</strong></td>
+<td>edge ≥ 0 pero cierre 03 o 10 AST (WR ≤50%)</td>
+<td>Mejor pasar</td>
+</tr>
+<tr>
+<td>🚫 <strong>NO APOSTAR</strong></td>
+<td>edge &lt; 0 (entry price alto, ROI histórico negativo)</td>
+<td>No apostar nunca</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>⚠️ <strong>Regla dura del backtest:</strong> edge negativo <strong>siempre</strong> pierde en promedio aunque parezca que ganas seguido. El payoff no compensa porque el contrato cuesta caro.</p>
+</blockquote>
+<h3>Tabla "últimas calls"</h3>
+<p>Las últimas 30 calls con su edge y resultado. Útil para ver si el modelo está en racha o frío.</p>
+<hr />
+<h2>3 · <code>/intra15</code> — apuestas de 15 minutos</h2>
+<p><img alt="Intra-15 sin mercado" src="tutorial_btc_assets/intra15_empty.png" /></p>
+<p>Esta es la pantalla nueva. Kalshi a veces abre mercados cortos de 15 min (cierre 17:15, 17:30, etc.) — pero no siempre. Aquí puedes pedirle al modelo la predicción tengas mercado o no.</p>
+<h3>Para usarla sin Kalshi</h3>
+<ol>
+<li>Mete un <strong>strike</strong> (ej. $75,155.74)</li>
+<li>Dale <code>calc</code></li>
+<li>Te devuelve los próximos 4 cierres de 15 min con <code>P(above)</code>, <code>P(below)</code> y σ</li>
+<li>Sirve para tener una intuición: "¿qué tan probable es que BTC cruce $X en la próxima hora?"</li>
+</ol>
+<h3>Para usarla con un mercado Kalshi abierto</h3>
+<p><img alt="Intra-15 con mercado" src="tutorial_btc_assets/intra15_market.png" /></p>
+<ol>
+<li>Mete <strong>strike</strong> + <strong>YES ¢</strong> + <strong>NO ¢</strong> (lo que veas en Kalshi)</li>
+<li>Dale <code>calc</code></li>
+<li>Ahora cada fila muestra:</li>
+<li><strong>edge YES</strong> y <strong>edge NO</strong> (en pp)</li>
+<li><strong>recomendación</strong> (mismo badge que /hourly-call, indica si conviene YES o NO)</li>
+</ol>
+<blockquote>
+<p>💡 <strong>Truco:</strong> si YES vale 87¢ y NO vale 13¢ en Kalshi, escribe los dos. El sistema elige el lado con más edge y te lo marca entre paréntesis: <code>🔥 APUESTA FUERTE (NO)</code>.</p>
+</blockquote>
+<h3>Lo que dice la cabecera</h3>
+<ul>
+<li><strong>Hero Coinbase</strong> = precio Kalshi-aligned (otra vez, el que importa)</li>
+<li><strong>basis</strong> = cuánto difiere Binance de Coinbase en ese momento</li>
+<li><strong>strike Binance-eq</strong> = el strike que Coinbase muestra, traducido a precio Binance (para entender cómo lo "ve" el modelo)</li>
+</ul>
+<hr />
+<h2>4 · <code>/calibration</code> — ¿qué tan bueno es el modelo?</h2>
+<p><img alt="Calibration" src="tutorial_btc_assets/calibration.png" /></p>
+<p>Vista para revisar el desempeño histórico.</p>
+<h3>Lo que importa</h3>
+<ul>
+<li><strong>Brier score</strong> — entre 0 (perfecto) y 1 (pésimo). Cualquier valor por debajo de 0.25 es razonable; por debajo de 0.20 es bueno.</li>
+<li><strong>Reliability</strong> — tabla que dice "cuando el modelo dijo 70% acerté el 68% del tiempo". Si los números coinciden, está bien calibrado.</li>
+<li><strong>Recent outcomes</strong> — últimas 24 calls horarias con su acierto/fallo.</li>
+<li><strong>Top shocks</strong> — las predicciones donde más se equivocó. Útil para detectar regimes nuevos.</li>
+<li><strong>Auto-bet backtest</strong> — qué hubiéramos ganado siguiendo las recomendaciones del badge. ROI histórico.</li>
+</ul>
+<hr />
+<h2>5 · Reglas que el backtest reveló (resumen)</h2>
+<p>Para no leer todo: estas son las reglas duras que aprendimos perdiendo dinero virtual:</p>
+<h3>✅ Apuesta si</h3>
+<ul>
+<li>Edge ≥ 0 (siempre, sin excepción)</li>
+<li>Cierre en hora 09 / 16 / 17 / 18 AST → edge positivo aquí es 🔥</li>
+<li>Strike alejado del spot en mercados de cola (tipo Kalshi NO [≤X] con X bien por debajo de la mediana de modelos externos)</li>
+</ul>
+<h3>🚫 No apuestes si</h3>
+<ul>
+<li>Edge negativo (aunque el WR parezca alto: el payoff te mata)</li>
+<li>Cierre en hora 03 o 10 AST (WR ≤50% histórico, evítalo)</li>
+<li>Modelo en racha negativa de 3+ pérdidas (debería bloquearse solo, pero revisa)</li>
+</ul>
+<h3>⚠️ Observación pendiente de confirmar</h3>
+<ul>
+<li>Edge marginal (0 a +8pp) + trend 24h negativo (-1% o peor) → parece trampa aunque sea money hour. Tenemos un solo dato (2026-05-27 17:00), si se repite se endurece la regla.</li>
+</ul>
+<hr />
+<h2>6 · Flujo típico de uso</h2>
+<p><strong>Mañana (chequeo general):</strong>
+1. Abro <code>/?symbol=BTCUSDT</code> → veo el precio Coinbase, el momentum, signals
+2. Voy a <code>/hourly-call</code> → veo si la call de la próxima hora tiene edge</p>
+<p><strong>Cuando aparece una apuesta en Kalshi:</strong>
+1. Anoto strike, YES¢ y NO¢
+2. Si es mercado horario → <code>/hourly-call</code> ya lo tiene calculado (mira el badge)
+3. Si es mercado de 15 min → abro <code>/intra15</code>, meto los 3 valores, miro el badge
+4. Decido según el badge:
+   - 🔥 → entro con confianza
+   - ✓ → entro
+   - ⚠ → paso
+   - 🚫 → paso (no excepciones)</p>
+<p><strong>Al final del día (review):</strong>
+1. Voy a <code>/calibration</code> → veo Brier y reliability
+2. Reviso "auto-bet backtest" para confirmar ROI</p>
+<hr />
+<h2>7 · Glosario rápido</h2>
+<table>
+<thead>
+<tr>
+<th>Término</th>
+<th>Qué significa</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>edge</strong></td>
+<td>diferencia entre lo que paga Kalshi y lo que el modelo dice que vale (en pp)</td>
+</tr>
+<tr>
+<td><strong>strike</strong></td>
+<td>el precio sobre/bajo el que se decide el mercado</td>
+</tr>
+<tr>
+<td><strong>NO/YES</strong></td>
+<td>lados del mercado binario de Kalshi</td>
+</tr>
+<tr>
+<td><strong>pp</strong></td>
+<td>"puntos porcentuales" (diferencia absoluta entre porcentajes)</td>
+</tr>
+<tr>
+<td><strong>AST</strong></td>
+<td>hora de Puerto Rico (UTC-4, sin horario de verano)</td>
+</tr>
+<tr>
+<td><strong>money hour</strong></td>
+<td>hora del día donde históricamente acertamos mucho (09/16/17/18 AST)</td>
+</tr>
+<tr>
+<td><strong>basis</strong></td>
+<td>diferencia entre Binance y Coinbase, en basis points (1bp = 0.01%)</td>
+</tr>
+<tr>
+<td><strong>σ (sigma)</strong></td>
+<td>desviación estándar — qué tanto puede moverse el precio</td>
+</tr>
+<tr>
+<td><strong>Brier</strong></td>
+<td>métrica de qué tan bien calibrado está el modelo (menor = mejor)</td>
+</tr>
+<tr>
+<td><strong>WR</strong></td>
+<td>win rate (% de aciertos)</td>
+</tr>
+<tr>
+<td><strong>ROI</strong></td>
+<td>retorno sobre la inversión</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<p><em>Última actualización: 2026-05-27.</em></p>
+</body></html>
