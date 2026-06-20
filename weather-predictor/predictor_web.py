@@ -2335,7 +2335,11 @@ def _health_badge() -> tuple[str, str]:
     return "bad", "BAD"
 
 
-SUPPORTED_STATIONS = ["KPHX", "KLAX", "KLAS", "KLGA", "KBOS", "KMIA", "KMDW"]
+SUPPORTED_STATIONS = [
+    "KPHX", "KLAX", "KLAS", "KLGA", "KBOS", "KMIA", "KMDW",
+    "KIAH", "KSFO", "KAUS", "KDEN", "KSAT", "KDCA", "KDFW",
+    "KPHL", "KSEA", "KATL", "KMSY", "KOKC", "KMSP",
+]
 
 
 def _supported_stations() -> list:

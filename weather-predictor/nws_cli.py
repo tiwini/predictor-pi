@@ -33,6 +33,19 @@ STATION_TO_LOCATION: dict[str, str] = {
     "KBOS": "BOS",
     "KMIA": "MIA",
     "KMDW": "MDW",
+    "KIAH": "IAH",
+    "KSFO": "SFO",
+    "KAUS": "AUS",
+    "KDEN": "DEN",
+    "KSAT": "SAT",
+    "KDCA": "DCA",
+    "KDFW": "DFW",
+    "KPHL": "PHL",
+    "KSEA": "SEA",
+    "KATL": "ATL",
+    "KMSY": "MSY",
+    "KOKC": "OKC",
+    "KMSP": "MSP",
 }
 
 _MONTHS = {m: i for i, m in enumerate(

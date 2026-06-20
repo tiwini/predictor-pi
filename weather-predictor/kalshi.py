@@ -29,6 +29,19 @@ STATION_TO_SERIES: dict[str, str] = {
     "KBOS": "KXHIGHTBOS",
     "KMIA": "KXHIGHMIA",
     "KMDW": "KXHIGHCHI",
+    "KIAH": "KXHIGHTHOU",
+    "KSFO": "KXHIGHTSFO",
+    "KAUS": "KXHIGHAUS",
+    "KDEN": "KXHIGHDEN",
+    "KSAT": "KXHIGHTSATX",
+    "KDCA": "KXHIGHTDC",
+    "KDFW": "KXHIGHTDAL",
+    "KPHL": "KXHIGHPHIL",
+    "KSEA": "KXHIGHTSEA",
+    "KATL": "KXHIGHTATL",
+    "KMSY": "KXHIGHTNOLA",
+    "KOKC": "KXHIGHTOKC",
+    "KMSP": "KXHIGHTMIN",
 }
 
 
