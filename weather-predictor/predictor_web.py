@@ -2428,7 +2428,8 @@ STATIONS_TMPL = """<!doctype html>
 </style></head><body>
 <p><a href="/">&larr; volver a estación activa</a> · <a href="/cross">cross-station →</a></p>
 <h1>Estaciones de clima · {{ n_stations }}</h1>
-<p class="sub">Resumen para {{ target_date }}. Ordenadas por <b>pronosticabilidad</b> (las más estables arriba). Tap "Abrir" para cambiar de estación.</p>
+<p class="sub">Resumen para {{ target_date }}. Ordenadas por <b>pronosticabilidad</b> (las más estables arriba). Tap "Abrir" para cambiar de estación.
+{% if cache_age == 0 %}<span style="color:#a6e3a1">fresco</span>{% else %}<span style="color:#6c7086">cache {{cache_age}}s</span>{% endif %}</p>
 
 <div class="grid">
 {% for r in results %}
@@ -2487,8 +2488,14 @@ STATIONS_TMPL = """<!doctype html>
 </body></html>"""
 
 
-@app.route("/stations")
-def stations_view():
+_STATIONS_TTL_SEC = 180
+_stations_cache: dict = {"computed_at": None, "results": None}
+
+
+def _compute_stations_results() -> list:
+    """Fetch _cross_one para todas las SUPPORTED_STATIONS en paralelo y devuelve
+    la lista ordenada por dificultad. Usado tanto por la ruta /stations como por
+    el pre-warm — comparten el mismo cache."""
     stations = list(SUPPORTED_STATIONS)
     with ThreadPoolExecutor(max_workers=max(1, len(stations))) as ex:
         results = list(ex.map(lambda s: _cross_one(s, 0), stations))
@@ -2503,12 +2510,29 @@ def stations_view():
         return (0, score, r.get("station", ""))
 
     results.sort(key=sort_key)
+    return results
+
+
+@app.route("/stations")
+def stations_view():
+    now = datetime.now(timezone.utc)
+    cached_at = _stations_cache.get("computed_at")
+    cached = _stations_cache.get("results")
+    if cached and cached_at and (now - cached_at).total_seconds() < _STATIONS_TTL_SEC:
+        results = cached
+        cache_age = int((now - cached_at).total_seconds())
+    else:
+        results = _compute_stations_results()
+        _stations_cache["computed_at"] = now
+        _stations_cache["results"] = results
+        cache_age = 0
     target = next((r["target"] for r in results if r.get("target")), None)
     return render_template_string(
         STATIONS_TMPL,
         results=results,
-        n_stations=len(stations),
+        n_stations=len(SUPPORTED_STATIONS),
         target_date=target.isoformat() if target else "—",
+        cache_age=cache_age,
     )
 
 
@@ -3974,13 +3998,55 @@ def do_poll():
 
 
 def _warm_cross_cache():
-    """Pre-fetch ensemble + market for DEFAULT_CROSS so /cross hits warm.
+    """Pre-fetch ensemble + market + peak_window para SUPPORTED_STATIONS
+    así /cross, /stations y la primera navegación por estación sirven
+    calientes. La primera vuelta tras boot toma ~40s (cold fetch paralelo
+    de 20 estaciones); las siguientes son ~instantáneas porque el resultado
+    de /stations se guarda en _stations_cache (TTL 3min) y peak_window
+    TTL 24h.
+
     Runs in a thread; failures are silent (cache miss just means slow page)."""
     try:
-        with ThreadPoolExecutor(max_workers=len(DEFAULT_CROSS)) as ex:
-            list(ex.map(lambda s: _cross_one(s, 0), DEFAULT_CROSS))
+        results = _compute_stations_results()
+        _stations_cache["computed_at"] = datetime.now(timezone.utc)
+        _stations_cache["results"] = results
     except Exception as e:
         print(f"warm_cross_cache error: {e}", file=sys.stderr)
+
+    # Pre-warm peak_window una vez al día (cache 24h) para que la primera
+    # navegación a cada estación renderice el reloj sin esperar al archive.
+    try:
+        import peak_window as _pw
+        from predictor import fetch_station as _fs
+
+        def _warm_pw(sid: str):
+            try:
+                _pw.get(_fs(sid))
+            except Exception:
+                pass
+
+        stations = list(SUPPORTED_STATIONS)
+        with ThreadPoolExecutor(max_workers=min(20, len(stations))) as ex:
+            list(ex.map(_warm_pw, stations))
+    except Exception as e:
+        print(f"warm peak_window error: {e}", file=sys.stderr)
+
+    # Pre-warm peak_window una vez al día (cache 24h). 20 fetches al archive,
+    # cero costo si ya cacheados.
+    try:
+        import peak_window as _pw
+        from predictor import fetch_station
+
+        def _warm_pw(sid: str):
+            try:
+                _pw.get(fetch_station(sid))
+            except Exception:
+                pass
+
+        with ThreadPoolExecutor(max_workers=min(20, len(stations))) as ex:
+            list(ex.map(_warm_pw, stations))
+    except Exception as e:
+        print(f"warm peak_window error: {e}", file=sys.stderr)
 
 
 def poll_loop():
