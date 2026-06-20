@@ -358,6 +358,37 @@ HTML = """<!doctype html>
   details.tools[open] > summary { color: var(--text); margin-bottom: .4rem; }
   details.tools > summary::after { content: " ▸"; color: var(--muted); }
   details.tools[open] > summary::after { content: " ▾"; }
+  .clock-wrap { background: #1e2030; border-radius: 12px; padding: .7rem .9rem;
+                margin-top: 1rem; }
+  .clock-title { font-weight: 600; color: var(--muted); font-size: 12px;
+                 margin-bottom: .45rem; letter-spacing: .03em; text-transform: uppercase; }
+  .clock-bar { position: relative; height: 24px; background: #313244;
+               border-radius: 6px; overflow: visible; }
+  .clock-bar > .zone { position: absolute; top: 0; bottom: 0; }
+  .zone-pre  { background: rgba(108,112,134,.25); border-radius: 6px 0 0 6px; }
+  .zone-conf { background: rgba(166,227,161,.28); }
+  .zone-dec  { background: rgba(249,226,175,.32); }
+  .zone-post { background: rgba(108,112,134,.25); border-radius: 0 6px 6px 0; }
+  .modal-mark { position: absolute; top: -3px; bottom: -3px; width: 4px;
+                background: #f38ba8; transform: translateX(-50%); border-radius: 2px;
+                box-shadow: 0 0 6px rgba(243,139,168,.6); }
+  .now-mark { position: absolute; top: -4px; bottom: -4px; width: 2px;
+              background: #cdd6f4; transform: translateX(-50%);
+              box-shadow: 0 0 0 1px #0a0e14; }
+  .now-mark::after { content: "▼"; position: absolute; top: -11px; left: 50%;
+                     transform: translateX(-50%); font-size: 10px; color: #cdd6f4; }
+  .clock-axis { display: flex; justify-content: space-between; color: var(--muted);
+                font-size: 10px; margin-top: .3rem; padding: 0 1px; }
+  .clock-legend { display: flex; flex-wrap: wrap; gap: .7rem .9rem; margin-top: .5rem;
+                  color: var(--muted); font-size: 11px; }
+  .clock-legend i.dot { display: inline-block; width: 10px; height: 10px;
+                        border-radius: 2px; vertical-align: middle; margin-right: .3rem; }
+  .clock-legend i.pre  { background: rgba(108,112,134,.6); }
+  .clock-legend i.conf { background: rgba(166,227,161,.6); }
+  .clock-legend i.dec  { background: rgba(249,226,175,.7); }
+  .clock-legend i.peak { background: #f38ba8; }
+  .clock-now-text { margin-top: .5rem; color: var(--text); font-size: 13px; }
+  .clock-now-text b { color: #fab387; }
 </style>
 </head>
 <body>
@@ -644,6 +675,32 @@ HTML = """<!doctype html>
     </form>
   </div>
 
+  {% if clock %}
+  <div class="clock-wrap">
+    <div class="clock-title">Reloj del día · {{station.id}}</div>
+    <div class="clock-bar">
+      <div class="zone zone-pre"  style="left:0;width:{{'%.1f'|format(clock.confidence_start_pct)}}%"></div>
+      <div class="zone zone-conf" style="left:{{'%.1f'|format(clock.confidence_start_pct)}}%;width:{{'%.1f'|format(clock.decisive_start_pct - clock.confidence_start_pct)}}%"></div>
+      <div class="zone zone-dec"  style="left:{{'%.1f'|format(clock.decisive_start_pct)}}%;width:{{'%.1f'|format(clock.decisive_end_pct - clock.decisive_start_pct)}}%"></div>
+      <div class="zone zone-post" style="left:{{'%.1f'|format(clock.decisive_end_pct)}}%;right:0"></div>
+      <div class="modal-mark" style="left:{{'%.1f'|format(clock.modal_pct)}}%" title="Pico esperado {{'%02d'|format(clock.modal_h_int)}}:00"></div>
+      <div class="now-mark" style="left:{{'%.1f'|format(clock.now_pct)}}%" title="Ahora {{'%02d'|format(clock.now_h_int)}}:{{'%02d'|format(clock.now_min)}}"></div>
+    </div>
+    <div class="clock-axis">
+      <span>6h</span><span>9h</span><span>12h</span><span>15h</span><span>18h</span><span>21h</span><span>23h</span>
+    </div>
+    <div class="clock-legend">
+      <span><i class="dot pre"></i>pre · obs poco diagnósticas</span>
+      <span><i class="dot conf"></i>confianza creciente</span>
+      <span><i class="dot dec"></i>decisiva {{'%02d'|format(clock.decisive_start_h_int)}}–{{'%02d'|format(clock.decisive_end_h_int)}}h · si no llega aquí, no llega</span>
+      <span><i class="dot peak"></i>pico esperado {{'%02d'|format(clock.modal_h_int)}}h</span>
+    </div>
+    <div class="clock-now-text">
+      Ahora {{'%02d'|format(clock.now_h_int)}}:{{'%02d'|format(clock.now_min)}} → <b>{{clock.now_zone}}</b>
+    </div>
+  </div>
+  {% endif %}
+
   <details class="tools">
     <summary>Más herramientas · diagnóstico</summary>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
@@ -802,6 +859,45 @@ def index():
         except Exception:
             timing = None
 
+    # Reloj del día: zonas (pre / confianza / decisiva / post) + marcador pico + cursor ahora
+    clock = None
+    if timing is not None and timing["p10"] is not None and timing["p90"] is not None:
+        peak_lo_h, _peak_hi_h = PEAK_HOURS.get(station.id, (12, 16))
+        now_dt = snap.station_local
+        now_h_float = now_dt.hour + now_dt.minute / 60.0
+        confidence_start = max(peak_lo_h - 3.0, 6.0)
+        decisive_start = float(timing["p10"])
+        decisive_end = float(timing["p90"])
+        if decisive_end < decisive_start:
+            decisive_end = decisive_start
+        if confidence_start > decisive_start:
+            confidence_start = max(decisive_start - 1.0, 6.0)
+        modal_h = float(timing["modal_hour"]) if timing["modal_hour"] is not None \
+                  else (decisive_start + decisive_end) / 2.0
+        range_lo, range_hi = 6.0, 23.0
+        def _pct(h):
+            return max(0.0, min(100.0, (h - range_lo) / (range_hi - range_lo) * 100.0))
+        if now_h_float < confidence_start:
+            zone = "pre-confianza"
+        elif now_h_float < decisive_start:
+            zone = "confianza creciente"
+        elif now_h_float <= decisive_end:
+            zone = "ventana DECISIVA"
+        else:
+            zone = "post-pico"
+        clock = {
+            "now_pct": _pct(now_h_float),
+            "now_h_int": now_dt.hour, "now_min": now_dt.minute,
+            "confidence_start_pct": _pct(confidence_start),
+            "decisive_start_pct": _pct(decisive_start),
+            "decisive_end_pct": _pct(decisive_end),
+            "modal_pct": _pct(modal_h),
+            "decisive_start_h_int": int(decisive_start),
+            "decisive_end_h_int": int(decisive_end),
+            "modal_h_int": int(modal_h),
+            "now_zone": zone,
+        }
+
     # Precipitation summary for today (uses its own cached ensemble fetch)
     precip = None
     try:
@@ -854,7 +950,7 @@ def index():
         pr_time=pr_time, local_time=local_time,
         day_chart_svg=day_chart_svg,
         climate=climate, climate_class=climate_class, climate_word=climate_word,
-        market=market, timing=timing, precip=precip,
+        market=market, timing=timing, clock=clock, precip=precip,
         difficulty=difficulty,
         market_name=_market_name(station.id),
     )
