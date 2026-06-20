@@ -683,8 +683,8 @@ HTML = """<!doctype html>
       <div class="zone zone-conf" style="left:{{'%.1f'|format(clock.confidence_start_pct)}}%;width:{{'%.1f'|format(clock.decisive_start_pct - clock.confidence_start_pct)}}%"></div>
       <div class="zone zone-dec"  style="left:{{'%.1f'|format(clock.decisive_start_pct)}}%;width:{{'%.1f'|format(clock.decisive_end_pct - clock.decisive_start_pct)}}%"></div>
       <div class="zone zone-post" style="left:{{'%.1f'|format(clock.decisive_end_pct)}}%;right:0"></div>
-      <div class="modal-mark" style="left:{{'%.1f'|format(clock.modal_pct)}}%" title="Pico esperado {{'%02d'|format(clock.modal_h_int)}}:00"></div>
-      <div class="now-mark" style="left:{{'%.1f'|format(clock.now_pct)}}%" title="Ahora {{'%02d'|format(clock.now_h_int)}}:{{'%02d'|format(clock.now_min)}}"></div>
+      <div class="modal-mark" style="left:{{'%.1f'|format(clock.modal_pct)}}%" title="Pico esperado {{'%02d'|format(clock.modal_h_int)}}:00 {{clock.tz_abbr}} · {{'%02d'|format(clock.modal_pr_h_int)}}:00 PR"></div>
+      <div class="now-mark" style="left:{{'%.1f'|format(clock.now_pct)}}%" title="Ahora {{'%02d'|format(clock.now_h_int)}}:{{'%02d'|format(clock.now_min)}} {{clock.tz_abbr}} · {{'%02d'|format(clock.now_pr_h_int)}}:{{'%02d'|format(clock.now_pr_min)}} PR"></div>
     </div>
     <div class="clock-axis">
       <span>6h</span><span>9h</span><span>12h</span><span>15h</span><span>18h</span><span>21h</span><span>23h</span>
@@ -692,11 +692,11 @@ HTML = """<!doctype html>
     <div class="clock-legend">
       <span><i class="dot pre"></i>pre · obs poco diagnósticas</span>
       <span><i class="dot conf"></i>confianza creciente</span>
-      <span><i class="dot dec"></i>decisiva {{'%02d'|format(clock.decisive_start_h_int)}}–{{'%02d'|format(clock.decisive_end_h_int)}}h · si no llega aquí, no llega</span>
-      <span><i class="dot peak"></i>pico esperado {{'%02d'|format(clock.modal_h_int)}}h</span>
+      <span><i class="dot dec"></i>decisiva {{'%02d'|format(clock.decisive_start_h_int)}}–{{'%02d'|format(clock.decisive_end_h_int)}}h {{clock.tz_abbr}} ({{'%02d'|format(clock.decisive_start_pr_h_int)}}–{{'%02d'|format(clock.decisive_end_pr_h_int)}}h PR) · si no llega aquí, no llega</span>
+      <span><i class="dot peak"></i>pico esperado {{'%02d'|format(clock.modal_h_int)}}h {{clock.tz_abbr}} ({{'%02d'|format(clock.modal_pr_h_int)}}h PR)</span>
     </div>
     <div class="clock-now-text">
-      Ahora {{'%02d'|format(clock.now_h_int)}}:{{'%02d'|format(clock.now_min)}} → <b>{{clock.now_zone}}</b>
+      Ahora {{'%02d'|format(clock.now_h_int)}}:{{'%02d'|format(clock.now_min)}} {{clock.tz_abbr}} · {{'%02d'|format(clock.now_pr_h_int)}}:{{'%02d'|format(clock.now_pr_min)}} PR → <b>{{clock.now_zone}}</b>
     </div>
   </div>
   {% endif %}
@@ -885,9 +885,26 @@ def index():
             zone = "ventana DECISIVA"
         else:
             zone = "post-pico"
+
+        # Conversión a hora PR: el reloj está en hora de la estación, pero el
+        # usuario opera desde PR — mostramos ambas para no confundir.
+        def _to_pr_hour(h_float: float) -> tuple[int, int]:
+            base = now_dt.replace(minute=0, second=0, microsecond=0)
+            hh = int(h_float)
+            mm = int(round((h_float - hh) * 60))
+            local_at = base.replace(hour=max(0, min(23, hh)), minute=max(0, min(59, mm)))
+            pr_at = local_at.astimezone(PR_TZ)
+            return pr_at.hour, pr_at.minute
+        ds_pr_h, _ = _to_pr_hour(decisive_start)
+        de_pr_h, _ = _to_pr_hour(decisive_end)
+        mp_pr_h, _ = _to_pr_hour(modal_h)
+        now_pr = now_dt.astimezone(PR_TZ)
+        tz_abbr = now_dt.strftime("%Z") or "local"
+
         clock = {
             "now_pct": _pct(now_h_float),
             "now_h_int": now_dt.hour, "now_min": now_dt.minute,
+            "now_pr_h_int": now_pr.hour, "now_pr_min": now_pr.minute,
             "confidence_start_pct": _pct(confidence_start),
             "decisive_start_pct": _pct(decisive_start),
             "decisive_end_pct": _pct(decisive_end),
@@ -895,6 +912,10 @@ def index():
             "decisive_start_h_int": int(decisive_start),
             "decisive_end_h_int": int(decisive_end),
             "modal_h_int": int(modal_h),
+            "decisive_start_pr_h_int": ds_pr_h,
+            "decisive_end_pr_h_int": de_pr_h,
+            "modal_pr_h_int": mp_pr_h,
+            "tz_abbr": tz_abbr,
             "now_zone": zone,
         }
 
