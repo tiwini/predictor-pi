@@ -398,7 +398,11 @@ HTML = """<!doctype html>
       <div class="station-name">{{ station.id }} — {{ station.name }}</div>
       <div class="clock">local {{ local_time }} · PR {{ pr_time }}</div>
     </div>
-    <div style="display:flex;align-items:center;gap:.8rem">
+    <div style="display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;justify-content:flex-end">
+      <a href="/stations" title="Dashboard de todas las estaciones"
+         style="background:#313244;color:#cba6f7;border:1px solid #45475a;
+                border-radius:4px;padding:.3rem .55rem;font-size:.85rem;
+                font-weight:600;text-decoration:none;white-space:nowrap">⊞ Dashboard</a>
       <form method="post" action="/api/station" style="margin:0">
         <select name="id" onchange="this.form.submit()"
                 style="background:#181825;color:#cdd6f4;border:1px solid #313244;
@@ -700,13 +704,6 @@ HTML = """<!doctype html>
     </div>
   </div>
   {% endif %}
-
-  <div style="margin:.6rem 0 .3rem;text-align:center">
-    <a href="/stations" style="display:inline-block;background:#313244;color:#cba6f7;
-       padding:.55rem 1.1rem;border-radius:8px;font-weight:600;text-decoration:none">
-       Dashboard estaciones →
-    </a>
-  </div>
 
   <details class="tools">
     <summary>Más herramientas · diagnóstico</summary>
