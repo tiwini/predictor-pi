@@ -307,12 +307,15 @@ def compute_day_summary(station_id: str, target_date: date) -> dict | None:
         from kalshi import DB_PATH as KALSHI_DB
         if KALSHI_DB.exists():
             c.execute("ATTACH DATABASE ? AS k", (str(KALSHI_DB),))
+            # COALESCE: our_p_final (post iso + blend, lo que el usuario ve)
+            # cae a our_p (pre-blend) en rows anteriores a 2026-06-19.
             kcur = c.execute("""SELECT bin_lo, bin_hi, label,
-                                       yes_mid, our_p
+                                       yes_mid,
+                                       COALESCE(our_p_final, our_p) AS our_p
                                 FROM k.market_prices
                                 WHERE station_id=? AND date=?
                                   AND yes_mid IS NOT NULL
-                                  AND our_p IS NOT NULL""",
+                                  AND COALESCE(our_p_final, our_p) IS NOT NULL""",
                              (station_id, ds))
             krows = kcur.fetchall()
             c.execute("DETACH DATABASE k")
@@ -424,7 +427,8 @@ def settle_pending(station, max_days_back: int = 14) -> list:
     Returns list of (date, max_f) for days settled this call.
     """
     c = _conn()
-    today = date.today()
+    # tz de la estación: PR-host adelantado vs US causaría settle prematuro.
+    today = datetime.now(station.tz).date()
     # find dates with pending snapshots, excluding today
     cur = c.execute("""SELECT DISTINCT date FROM prediction_snapshots
                        WHERE station_id=? AND outcome IS NULL AND date<?

@@ -555,19 +555,6 @@ def build_snapshot(station: Station) -> Snapshot:
     # that tracked reality better get higher weight. Per-hour σ: peak-window
     # obs use σ=1°F (highly diagnostic of daily max), distant hours use up
     # to σ=3°F so noisy dawn obs don't dominate.
-    past_hour_idx = []   # list of (times_idx, observed_temp)
-    for i, ts_str in enumerate(times):
-        ts = datetime.fromisoformat(ts_str).replace(tzinfo=station.tz)
-        if ts.date() != today:
-            continue
-        if ts > current_hour:
-            continue
-        if ts.hour in () or ts.hour > now_local.hour:
-            continue
-        # need observed temp for this hour
-        # (hour_obs is computed later; do it inline here to keep ordering clean)
-        pass
-    # inline build of hour_obs for matching past hours
     hour_obs_early = {}
     for o in obs_full:
         if o["temp_f"] is None:
@@ -1190,11 +1177,61 @@ def record_kalshi(snap: Snapshot, station: Station) -> None:
         return
     try:
         bins = _kalshi.fetch_bins(station.id, snap.station_local.date())
-        if bins:
-            _kalshi.record(station.id, snap.station_local.date(), bins,
-                           snap.ensemble_daily_maxes, snap.fetched_at)
+        if not bins:
+            return
+        our_p_final_per_bin = _compute_final_our_p_per_bin(station.id, snap, bins)
+        _kalshi.record(station.id, snap.station_local.date(), bins,
+                       snap.ensemble_daily_maxes, snap.fetched_at,
+                       our_p_final_per_bin=our_p_final_per_bin)
     except Exception as e:
         console.print(f"[yellow]kalshi fetch error:[/] {e}")
+
+
+def _compute_final_our_p_per_bin(station_id: str, snap: Snapshot,
+                                 bins: list) -> list:
+    """Per-bin our_p después de isotonic + blend_with_external. Lo que el
+    usuario ve en /edge y lo que Brier histórico debe leer."""
+    out: list = [None] * len(bins)
+    maxes = snap.ensemble_daily_maxes
+    if not maxes:
+        return out
+    try:
+        import isotonic as _iso
+    except Exception:
+        _iso = None
+    try:
+        import external_models as _em
+    except Exception:
+        _em = None
+    cal = None
+    if _iso is not None:
+        try:
+            cal = _iso.get(station_id)
+            if cal is not None and (cal.n_fit < _iso.MIN_N
+                                    or cal.n_days < _iso.MIN_DAYS):
+                cal = None
+        except Exception:
+            cal = None
+    ext_med = ext_spread = ext_diff = None
+    lam = 0.0
+    info = getattr(snap, "ext_shift_info", None)
+    if info:
+        ext_med = info.get("ext_med")
+        ext_spread = info.get("ext_spread")
+        lam = float(info.get("lambda") or 0.0)
+        if ext_med is not None:
+            sm = sorted(maxes)
+            pred_med = sm[len(sm) // 2]
+            ext_diff = pred_med - ext_med
+    for i, b in enumerate(bins):
+        p = _kalshi.our_p_for_bin(maxes, b.bin_lo, b.bin_hi)
+        if cal is not None and _iso is not None:
+            p = _iso.apply(cal, p)
+        if _em is not None and ext_med is not None and ext_spread is not None:
+            p, _w = _em.blend_with_external(
+                p, ext_med, ext_spread, b.bin_lo, b.bin_hi, ext_diff, lam)
+        out[i] = p
+    return out
 
 
 def poll_once(state: State):

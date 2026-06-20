@@ -148,13 +148,19 @@ def _conn() -> sqlite3.Connection:
             yes_bid REAL,
             yes_ask REAL,
             yes_mid REAL,
-            our_p REAL
+            our_p REAL,
+            our_p_final REAL
         );
         CREATE INDEX IF NOT EXISTS idx_mp_station_date
             ON market_prices(station_id, date);
         CREATE INDEX IF NOT EXISTS idx_mp_ticker_time
             ON market_prices(ticker, fetched_at);
     """)
+    # Migración idempotente para DBs creadas antes de 2026-06-19.
+    try:
+        c.execute("ALTER TABLE market_prices ADD COLUMN our_p_final REAL")
+    except sqlite3.OperationalError:
+        pass
     return c
 
 
@@ -180,21 +186,31 @@ def our_p_for_bin(ensemble_maxes: list, bin_lo: float, bin_hi: float) -> float:
 
 def record(station_id: str, target_date: date, bins: list[MarketBin],
            ensemble_maxes: list | None = None,
-           fetched_at: datetime | None = None) -> None:
-    """Persist one snapshot of market prices + our predicted_p per bin."""
+           fetched_at: datetime | None = None,
+           our_p_final_per_bin: list | None = None) -> None:
+    """Persist one snapshot of market prices + our predicted_p per bin.
+
+    our_p = raw ensemble fraction (Bayesian reweight + bias + posterior shift
+    ya aplicados vía ensemble_maxes). our_p_final = misma cantidad + isotonic
+    + blend_with_external; refleja exactamente lo que ve el usuario en /edge
+    y es lo que Brier histórico debería leer.
+    """
     ts = (fetched_at or datetime.utcnow()).isoformat()
     c = _conn()
-    for b in bins:
+    for i, b in enumerate(bins):
         our_p = None
         if ensemble_maxes:
             our_p = our_p_for_bin(ensemble_maxes, b.bin_lo, b.bin_hi)
+        our_p_final = None
+        if our_p_final_per_bin is not None and i < len(our_p_final_per_bin):
+            our_p_final = our_p_final_per_bin[i]
         c.execute("""INSERT INTO market_prices
             (fetched_at, station_id, date, ticker, bin_lo, bin_hi,
-             label, yes_bid, yes_ask, yes_mid, our_p)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+             label, yes_bid, yes_ask, yes_mid, our_p, our_p_final)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (ts, station_id, target_date.isoformat(), b.ticker,
              b.bin_lo, b.bin_hi, b.label,
-             b.yes_bid, b.yes_ask, b.yes_mid, our_p))
+             b.yes_bid, b.yes_ask, b.yes_mid, our_p, our_p_final))
     c.commit()
     c.close()
 
