@@ -701,6 +701,13 @@ HTML = """<!doctype html>
   </div>
   {% endif %}
 
+  <div style="margin:.6rem 0 .3rem;text-align:center">
+    <a href="/stations" style="display:inline-block;background:#313244;color:#cba6f7;
+       padding:.55rem 1.1rem;border-radius:8px;font-weight:600;text-decoration:none">
+       Dashboard estaciones →
+    </a>
+  </div>
+
   <details class="tools">
     <summary>Más herramientas · diagnóstico</summary>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
@@ -2353,6 +2360,135 @@ Default: KPHX, KLAX, KLAS, KLGA, KBOS (estaciones Kalshi curadas).
 Custom: <code>/cross?stations=KPHX,KLAX</code>
 </p>
 </body></html>"""
+
+
+STATIONS_TMPL = """<!doctype html>
+<html><head><meta charset="utf-8"><title>Estaciones</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body{background:#11111b;color:#cdd6f4;font-family:system-ui,sans-serif;
+       padding:1rem;max-width:1100px;margin:0 auto}
+  h1{color:#cba6f7;margin:0 0 .4rem;font-size:1.4rem}
+  a{color:#89b4fa;text-decoration:none}
+  .sub{color:#a6adc8;font-size:13px;margin-bottom:1rem}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:.7rem}
+  .card{background:#1e1e2e;border-radius:10px;padding:.8rem .9rem;
+        border:1px solid #313244;display:flex;flex-direction:column;gap:.45rem}
+  .card.err{border-color:#5e2e3a}
+  .row1{display:flex;align-items:baseline;gap:.5rem;justify-content:space-between}
+  .sid{color:#89dceb;font-weight:700;font-size:1.15rem;font-family:monospace}
+  .name{color:#a6adc8;font-size:12px}
+  .diff{padding:.15rem .5rem;border-radius:5px;font-size:11px;font-weight:700;
+        letter-spacing:.4px;text-transform:uppercase}
+  .diff-easy{background:rgba(166,227,161,.16);color:#a6e3a1}
+  .diff-normal{background:rgba(137,180,250,.16);color:#89b4fa}
+  .diff-hard{background:rgba(249,226,175,.18);color:#f9e2af}
+  .diff-veryhard{background:rgba(243,139,168,.18);color:#f38ba8}
+  .diff-none{background:rgba(108,112,134,.18);color:#a6adc8}
+  .nums{display:grid;grid-template-columns:1fr 1fr;gap:.35rem .8rem;font-family:monospace;font-size:13px}
+  .nums .k{color:#a6adc8;font-size:11px}
+  .nums .v{color:#cdd6f4;font-weight:600}
+  .v.now{color:#fab387}
+  .v.exp{color:#f9e2af}
+  .edge{display:flex;justify-content:space-between;align-items:baseline;font-size:12px;
+        padding:.35rem .5rem;background:#181825;border-radius:6px}
+  .edge .lbl{color:#a6adc8}
+  .edge .pos{color:#a6e3a1;font-weight:700}
+  .edge .neg{color:#f38ba8;font-weight:700}
+  .edge .dim{color:#6c7086}
+  form.open{margin:0}
+  button.open{width:100%;background:#313244;color:#cdd6f4;border:none;
+              padding:.55rem;border-radius:6px;font-size:13px;font-weight:600;
+              cursor:pointer;text-align:center;letter-spacing:.3px}
+  button.open:hover{background:#45475a;color:#fab387}
+  .errmsg{color:#f38ba8;font-style:italic;font-size:12px}
+  .legend{margin-top:1rem;font-size:11px;color:#6c7086;display:flex;flex-wrap:wrap;gap:.7rem}
+  .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:.25rem;vertical-align:middle}
+</style></head><body>
+<p><a href="/">&larr; volver a estación activa</a> · <a href="/cross">cross-station →</a></p>
+<h1>Estaciones de clima · {{ n_stations }}</h1>
+<p class="sub">Resumen para {{ target_date }}. Ordenadas por <b>pronosticabilidad</b> (las más estables arriba). Tap "Abrir" para cambiar de estación.</p>
+
+<div class="grid">
+{% for r in results %}
+  <div class="card {% if r.error %}err{% endif %}">
+    <div class="row1">
+      <div><span class="sid">{{r.station}}</span> <span class="name">{{r.name[:22] if r.name else ''}}</span></div>
+      {% if r.error %}
+        <span class="diff diff-none">err</span>
+      {% elif r.difficulty %}
+        {% set dclass = {'fácil':'diff-easy','normal':'diff-normal','difícil':'diff-hard','muy difícil':'diff-veryhard'}[r.difficulty.label] %}
+        <span class="diff {{dclass}}" title="dificultad {{'%.0f'|format(r.difficulty.score)}}/100">{{r.difficulty.label}}</span>
+      {% else %}
+        <span class="diff diff-none">—</span>
+      {% endif %}
+    </div>
+
+    {% if r.error %}
+      <div class="errmsg">{{r.error}}</div>
+    {% else %}
+      <div class="nums">
+        <div><div class="k">ahora</div>
+          <div class="v now">{% if r.current_temp is not none %}{{'%.1f'|format(r.current_temp)}}°{% else %}—{% endif %}</div></div>
+        <div><div class="k">max obs hoy</div>
+          <div class="v">{% if r.max_obs is not none %}{{'%.1f'|format(r.max_obs)}}°{% else %}—{% endif %}</div></div>
+        <div><div class="k">esperado p50</div>
+          <div class="v exp">{{'%.1f'|format(r.p50_precise)}}°</div></div>
+        <div><div class="k">rango p10–p90</div>
+          <div class="v">{{'%.0f'|format(r.p10)}}–{{'%.0f'|format(r.p90)}}°</div></div>
+      </div>
+
+      {% if r.modal_bin %}
+        <div class="edge">
+          <span class="lbl">{{r.modal_bin.label}}</span>
+          <span class="dim">m {{'%.0f'|format(r.modal_bin.yes_mid*100)}}% · n {{'%.0f'|format(r.our_p*100)}}%</span>
+          <span class="{% if r.edge >= 0 %}pos{% else %}neg{% endif %}">{{'%+.1f'|format(r.edge*100)}}pp</span>
+        </div>
+      {% else %}
+        <div class="edge"><span class="dim">sin mercado Kalshi abierto</span></div>
+      {% endif %}
+    {% endif %}
+
+    <form class="open" method="post" action="/api/station">
+      <input type="hidden" name="id" value="{{r.station}}">
+      <button class="open" type="submit">Abrir {{r.station}} →</button>
+    </form>
+  </div>
+{% endfor %}
+</div>
+
+<div class="legend">
+  <span><i style="background:#a6e3a1"></i>fácil · spread bajo, modelo confiado</span>
+  <span><i style="background:#89b4fa"></i>normal</span>
+  <span><i style="background:#f9e2af"></i>difícil · spread alto</span>
+  <span><i style="background:#f38ba8"></i>muy difícil · saltar</span>
+</div>
+</body></html>"""
+
+
+@app.route("/stations")
+def stations_view():
+    stations = list(SUPPORTED_STATIONS)
+    with ThreadPoolExecutor(max_workers=max(1, len(stations))) as ex:
+        results = list(ex.map(lambda s: _cross_one(s, 0), stations))
+
+    def sort_key(r):
+        if r.get("error"):
+            return (2, r.get("station", ""))
+        d = r.get("difficulty") or {}
+        score = d.get("score")
+        if score is None:
+            return (1, r.get("station", ""))
+        return (0, score, r.get("station", ""))
+
+    results.sort(key=sort_key)
+    target = next((r["target"] for r in results if r.get("target")), None)
+    return render_template_string(
+        STATIONS_TMPL,
+        results=results,
+        n_stations=len(stations),
+        target_date=target.isoformat() if target else "—",
+    )
 
 
 @app.route("/cross")
