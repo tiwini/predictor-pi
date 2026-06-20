@@ -681,7 +681,9 @@ HTML = """<!doctype html>
 
   {% if clock %}
   <div class="clock-wrap">
-    <div class="clock-title">Reloj del día · {{station.id}}</div>
+    <div class="clock-title">Reloj del día · {{station.id}}
+      <span style="font-weight:400;color:#6c7086;font-size:11px;margin-left:.4rem">{{clock.source_label}}</span>
+    </div>
     <div class="clock-bar">
       <div class="zone zone-pre"  style="left:0;width:{{'%.1f'|format(clock.confidence_start_pct)}}%"></div>
       <div class="zone zone-conf" style="left:{{'%.1f'|format(clock.confidence_start_pct)}}%;width:{{'%.1f'|format(clock.decisive_start_pct - clock.confidence_start_pct)}}%"></div>
@@ -863,21 +865,42 @@ def index():
         except Exception:
             timing = None
 
+    # Empírico de últimos 7 días via Open-Meteo archive (cache 24h).
+    # Si está disponible, prefiere las zonas empíricas sobre las del ensemble
+    # de hoy — son más estables y específicas de la estación.
+    empirical_window = None
+    try:
+        import peak_window as _pw
+        empirical_window = _pw.get(station)
+    except Exception:
+        empirical_window = None
+
     # Reloj del día: zonas (pre / confianza / decisiva / post) + marcador pico + cursor ahora
     clock = None
-    if timing is not None and timing["p10"] is not None and timing["p90"] is not None:
+    have_timing = (timing is not None
+                   and timing["p10"] is not None
+                   and timing["p90"] is not None)
+    if have_timing or empirical_window is not None:
         peak_lo_h, _peak_hi_h = PEAK_HOURS.get(station.id, (12, 16))
         now_dt = snap.station_local
         now_h_float = now_dt.hour + now_dt.minute / 60.0
+        if empirical_window is not None:
+            decisive_start = float(empirical_window["p10"])
+            decisive_end = float(empirical_window["p90"])
+            modal_h = float(empirical_window["modal_hour"])
+            source_label = f"empírico 7d · n={empirical_window['n']}"
+        else:
+            decisive_start = float(timing["p10"])
+            decisive_end = float(timing["p90"])
+            modal_h = (float(timing["modal_hour"])
+                       if timing["modal_hour"] is not None
+                       else (decisive_start + decisive_end) / 2.0)
+            source_label = "ensemble hoy"
         confidence_start = max(peak_lo_h - 3.0, 6.0)
-        decisive_start = float(timing["p10"])
-        decisive_end = float(timing["p90"])
         if decisive_end < decisive_start:
             decisive_end = decisive_start
         if confidence_start > decisive_start:
             confidence_start = max(decisive_start - 1.0, 6.0)
-        modal_h = float(timing["modal_hour"]) if timing["modal_hour"] is not None \
-                  else (decisive_start + decisive_end) / 2.0
         range_lo, range_hi = 6.0, 23.0
         def _pct(h):
             return max(0.0, min(100.0, (h - range_lo) / (range_hi - range_lo) * 100.0))
@@ -921,6 +944,7 @@ def index():
             "modal_pr_h_int": mp_pr_h,
             "tz_abbr": tz_abbr,
             "now_zone": zone,
+            "source_label": source_label,
         }
 
     # Precipitation summary for today (uses its own cached ensemble fetch)
