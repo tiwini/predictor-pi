@@ -24,6 +24,21 @@ WEATHER_STATIONS = [
     ("KLAS", "Las Vegas"),
     ("KLGA", "New York (LGA→CP)"),
     ("KBOS", "Boston"),
+    ("KMIA", "Miami"),
+    ("KMDW", "Chicago Midway"),
+    ("KIAH", "Houston"),
+    ("KSFO", "San Francisco"),
+    ("KAUS", "Austin"),
+    ("KDEN", "Denver"),
+    ("KSAT", "San Antonio"),
+    ("KDCA", "Washington DC"),
+    ("KDFW", "Dallas-Fort Worth"),
+    ("KPHL", "Philadelphia"),
+    ("KSEA", "Seattle"),
+    ("KATL", "Atlanta"),
+    ("KMSY", "New Orleans"),
+    ("KOKC", "Oklahoma City"),
+    ("KMSP", "Minneapolis-St. Paul"),
 ]
 
 CRYPTO_SYMBOLS = [

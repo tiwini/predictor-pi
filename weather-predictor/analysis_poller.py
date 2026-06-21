@@ -21,8 +21,13 @@ from pathlib import Path
 from predictor import build_snapshot, fetch_station
 import kalshi
 
-STATIONS = ["KPHX", "KLAX", "KLAS", "KLGA", "KBOS"]
-INTERVAL_S = 600  # 10 min
+STATIONS = [
+    "KPHX", "KLAX", "KLAS", "KLGA", "KBOS",
+    "KMIA", "KMDW", "KIAH", "KSFO", "KAUS",
+    "KDEN", "KSAT", "KDCA", "KDFW", "KPHL",
+    "KSEA", "KATL", "KMSY", "KOKC", "KMSP",
+]
+INTERVAL_S = 600  # 10 min (20 estaciones × ~12s = ~4 min, deja 6 min margen)
 DB_PATH = Path(__file__).parent / "analysis.db"
 
 logging.basicConfig(
