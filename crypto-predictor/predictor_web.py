@@ -1840,6 +1840,42 @@ def api_intra15():
     return jsonify(data)
 
 
+@app.route("/api/quarter-signal")
+def api_quarter_signal():
+    """JSON minimal para el quarter-streak tracker del dashboard.
+
+    Devuelve precio actual + score de tensión [-5, +5] + P(close ≥ now)
+    en el próximo cierre de 15 min. El dashboard usa el signo de `tension_score`
+    para predecir UP/DOWN cada xx:00/15/30/45.
+    """
+    with _state_lock:
+        snap = dict(_state["BTCUSDT"])
+    pred = snap.get("pred")
+    if pred is None:
+        return jsonify({"error": "sin datos aún"}), 503
+    with _external_lock:
+        external = dict(_external)
+    momentum = snap.get("momentum_pct_per_min")
+    momentum_multi = snap.get("momentum_multi") or {}
+    momentum_tf = _build_momentum_tf(momentum_multi)
+    horizons = _build_horizons(pred, momentum)
+    tension = _compute_tension(pred, external, horizons, momentum_tf)
+    intra15 = _build_intra15(pred, pred.now_price, n_cierres=1)
+    p_above_next = None
+    next_close_label = None
+    if intra15 and intra15.get("rows"):
+        p_above_next = intra15["rows"][0]["p_above"]
+        next_close_label = intra15["rows"][0]["label"]
+    return jsonify({
+        "price": pred.now_price,
+        "tension_score": tension["score"] if tension else None,
+        "tension_direction": tension["direction"] if tension else None,
+        "p_above_next": p_above_next,
+        "next_close_label": next_close_label,
+        "fetched_at": snap["fetched_at"].isoformat() if snap["fetched_at"] else None,
+    })
+
+
 @app.route("/candles")
 def candles():
     sym = _resolve_symbol(request.args.get("symbol"))

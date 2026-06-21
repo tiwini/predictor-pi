@@ -36,6 +36,7 @@ CRYPTO_SYMBOLS = [
 
 ANALYSIS_DB = Path.home() / "weather-predictor" / "analysis.db"
 ASSERTIONS_JSON = Path.home() / "dashboard_assertions.json"
+BTC_QUARTER_DB = Path(__file__).resolve().parent / "btc_quarter.db"
 N_SLOTS = 6
 PR_TZ = timezone(timedelta(hours=-4), name="AST")
 
@@ -174,6 +175,7 @@ TMPL = """<!doctype html>
 <div class="tabs">
   <a href="/" class="active">inicio</a>
   <a href="/analysis">análisis</a>
+  <a href="/btc-quarter">btc-15m</a>
 </div>
 
 <div class="grid">
@@ -294,6 +296,7 @@ ANALYSIS_TMPL = """<!doctype html>
 <div class="tabs">
   <a href="/">inicio</a>
   <a href="/analysis" class="active">análisis</a>
+  <a href="/btc-quarter">btc-15m</a>
 </div>
 
 <div class="grid">
@@ -497,6 +500,204 @@ def analysis_clear():
         del d[slot]
         _save_assertions(d)
     return redirect(url_for("analysis"))
+
+
+BTC_QUARTER_TMPL = """<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="60">
+<title>BTC quarter streak</title>
+<style>
+  :root {
+    --bg:#0e1117; --panel:#161b22; --border:#30363d;
+    --text:#c9d1d9; --muted:#8b949e; --accent:#58a6ff;
+    --good:#3fb950; --bad:#f85149; --warn:#d29922;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:18px; font:14px/1.4 system-ui,-apple-system,sans-serif;
+         background:var(--bg); color:var(--text); }
+  h1 { margin:0 0 4px 0; font-size:22px; }
+  .sub { color:var(--muted); margin-bottom:18px; font-size:13px; }
+  .tabs { display:flex; gap:4px; margin-bottom:14px; border-bottom:1px solid var(--border); }
+  .tabs a { padding:8px 14px; color:var(--muted); text-decoration:none;
+            border-bottom:2px solid transparent; font-size:13px; }
+  .tabs a.active { color:var(--accent); border-bottom-color:var(--accent); }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));
+          gap:12px; margin-bottom:18px; }
+  .card { background:var(--panel); border:1px solid var(--border);
+          border-radius:8px; padding:14px; }
+  .card h3 { margin:0 0 6px 0; font-size:12px; color:var(--muted);
+             text-transform:uppercase; letter-spacing:.5px; }
+  .big { font-size:32px; font-weight:700; }
+  .mid { font-size:18px; font-weight:600; }
+  .up { color:var(--good); }
+  .down { color:var(--bad); }
+  .flat { color:var(--muted); }
+  table { width:100%; border-collapse:collapse; background:var(--panel);
+          border:1px solid var(--border); border-radius:8px; overflow:hidden; }
+  th, td { padding:8px 10px; text-align:left; border-bottom:1px solid #21262d;
+           font-size:13px; }
+  th { background:#0d1117; color:var(--muted); font-weight:600;
+       text-transform:uppercase; font-size:11px; letter-spacing:.5px; }
+  tr:last-child td { border-bottom:none; }
+  .win { color:var(--good); font-weight:700; }
+  .loss { color:var(--bad); font-weight:700; }
+  .pending { color:var(--warn); font-style:italic; }
+  .footer { margin-top:18px; color:var(--muted); font-size:11px; }
+</style>
+</head>
+<body>
+<h1>BTC quarter streak</h1>
+<div class="sub">
+  Predicción direccional UP/DOWN cada 15 min con tensión score · {{ now }} ·
+  <a href="/btc-quarter" style="color:var(--accent)">refresh</a>
+</div>
+<div class="tabs">
+  <a href="/">inicio</a>
+  <a href="/analysis">análisis</a>
+  <a href="/btc-quarter" class="active">btc-15m</a>
+</div>
+
+<div class="grid">
+  <div class="card">
+    <h3>Racha actual</h3>
+    <div class="big {{ 'up' if streak > 0 else 'flat' }}">{{ streak }}</div>
+  </div>
+  <div class="card">
+    <h3>Mejor racha</h3>
+    <div class="big">{{ best_streak }}</div>
+  </div>
+  <div class="card">
+    <h3>Win-rate (settled)</h3>
+    <div class="big">{{ "%.0f"|format(win_rate) }}%</div>
+    <div class="flat" style="font-size:12px">{{ wins }}/{{ settled }} aciertos</div>
+  </div>
+  <div class="card">
+    <h3>Pendiente</h3>
+    {% if active %}
+      <div class="mid {{ 'up' if active.side == 'UP' else ('down' if active.side == 'DOWN' else 'flat') }}">
+        {{ active.side }}
+      </div>
+      <div class="flat" style="font-size:12px">
+        $ {{ "{:,.2f}".format(active.price_in) }} → settle {{ active.settle_hhmm }}
+      </div>
+    {% else %}
+      <div class="flat">—</div>
+    {% endif %}
+  </div>
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th>locked</th>
+      <th>side</th>
+      <th>price in</th>
+      <th>price out</th>
+      <th>Δ</th>
+      <th>resultado</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in rows %}
+    <tr>
+      <td>{{ r.locked_hhmm }}</td>
+      <td class="{{ 'up' if r.side == 'UP' else ('down' if r.side == 'DOWN' else 'flat') }}">
+        {{ r.side }}
+      </td>
+      <td>${{ "{:,.2f}".format(r.price_in) }}</td>
+      <td>{% if r.price_out %}${{ "{:,.2f}".format(r.price_out) }}{% else %}—{% endif %}</td>
+      <td>{% if r.delta is not none %}{{ "%+.2f"|format(r.delta) }}{% else %}—{% endif %}</td>
+      <td>
+        {% if r.won == 1 %}<span class="win">✓ {{ r.streak_after }}</span>
+        {% elif r.won == 0 %}<span class="loss">✗</span>
+        {% else %}<span class="pending">…</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="6" class="flat">sin predicciones aún — el poller corre cada xx:00/15/30/45</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<div class="footer">
+  Refresh auto cada 60s · UP gana si precio cierra ≥ precio inicial · DOWN gana si cierra menor<br>
+  Signal: score de tensión (6 señales agregadas) del BTC predictor :8001 · DB: <code>btc_quarter.db</code>
+</div>
+</body>
+</html>
+"""
+
+
+def _btc_quarter_conn() -> sqlite3.Connection | None:
+    if not BTC_QUARTER_DB.exists():
+        return None
+    return sqlite3.connect(BTC_QUARTER_DB)
+
+
+@app.route("/btc-quarter")
+def btc_quarter():
+    now = datetime.now(PR_TZ).strftime("%Y-%m-%d %H:%M AST")
+    c = _btc_quarter_conn()
+    streak = 0
+    best_streak = 0
+    wins = 0
+    settled = 0
+    win_rate = 0.0
+    active = None
+    rows = []
+    if c is not None:
+        cur = c.execute("""SELECT id, locked_at_iso, price_in, side,
+                                  settle_at_iso, price_out, won, streak_after
+                           FROM quarter_predictions
+                           ORDER BY id DESC LIMIT 15""")
+        for (rid, locked, p_in, side, settle, p_out, won, st_after) in cur:
+            try:
+                t_lock = datetime.fromisoformat(locked).astimezone(PR_TZ)
+                locked_hhmm = t_lock.strftime("%H:%M")
+            except Exception:
+                locked_hhmm = locked
+            delta = (p_out - p_in) if p_out is not None else None
+            rows.append({
+                "id": rid, "locked_hhmm": locked_hhmm,
+                "side": side, "price_in": p_in, "price_out": p_out,
+                "delta": delta, "won": won, "streak_after": st_after or 0,
+            })
+        cur = c.execute("""SELECT id, locked_at_iso, price_in, side, settle_at_iso
+                           FROM quarter_predictions
+                           WHERE won IS NULL AND price_out IS NULL
+                           ORDER BY id DESC LIMIT 1""")
+        row = cur.fetchone()
+        if row:
+            try:
+                settle_dt = datetime.fromisoformat(row[4]).astimezone(PR_TZ)
+                settle_hhmm = settle_dt.strftime("%H:%M")
+            except Exception:
+                settle_hhmm = row[4]
+            active = {"side": row[3], "price_in": row[2], "settle_hhmm": settle_hhmm}
+        cur = c.execute("SELECT COUNT(*), SUM(won) FROM quarter_predictions WHERE won IS NOT NULL")
+        row = cur.fetchone()
+        settled = row[0] or 0
+        wins = row[1] or 0
+        win_rate = (wins / settled * 100.0) if settled else 0.0
+        cur = c.execute("SELECT MAX(streak_after) FROM quarter_predictions")
+        best_streak = cur.fetchone()[0] or 0
+        cur = c.execute("""SELECT won FROM quarter_predictions
+                           WHERE won IS NOT NULL ORDER BY id DESC LIMIT 50""")
+        for (won,) in cur:
+            if won == 1:
+                streak += 1
+            else:
+                break
+        c.close()
+    return render_template_string(
+        BTC_QUARTER_TMPL, now=now, rows=rows, active=active,
+        streak=streak, best_streak=best_streak,
+        wins=wins, settled=settled, win_rate=win_rate,
+    )
 
 
 if __name__ == "__main__":

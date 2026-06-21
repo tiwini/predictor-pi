@@ -37,10 +37,18 @@ start_analysis_poller() {
   log "analysis_poller lanzado (PID $!)"
 }
 
+start_btc_quarter_poller() {
+  if pgrep -f "python.*btc_quarter_poller\.py" > /dev/null; then log "btc_quarter_poller ya corre"; return; fi
+  cd "$SCRIPT_DIR" || return
+  nohup ./weather-predictor/venv/bin/python3 btc_quarter_poller.py > btc_quarter_poller.log 2>&1 &
+  log "btc_quarter_poller lanzado (PID $!)"
+}
+
 start_weather
 start_crypto
 start_dashboard
 start_analysis_poller
+start_btc_quarter_poller
 
 sleep 2
 log "estado:"
@@ -48,3 +56,4 @@ is_up 8000 && log "  ✓ weather :8000 responde" || log "  ✗ weather :8000 NO 
 is_up 8001 && log "  ✓ crypto  :8001 responde" || log "  ✗ crypto  :8001 NO responde"
 pgrep -f "python.*dashboard\.py" > /dev/null && log "  ✓ dashboard corre" || log "  ✗ dashboard NO corre"
 pgrep -f "python.*analysis_poller\.py" > /dev/null && log "  ✓ analysis_poller corre" || log "  ✗ analysis_poller NO corre"
+pgrep -f "python.*btc_quarter_poller\.py" > /dev/null && log "  ✓ btc_quarter_poller corre" || log "  ✗ btc_quarter_poller NO corre"
