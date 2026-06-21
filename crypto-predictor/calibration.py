@@ -29,6 +29,11 @@ CREATE TABLE IF NOT EXISTS predictions (
 );
 CREATE INDEX IF NOT EXISTS idx_pred_target
     ON predictions(symbol, target_at);
+-- Para _due_predictions: SELECT ... WHERE ? >= target_at (sin symbol),
+-- el índice compuesto no sirve (el leading column es symbol). Sin este
+-- índice dedicado, el LEFT JOIN sobre 1.1M+ rows es full-scan cada 5s.
+CREATE INDEX IF NOT EXISTS idx_pred_target_at
+    ON predictions(target_at);
 
 CREATE TABLE IF NOT EXISTS outcomes (
     prediction_id INTEGER PRIMARY KEY,
@@ -129,7 +134,13 @@ def settle_due(db_path: str = DB_PATH,
 
 
 def _price_at(symbol: str, target_at: float) -> float:
-    """Open del candle 1m que arranca en target_at — precio exacto en XX:00:00."""
+    """Open del candle 1m que arranca en target_at — precio exacto en XX:00:00.
+
+    Si Binance aún no publicó ese candle, levanta ValueError. settle_due lo
+    captura y deja la predicción pendiente para reintentar en el próximo
+    loop. NUNCA hacer fallback a último close: settlea con el precio
+    equivocado de forma permanente (no se vuelve a tocar la row).
+    """
     import requests
     r = requests.get(
         f"{_pred.BINANCE_BASE}/klines",
@@ -143,9 +154,11 @@ def _price_at(symbol: str, target_at: float) -> float:
     r.raise_for_status()
     data = r.json()
     if not data:
-        # Aún no hay candle (viene con delay) → fallback al último close
-        kl = _pred.fetch_klines(symbol=symbol, interval="1m", limit=1)
-        return kl[-1].close
+        raise ValueError(f"kline at {target_at} not yet available for {symbol}")
+    kline_open_ms = int(data[0][0])
+    if kline_open_ms != int(target_at * 1000):
+        raise ValueError(
+            f"kline open_time {kline_open_ms} != target {int(target_at*1000)}")
     return float(data[0][1])  # open
 
 
