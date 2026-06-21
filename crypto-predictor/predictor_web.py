@@ -1866,8 +1866,10 @@ def api_quarter_signal():
     if intra15 and intra15.get("rows"):
         p_above_next = intra15["rows"][0]["p_above"]
         next_close_label = intra15["rows"][0]["label"]
+    brti_mid = external.get("brti_mid")
     return jsonify({
         "price": pred.now_price,
+        "brti_mid": brti_mid,
         "tension_score": tension["score"] if tension else None,
         "tension_direction": tension["direction"] if tension else None,
         "p_above_next": p_above_next,

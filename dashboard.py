@@ -570,9 +570,9 @@ BTC_QUARTER_TMPL = """<!doctype html>
     <div class="big">{{ best_streak }}</div>
   </div>
   <div class="card">
-    <h3>Win-rate (settled)</h3>
+    <h3>Win-rate (headline)</h3>
     <div class="big">{{ "%.0f"|format(win_rate) }}%</div>
-    <div class="flat" style="font-size:12px">{{ wins }}/{{ settled }} aciertos</div>
+    <div class="flat" style="font-size:12px">{{ wins }}/{{ settled }} aciertos · sesgo direccional posible</div>
   </div>
   <div class="card">
     <h3>Pendiente</h3>
@@ -589,11 +589,47 @@ BTC_QUARTER_TMPL = """<!doctype html>
   </div>
 </div>
 
+<div class="grid">
+  <div class="card">
+    <h3>UP win-rate</h3>
+    <div class="big up">{{ "%.0f"|format(up_rate) }}%</div>
+    <div class="flat" style="font-size:12px">{{ up_wins }}/{{ up_settled }} settled</div>
+  </div>
+  <div class="card">
+    <h3>DOWN win-rate</h3>
+    <div class="big down">{{ "%.0f"|format(down_rate) }}%</div>
+    <div class="flat" style="font-size:12px">{{ down_wins }}/{{ down_settled }} settled</div>
+  </div>
+  <div class="card">
+    <h3>Lean (|score| 0.5–1.5)</h3>
+    <div class="big">{{ "%.0f"|format(lean_rate) }}%</div>
+    <div class="flat" style="font-size:12px">{{ lean_wins }}/{{ lean_settled }} settled</div>
+  </div>
+  <div class="card">
+    <h3>Conviction (|score| ≥ 1.5)</h3>
+    <div class="big">{{ "%.0f"|format(conv_rate) }}%</div>
+    <div class="flat" style="font-size:12px">{{ conv_wins }}/{{ conv_settled }} settled</div>
+  </div>
+  <div class="card">
+    <h3>FLAT count</h3>
+    <div class="big flat">{{ flat_count }}</div>
+    <div class="flat" style="font-size:12px">no apuestas · |score| &lt; {{ "%.1f"|format(flat_threshold) }}</div>
+  </div>
+  <div class="card">
+    <h3>Empates</h3>
+    <div class="big flat">{{ tie_count }}</div>
+    <div class="flat" style="font-size:12px">price_out = price_in · excluído</div>
+  </div>
+</div>
+
 <table>
   <thead>
     <tr>
       <th>locked</th>
       <th>side</th>
+      <th>side</th>
+      <th>score</th>
+      <th>p≥</th>
       <th>price in</th>
       <th>price out</th>
       <th>Δ</th>
@@ -607,25 +643,29 @@ BTC_QUARTER_TMPL = """<!doctype html>
       <td class="{{ 'up' if r.side == 'UP' else ('down' if r.side == 'DOWN' else 'flat') }}">
         {{ r.side }}
       </td>
+      <td>{% if r.score is not none %}{{ "%+.2f"|format(r.score) }}{% else %}—{% endif %}</td>
+      <td>{% if r.p_above is not none %}{{ "%.0f"|format(r.p_above*100) }}%{% else %}—{% endif %}</td>
       <td>${{ "{:,.2f}".format(r.price_in) }}</td>
       <td>{% if r.price_out %}${{ "{:,.2f}".format(r.price_out) }}{% else %}—{% endif %}</td>
       <td>{% if r.delta is not none %}{{ "%+.2f"|format(r.delta) }}{% else %}—{% endif %}</td>
       <td>
         {% if r.won == 1 %}<span class="win">✓ {{ r.streak_after }}</span>
         {% elif r.won == 0 %}<span class="loss">✗</span>
+        {% elif r.price_out is not none %}<span class="flat">= tie</span>
         {% else %}<span class="pending">…</span>
         {% endif %}
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="6" class="flat">sin predicciones aún — el poller corre cada xx:00/15/30/45</td></tr>
+    <tr><td colspan="8" class="flat">sin predicciones aún — el poller corre cada xx:00/15/30/45</td></tr>
     {% endfor %}
   </tbody>
 </table>
 
 <div class="footer">
-  Refresh auto cada 60s · UP gana si precio cierra ≥ precio inicial · DOWN gana si cierra menor<br>
-  Signal: score de tensión (6 señales agregadas) del BTC predictor :8001 · DB: <code>btc_quarter.db</code>
+  Refresh auto 60s · UP gana si price_out &gt; price_in (estricto) · DOWN gana si price_out &lt; price_in · empates excluídos<br>
+  Headline win-rate puede tener sesgo direccional (e.g., bull market favorece UP). Mira UP/DOWN/lean/conviction separados.<br>
+  Signal: score de tensión (6 señales agregadas) :8001 · DB: <code>btc_quarter.db</code>
 </div>
 </body>
 </html>
@@ -638,23 +678,31 @@ def _btc_quarter_conn() -> sqlite3.Connection | None:
     return sqlite3.connect(BTC_QUARTER_DB)
 
 
+def _rate(wins: int, settled: int) -> float:
+    return (wins / settled * 100.0) if settled else 0.0
+
+
 @app.route("/btc-quarter")
 def btc_quarter():
     now = datetime.now(PR_TZ).strftime("%Y-%m-%d %H:%M AST")
     c = _btc_quarter_conn()
     streak = 0
     best_streak = 0
-    wins = 0
-    settled = 0
-    win_rate = 0.0
+    wins = settled = up_wins = up_settled = 0
+    down_wins = down_settled = 0
+    lean_wins = lean_settled = conv_wins = conv_settled = 0
+    flat_count = tie_count = 0
+    flat_threshold = 0.5
     active = None
     rows = []
     if c is not None:
         cur = c.execute("""SELECT id, locked_at_iso, price_in, side,
-                                  settle_at_iso, price_out, won, streak_after
+                                  settle_at_iso, price_out, won, streak_after,
+                                  tension_score, p_above_next
                            FROM quarter_predictions
-                           ORDER BY id DESC LIMIT 15""")
-        for (rid, locked, p_in, side, settle, p_out, won, st_after) in cur:
+                           ORDER BY id DESC LIMIT 20""")
+        for (rid, locked, p_in, side, settle, p_out, won, st_after,
+             score, p_above) in cur:
             try:
                 t_lock = datetime.fromisoformat(locked).astimezone(PR_TZ)
                 locked_hhmm = t_lock.strftime("%H:%M")
@@ -665,6 +713,7 @@ def btc_quarter():
                 "id": rid, "locked_hhmm": locked_hhmm,
                 "side": side, "price_in": p_in, "price_out": p_out,
                 "delta": delta, "won": won, "streak_after": st_after or 0,
+                "score": score, "p_above": p_above,
             })
         cur = c.execute("""SELECT id, locked_at_iso, price_in, side, settle_at_iso
                            FROM quarter_predictions
@@ -678,13 +727,26 @@ def btc_quarter():
             except Exception:
                 settle_hhmm = row[4]
             active = {"side": row[3], "price_in": row[2], "settle_hhmm": settle_hhmm}
-        cur = c.execute("SELECT COUNT(*), SUM(won) FROM quarter_predictions WHERE won IS NOT NULL")
-        row = cur.fetchone()
-        settled = row[0] or 0
-        wins = row[1] or 0
-        win_rate = (wins / settled * 100.0) if settled else 0.0
-        cur = c.execute("SELECT MAX(streak_after) FROM quarter_predictions")
-        best_streak = cur.fetchone()[0] or 0
+
+        row = c.execute("SELECT COUNT(*), COALESCE(SUM(won),0) FROM quarter_predictions WHERE won IS NOT NULL").fetchone()
+        settled, wins = row[0] or 0, row[1] or 0
+        row = c.execute("SELECT COUNT(*), COALESCE(SUM(won),0) FROM quarter_predictions WHERE won IS NOT NULL AND side='UP'").fetchone()
+        up_settled, up_wins = row[0] or 0, row[1] or 0
+        row = c.execute("SELECT COUNT(*), COALESCE(SUM(won),0) FROM quarter_predictions WHERE won IS NOT NULL AND side='DOWN'").fetchone()
+        down_settled, down_wins = row[0] or 0, row[1] or 0
+        row = c.execute("""SELECT COUNT(*), COALESCE(SUM(won),0) FROM quarter_predictions
+                           WHERE won IS NOT NULL
+                             AND ABS(tension_score) >= 0.5 AND ABS(tension_score) < 1.5""").fetchone()
+        lean_settled, lean_wins = row[0] or 0, row[1] or 0
+        row = c.execute("""SELECT COUNT(*), COALESCE(SUM(won),0) FROM quarter_predictions
+                           WHERE won IS NOT NULL AND ABS(tension_score) >= 1.5""").fetchone()
+        conv_settled, conv_wins = row[0] or 0, row[1] or 0
+        flat_count = c.execute("SELECT COUNT(*) FROM quarter_predictions WHERE side='FLAT'").fetchone()[0] or 0
+        tie_count = c.execute("""SELECT COUNT(*) FROM quarter_predictions
+                                  WHERE side IN ('UP','DOWN') AND price_out IS NOT NULL
+                                    AND won IS NULL""").fetchone()[0] or 0
+
+        best_streak = c.execute("SELECT COALESCE(MAX(streak_after),0) FROM quarter_predictions").fetchone()[0]
         cur = c.execute("""SELECT won FROM quarter_predictions
                            WHERE won IS NOT NULL ORDER BY id DESC LIMIT 50""")
         for (won,) in cur:
@@ -696,7 +758,12 @@ def btc_quarter():
     return render_template_string(
         BTC_QUARTER_TMPL, now=now, rows=rows, active=active,
         streak=streak, best_streak=best_streak,
-        wins=wins, settled=settled, win_rate=win_rate,
+        wins=wins, settled=settled, win_rate=_rate(wins, settled),
+        up_wins=up_wins, up_settled=up_settled, up_rate=_rate(up_wins, up_settled),
+        down_wins=down_wins, down_settled=down_settled, down_rate=_rate(down_wins, down_settled),
+        lean_wins=lean_wins, lean_settled=lean_settled, lean_rate=_rate(lean_wins, lean_settled),
+        conv_wins=conv_wins, conv_settled=conv_settled, conv_rate=_rate(conv_wins, conv_settled),
+        flat_count=flat_count, tie_count=tie_count, flat_threshold=flat_threshold,
     )
 
 
