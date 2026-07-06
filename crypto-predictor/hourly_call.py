@@ -13,6 +13,8 @@ Métricas:
 """
 from __future__ import annotations
 
+import json
+import math
 import sqlite3
 import time
 from contextlib import contextmanager
@@ -46,6 +48,10 @@ CREATE TABLE IF NOT EXISTS hourly_calls (
     actual_price REAL,
     won INTEGER,
     settled_at REAL,
+    z REAL,
+    proxy_price_at_settle REAL,
+    kalshi_null_reason TEXT,
+    kalshi_curve_json TEXT,
     UNIQUE(symbol, target_at)
 );
 CREATE INDEX IF NOT EXISTS idx_hcalls_unsettled
@@ -67,6 +73,18 @@ def _conn(db_path: str = DB_PATH):
 def init_db(db_path: str = DB_PATH) -> None:
     with _conn(db_path) as c:
         c.executescript(SCHEMA)
+        existing = [r[1] for r in c.execute("PRAGMA table_info(hourly_calls)")]
+        if "z" not in existing:
+            c.execute("ALTER TABLE hourly_calls ADD COLUMN z REAL")
+        if "proxy_price_at_settle" not in existing:
+            c.execute("ALTER TABLE hourly_calls ADD COLUMN "
+                      "proxy_price_at_settle REAL")
+        if "kalshi_null_reason" not in existing:
+            c.execute("ALTER TABLE hourly_calls ADD COLUMN "
+                      "kalshi_null_reason TEXT")
+        if "kalshi_curve_json" not in existing:
+            c.execute("ALTER TABLE hourly_calls ADD COLUMN "
+                      "kalshi_curve_json TEXT")
 
 
 @dataclass
@@ -87,6 +105,10 @@ class CallRow:
     actual_price: Optional[float]
     won: Optional[int]
     settled_at: Optional[float]
+    z: Optional[float] = None
+    proxy_price_at_settle: Optional[float] = None
+    kalshi_null_reason: Optional[str] = None
+    kalshi_curve_json: Optional[str] = None
 
 
 def _row_to_call(r: sqlite3.Row) -> CallRow:
@@ -114,16 +136,26 @@ def make_call(pred: _pred.Prediction, q: float = QUANTILE,
     kalshi_no_at_call = None
     model_no_at_strike = None
     edge_pp = None
+    kalshi_null_reason = None
+    kalshi_curve_json = None
     try:
-        ns = _kalshi.nearest_strike(pred.target_at, call_value)
-    except Exception:
+        ns, curve, kalshi_null_reason = _kalshi.curve_and_strike_with_reason(
+            pred.target_at, call_value)
+    except Exception as e:
         ns = None
+        curve = None
+        kalshi_null_reason = f"unhandled:{type(e).__name__}"
     if ns is not None:
         kalshi_strike, mid_yes = ns
         kalshi_no_at_strike = 1.0 - mid_yes
         p_above_strike = _pred.prob_above(pred, kalshi_strike)
         model_no_at_strike = 1.0 - p_above_strike
         edge_pp = (model_no_at_strike - kalshi_no_at_strike) * 100.0
+    if curve is not None:
+        strikes, mids, bids, asks = curve
+        kalshi_curve_json = json.dumps(
+            {"s": strikes, "m": mids, "b": bids, "a": asks},
+            separators=(",", ":"))
     try:
         kp_above_at_call = _kalshi.implied_above(pred.target_at, call_value)
         if kp_above_at_call is not None:
@@ -136,29 +168,71 @@ def make_call(pred: _pred.Prediction, q: float = QUANTILE,
             cur = c.execute(
                 "INSERT INTO hourly_calls(symbol, made_at, target_at, now_price, "
                 "sigma_h, quantile, call_value, kalshi_strike, kalshi_no_at_strike, "
-                "kalshi_no_at_call, model_no_at_strike, edge_pp) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                "kalshi_no_at_call, model_no_at_strike, edge_pp, "
+                "kalshi_null_reason, kalshi_curve_json) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (pred.symbol, pred.fetched_at, pred.target_at, pred.now_price,
                  pred.sigma_horizon, q, call_value, kalshi_strike,
                  kalshi_no_at_strike, kalshi_no_at_call,
-                 model_no_at_strike, edge_pp),
+                 model_no_at_strike, edge_pp, kalshi_null_reason,
+                 kalshi_curve_json),
             )
             return cur.lastrowid
         except sqlite3.IntegrityError:
             return None
 
 
+def _coinbase_price_at(symbol: str, target_at: float) -> float:
+    """Open del candle 1m en Coinbase Pro (proxy alternativo al Binance USDT
+    que usa settle_due para actual_price). BTCUSDT → BTC-USD.
+
+    Kalshi liquida con CFB BRTI (mediana de CB/KR/BS/GE). Coinbase es uno
+    de los 4 constituyentes y su USD open es la fuente pública más limpia
+    para el timestamp exacto. Sirve como oracle secundario: si
+    `actual_price - proxy_price_at_settle` es materialmente >0 sistemáticamente,
+    Binance USDT tiene premium y los settles nuestros discrepan del outcome
+    Kalshi real.
+    """
+    import requests
+    if symbol != "BTCUSDT":
+        raise ValueError(f"proxy_price_at solo BTC — got {symbol}")
+    r = requests.get(
+        "https://api.exchange.coinbase.com/products/BTC-USD/candles",
+        params={"granularity": 60,
+                "start": int(target_at),
+                "end": int(target_at) + 60},
+        timeout=10.0,
+    )
+    r.raise_for_status()
+    data = r.json()
+    if not data:
+        raise ValueError(f"coinbase kline at {target_at} not available")
+    # Coinbase devuelve [[time, low, high, open, close, volume], ...] descendente.
+    for k in data:
+        if int(k[0]) == int(target_at):
+            return float(k[3])
+    raise ValueError(f"coinbase kline open_time mismatch for {target_at}")
+
+
 def settle_due(db_path: str = DB_PATH, now: Optional[float] = None,
-               price_fn=None) -> int:
-    """Settlea calls con target_at ≤ now. Win si actual ≤ call_value."""
+               price_fn=None, proxy_price_fn=None) -> int:
+    """Settlea calls con target_at ≤ now. Win si actual ≤ call_value.
+
+    proxy_price_fn (opcional): fuente alternativa consultada en el mismo
+    target_at para poblar `proxy_price_at_settle`. Errores no bloquean el
+    settle — la columna queda NULL y el resto de la fila procede.
+    """
     if now is None:
         now = time.time()
     if price_fn is None:
         price_fn = _cal._price_at
+    if proxy_price_fn is None:
+        proxy_price_fn = _coinbase_price_at
     n = 0
     with _conn(db_path) as c:
         rows = c.execute(
-            "SELECT id, symbol, target_at, call_value FROM hourly_calls "
+            "SELECT id, symbol, target_at, call_value, now_price, sigma_h "
+            "FROM hourly_calls "
             "WHERE actual_price IS NULL AND target_at <= ?", (now,)
         ).fetchall()
         for r in rows:
@@ -167,12 +241,44 @@ def settle_due(db_path: str = DB_PATH, now: Optional[float] = None,
             except Exception:
                 continue
             won = 1 if price <= r["call_value"] else 0
+            # z = log(actual/now) / σ_h — outcome continuo standardized.
+            # Fable 2026-07-04: la calibración honesta se hace sobre PIT(z),
+            # no sobre won (1 bit del outcome). z NULL sólo si σ_h≤0.
+            try:
+                z = (math.log(float(price) / r["now_price"]) / r["sigma_h"]
+                     if r["sigma_h"] > 0 and r["now_price"] > 0 and price > 0
+                     else None)
+            except (ValueError, ZeroDivisionError):
+                z = None
+            try:
+                proxy = float(proxy_price_fn(r["symbol"], r["target_at"]))
+            except Exception:
+                proxy = None
             c.execute(
-                "UPDATE hourly_calls SET actual_price=?, won=?, settled_at=? "
-                "WHERE id=?",
-                (float(price), won, now, r["id"]),
+                "UPDATE hourly_calls SET actual_price=?, won=?, settled_at=?, "
+                "z=?, proxy_price_at_settle=? WHERE id=?",
+                (float(price), won, now, z, proxy, r["id"]),
             )
             n += 1
+        # Retry pass: rows settleadas recientemente cuyo proxy quedó NULL
+        # (típico: settle_due disparó pocos segundos post-target y el candle
+        # 1m Coinbase aún no estaba disponible). Filtro settled_at ≥ now-3600
+        # evita hammer sobre las N=953 filas históricas pre-instrumentación.
+        retry_rows = c.execute(
+            "SELECT id, symbol, target_at FROM hourly_calls "
+            "WHERE actual_price IS NOT NULL AND proxy_price_at_settle IS NULL "
+            "AND settled_at >= ? AND target_at <= ?",
+            (now - 3600, now - 90),
+        ).fetchall()
+        for r in retry_rows:
+            try:
+                proxy = float(proxy_price_fn(r["symbol"], r["target_at"]))
+            except Exception:
+                continue
+            c.execute(
+                "UPDATE hourly_calls SET proxy_price_at_settle=? WHERE id=?",
+                (proxy, r["id"]),
+            )
     return n
 
 
