@@ -5,10 +5,12 @@ sí hay edge predictivo es en la varianza: con realized vol de los últimos
 ~24h y un EWMA λ=0.94 (RiskMetrics estándar) se obtiene σ_1m bastante
 estable, escalable a σ_1h por √60.
 
-Distribución de log-returns: Student-t con df=4 (cripto tiene colas gordas;
-df=4 es el estándar empírico en literatura de riesgo). Re-escalada para
-preservar la varianza medida: scale = σ_h / √(df/(df-2)) = σ_h/√2.
-P(price > X) = 1 - F_T4(√2 · log(X/p_now)/σ_h).
+Distribución de log-returns: Student-t con df=5 (experimento registrado
+2026-07-05, ver memoria btc_pit_calibration_2026_07_04). MLE sobre N=953 dio
+df=5.05 [4.25, 6.25] rechazando df=4; residuo empírico N=966 encaja
+kurt_excess=+6.175 exactamente con t(5). Re-escalada para preservar la
+varianza medida: scale = σ_h · √((df-2)/df) = σ_h · √(3/5).
+P(price > X) = 1 - F_T5(√(5/3) · log(X/p_now)/σ_h).
 """
 from __future__ import annotations
 
@@ -26,7 +28,7 @@ DEFAULT_SYMBOL = "BTCUSDT"
 EWMA_LAMBDA = 0.97          # tunado vs 0.94: reduce |z|>2 de 1.70× a 1.46×
 LOOKBACK_MINUTES = 1440     # 24h de 1m candles para inicializar EWMA
 HORIZON_MINUTES = 60        # predicción a 1h
-DIST_DF = 4                 # Student-t df. None ⇒ Gaussiana
+DIST_DF = 5                 # Student-t df. None ⇒ Gaussiana. df=4→5 aplicado 2026-07-05.
 
 
 @dataclass
@@ -147,6 +149,91 @@ def _t4_inv(p: float) -> float:
     return z
 
 
+def _betacf(x: float, a: float, b: float) -> float:
+    """Continued fraction para regularized incomplete beta (Lentz modificado).
+    Numerical Recipes §6.4."""
+    MAXIT = 200
+    EPS = 3e-15
+    FPMIN = 1e-300
+    qab = a + b
+    qap = a + 1.0
+    qam = a - 1.0
+    c = 1.0
+    d = 1.0 - qab * x / qap
+    if abs(d) < FPMIN:
+        d = FPMIN
+    d = 1.0 / d
+    h = d
+    for m in range(1, MAXIT + 1):
+        m2 = 2 * m
+        aa = m * (b - m) * x / ((qam + m2) * (a + m2))
+        d = 1.0 + aa * d
+        if abs(d) < FPMIN:
+            d = FPMIN
+        c = 1.0 + aa / c
+        if abs(c) < FPMIN:
+            c = FPMIN
+        d = 1.0 / d
+        h *= d * c
+        aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2))
+        d = 1.0 + aa * d
+        if abs(d) < FPMIN:
+            d = FPMIN
+        c = 1.0 + aa / c
+        if abs(c) < FPMIN:
+            c = FPMIN
+        d = 1.0 / d
+        delta = d * c
+        h *= delta
+        if abs(delta - 1.0) < EPS:
+            return h
+    return h
+
+
+def _betainc(x: float, a: float, b: float) -> float:
+    """Regularized incomplete beta I_x(a,b) ∈ [0,1]."""
+    if x <= 0.0:
+        return 0.0
+    if x >= 1.0:
+        return 1.0
+    bt = math.exp(math.lgamma(a + b) - math.lgamma(a) - math.lgamma(b)
+                  + a * math.log(x) + b * math.log(1.0 - x))
+    if x < (a + 1.0) / (a + b + 2.0):
+        return bt * _betacf(x, a, b) / a
+    return 1.0 - bt * _betacf(1.0 - x, b, a) / b
+
+
+def _tdf_cdf(t: float, df: float) -> float:
+    """CDF Student-t con df arbitrario (df > 0). Usa relación
+    F_t(x) = 1 − 0.5·I_{df/(df+x²)}(df/2, 1/2) para x≥0."""
+    x = df / (df + t * t)
+    ib = _betainc(x, df / 2.0, 0.5)
+    if t >= 0:
+        return 1.0 - 0.5 * ib
+    return 0.5 * ib
+
+
+def _tdf_inv(p: float, df: float) -> float:
+    """Inverso F_t(df)⁻¹ por Newton. Guess: gaussian inverse escalada."""
+    if p <= 0 or p >= 1:
+        raise ValueError("p must be in (0,1)")
+    if df > 2:
+        z = _inv_norm(p) * math.sqrt(df / (df - 2))
+    else:
+        z = _inv_norm(p)
+    coef = math.exp(math.lgamma((df + 1) / 2.0) - math.lgamma(df / 2.0)) / \
+        math.sqrt(df * math.pi)
+    for _ in range(60):
+        f = _tdf_cdf(z, df) - p
+        if abs(f) < 1e-11:
+            break
+        pdf = coef * (1.0 + z * z / df) ** (-(df + 1) / 2.0)
+        if pdf <= 0:
+            break
+        z -= f / pdf
+    return z
+
+
 def _dist_cdf(z: float) -> float:
     """CDF de la distribución de log-returns ya re-escalada para que
     var(returns) = σ²_h. Argumento z = log(X/p_now)/σ_h (z-score gaussiano)."""
@@ -158,7 +245,7 @@ def _dist_cdf(z: float) -> float:
     arg = z * math.sqrt(df / (df - 2))
     if df == 4:
         return _t4_cdf(arg)
-    raise NotImplementedError(f"DIST_DF={df} no implementado")
+    return _tdf_cdf(arg, df)
 
 
 def _dist_inv(q: float) -> float:
@@ -169,8 +256,9 @@ def _dist_inv(q: float) -> float:
     df = DIST_DF
     if df == 4:
         t = _t4_inv(q)
-        return t / math.sqrt(df / (df - 2))
-    raise NotImplementedError(f"DIST_DF={df} no implementado")
+    else:
+        t = _tdf_inv(q, df)
+    return t / math.sqrt(df / (df - 2))
 
 
 def prob_above(pred: Prediction, threshold: float) -> float:
