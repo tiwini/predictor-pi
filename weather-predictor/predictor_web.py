@@ -1752,7 +1752,13 @@ def _split_recs(bins, min_edge_pp=5.0, tail_lo=0.08, tail_hi=0.92, top_k=3,
            (yes_mid entre low_edge_min_yes y low_edge_max_yes). Sanity check:
            dónde modelo y Kalshi coinciden.
     """
-    safe, edge, low = [], [], []
+    # tail-negation category RETIRADA 2026-07-07 (Fable audit response P0):
+    # los 89 penny-YES longshots con 6 winners contaminaron la validación de
+    # esta categoría bajo el ledger roto pre-2026-07-06. Se preserva la lógica
+    # comentada para re-audit post-N≥100 bets post-fix. Readmite solo si
+    # win_rate >55% con p<0.05 sobre N≥100.
+    safe: list = []  # <-- forzado vacío hasta re-audit
+    edge, low = [], []
     for b in bins:
         op = b.get("our_p"); km = b.get("yes_mid")
         if op is None or km is None:
@@ -1768,11 +1774,11 @@ def _split_recs(bins, min_edge_pp=5.0, tail_lo=0.08, tail_hi=0.92, top_k=3,
         }
         if edge_pp >= min_edge_pp:
             edge.append(rec)
-            if (op <= tail_lo and side == "NO") or (op >= tail_hi and side == "YES"):
-                safe.append(rec)
+            # PRE-RETIRO (2026-07-07):
+            # if (op <= tail_lo and side == "NO") or (op >= tail_hi and side == "YES"):
+            #     safe.append(rec)
         elif low_edge_min_yes <= km <= low_edge_max_yes:
             low.append(rec)
-    safe.sort(key=lambda r: r["edge_pp"], reverse=True)
     edge.sort(key=lambda r: r["edge_pp"], reverse=True)
     low.sort(key=lambda r: r["edge_pp"])
     return safe[:top_k], edge[:top_k], low[:top_k]

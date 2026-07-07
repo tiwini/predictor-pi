@@ -49,6 +49,23 @@ EDGE_THR_BY_STATION_DIR: dict[tuple[str, str], float] = {
     ("KPHX", "cold"): 0.15,
 }
 
+# ---- Safe mode D2 (Fable audit response 2026-07-07) ----
+# Ventana de verificación post-ledger-fix hasta N≥50 bets limpios. Endurece
+# filtros para evitar re-contaminar la nueva reliability curve mientras se
+# materializa. Al expirar SAFE_MODE_ACTIVE_UNTIL vuelve al comportamiento
+# base sin cambio de código. Reversible: bajar la fecha a hoy-1 desactiva.
+SAFE_MODE_ACTIVE_UNTIL = "2026-07-20"
+SAFE_MODE_MIN_EDGE_PP = 15.0
+SAFE_MODE_MAX_ENTRY_HOUR_LOCAL = 11
+SAFE_MODE_STREAK_BLOCK_AT = 2
+SAFE_MODE_EXT_GATE_F = 1.0
+SAFE_MODE_PENNY_YES_MIN_PRICE = 0.05
+
+
+def _safe_mode_active(target_date: date | None = None) -> bool:
+    t = target_date or date.today()
+    return t.isoformat() <= SAFE_MODE_ACTIVE_UNTIL
+
 
 @dataclass
 class BetStats:
@@ -163,11 +180,13 @@ def _direction(side: str, bin_lo: float, bin_hi: float,
 
 
 def _streak_blocks(station_id: str, direction: str,
-                   our_pred_f: float | None = None) -> int:
-    """Devuelve n_losses de la racha actual si ≥STREAK_BLOCK_AT, sino 0.
+                   our_pred_f: float | None = None,
+                   threshold: int | None = None) -> int:
+    """Devuelve n_losses de la racha actual si ≥threshold, sino 0.
 
     `our_pred_f` se propaga a `_direction` para que las bets históricas en
     bins medios se clasifiquen direccionalmente y cuenten para la racha.
+    `threshold` override lo usa safe mode D2 (2026-07-07) para endurecer a 2.
     """
     if direction == "mid":
         return 0
@@ -193,7 +212,8 @@ def _streak_blocks(station_id: str, direction: str,
             streak += 1
         else:
             break
-    return streak if streak >= STREAK_BLOCK_AT else 0
+    effective_thr = threshold if threshold is not None else STREAK_BLOCK_AT
+    return streak if streak >= effective_thr else 0
 
 
 def _cold_bias_blocks_yes(station_id: str, target_date: date,
@@ -302,11 +322,15 @@ def maybe_bet(station_id: str, target_date: date, ticker: str,
     # Look-ahead cutoff: entradas en la ventana donde el max diario ya se
     # realizó o casi. Fable/Codex retro 2026-07-06 mostró que 31 bets ≥15:00
     # local aportaron $1,019 (35% del pnl) — imposible que sea edge del modelo.
-    if station_local_hour is not None and station_local_hour >= LOCAL_HOUR_CUTOFF:
+    # Safe mode D2 (2026-07-07): tighten a 11:00 hasta 2026-07-20.
+    _safe = _safe_mode_active(target_date)
+    _eff_cutoff = SAFE_MODE_MAX_ENTRY_HOUR_LOCAL if _safe else LOCAL_HOUR_CUTOFF
+    if station_local_hour is not None and station_local_hour >= _eff_cutoff:
         return False
 
     edge = our_p - kalshi_p
-    if abs(edge) < edge_thr:
+    _eff_edge_thr = max(edge_thr, SAFE_MODE_MIN_EDGE_PP / 100.0) if _safe else edge_thr
+    if abs(edge) < _eff_edge_thr:
         return False
     # Side + honest fill: YES rellena al ask, NO al 1-bid. Sin bid/ask cae a mid.
     if edge > 0:
@@ -318,6 +342,15 @@ def maybe_bet(station_id: str, target_date: date, ticker: str,
     # Avoid degenerate prices (0 or 1) which blow up contracts count.
     if entry_price <= 0.01 or entry_price >= 0.99:
         return False
+
+    # Safe mode D2 (Fable 2026-07-07): skip tail bins (n bajo → luck domina)
+    # y penny-YES fills (89 bets pre-fix con 6 winners inflaron ROI). Hard
+    # skip, no shadow — no queremos poblar shadow con estas categorías.
+    if _safe:
+        if bin_lo == float("-inf") or bin_hi == float("inf"):
+            return False
+        if edge > 0 and entry_price < SAFE_MODE_PENNY_YES_MIN_PRICE:
+            return False
 
     direction = _direction(side, bin_lo, bin_hi, our_pred_f)
     reasons: list[str] = []
@@ -361,13 +394,16 @@ def maybe_bet(station_id: str, target_date: date, ticker: str,
 
     # Gate direccional vs externos (espejo de lectura.bias_blocks_bet).
     # ext_diff_f pre-shift del posterior — post-shift atenúa la señal.
+    # Safe mode D2: tighten gate a 1.0°F.
     if ext_diff_f is not None and direction != "mid":
-        if direction == "cold" and ext_diff_f <= -EXT_GATE_F:
+        _eff_ext = SAFE_MODE_EXT_GATE_F if _safe else EXT_GATE_F
+        if direction == "cold" and ext_diff_f <= -_eff_ext:
             reasons.append(f"ext_diff:cold:{ext_diff_f:+.1f}")
-        elif direction == "hot" and ext_diff_f >= EXT_GATE_F:
+        elif direction == "hot" and ext_diff_f >= _eff_ext:
             reasons.append(f"ext_diff:hot:{ext_diff_f:+.1f}")
 
-    if _streak_blocks(station_id, direction, our_pred_f):
+    _eff_streak = SAFE_MODE_STREAK_BLOCK_AT if _safe else STREAK_BLOCK_AT
+    if _streak_blocks(station_id, direction, our_pred_f, threshold=_eff_streak):
         reasons.append(f"streak:{direction}")
         _cleanup_blocked(station_id, target_date, direction, "streak",
                          our_pred_f)
