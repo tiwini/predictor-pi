@@ -2640,6 +2640,12 @@ SUPPORTED_STATIONS = [
 ]
 
 
+# Cache de Station objects para el dropdown del home. fetch_station hace
+# GET a NWS API — sin cache el home pagaba ~1s x N estaciones en cada render.
+# TTL infinito: metadata (lat/lon/tz/name) no cambia; reset via restart.
+_station_dropdown_cache: dict = {}
+
+
 def _supported_stations() -> list:
     """Return [(id, name), ...] for the curated Kalshi stations.
     Includes the active station even if it's not in the curated list,
@@ -2647,12 +2653,15 @@ def _supported_stations() -> list:
     out = []
     seen = set()
     for sid in SUPPORTED_STATIONS:
-        try:
-            s = fetch_station(sid)
-            out.append((sid, s.name))
-            seen.add(sid)
-        except Exception:
-            pass
+        s = _station_dropdown_cache.get(sid)
+        if s is None:
+            try:
+                s = fetch_station(sid)
+            except Exception:
+                continue
+            _station_dropdown_cache[sid] = s
+        out.append((sid, s.name))
+        seen.add(sid)
     if state is not None and state.station.id not in seen:
         out.insert(0, (state.station.id, state.station.name))
     return out
