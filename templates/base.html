@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{% if meta_refresh %}<meta http-equiv="refresh" content="{{ meta_refresh }}">{% endif %}
+<title>{% block title %}Predictores{% endblock %}</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
+{% block head_extra %}{% endblock %}
+</head>
+<body>
+<h1>{% block heading %}Predictores{% endblock %}</h1>
+<div class="sub">{% block subtitle %}{{ now }}{% endblock %}</div>
+{% block banners %}{% endblock %}
+<nav class="tabs">
+  <a href="/" {% if active_tab == 'home' %}class="active"{% endif %}>inicio</a>
+  <a href="/analysis" {% if active_tab == 'analysis' %}class="active"{% endif %}>análisis</a>
+  <a href="/btc-quarter" {% if active_tab == 'btc' %}class="active"{% endif %}>btc-15m</a>
+  <a href="/ai" {% if active_tab == 'ai' %}class="active"{% endif %}>ai</a>
+  <a href="/comments" {% if active_tab == 'comments' %}class="active"{% endif %}>comments</a>
+</nav>
+
+{% block content %}{% endblock %}
+
+{% block footer %}{% endblock %}
+</body>
+</html>

@@ -6,6 +6,9 @@ Sin estado, sin polling. Sólo HTML estático servido por Flask para tener un
 /analysis : tab de análisis con 6 aseveraciones (estación, rango, YES/NO,
 tu prob) comparadas contra el modelo y Kalshi. Lee de analysis.db poblado
 por analysis_poller.py.
+
+Templates viven en `templates/` (Jinja2) y CSS compartido en `static/dashboard.css`.
+Cada tab extiende `base.html`.
 """
 from __future__ import annotations
 
@@ -14,15 +17,35 @@ import sqlite3
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-from flask import Flask, request, render_template_string, redirect, url_for
+from flask import Flask, request, render_template, redirect, url_for
+
+try:
+    from agent_monitor import ask as agent_ask, PROMPTS as ASK_PROMPTS
+except Exception as _e:
+    agent_ask = None
+    ASK_PROMPTS = {}
 
 app = Flask(__name__)
+
+
+def station_label(code: str | None) -> str:
+    """Devuelve 'KBOS (Boston)' o 'KBOS' si no hay ciudad mapeada."""
+    if not code:
+        return ""
+    city = STATION_CITY.get(code, "") if "STATION_CITY" in globals() else ""
+    return f"{code} ({city})" if city else code
+
+
+@app.context_processor
+def _inject_helpers():
+    return {"station_label": station_label,
+            "station_city": STATION_CITY if "STATION_CITY" in globals() else {}}
 
 WEATHER_STATIONS = [
     ("KPHX", "Phoenix"),
     ("KLAX", "Los Angeles"),
     ("KLAS", "Las Vegas"),
-    ("KLGA", "New York (LGA→CP)"),
+    ("KLGA", "New York LGA→CP"),
     ("KBOS", "Boston"),
     ("KMIA", "Miami"),
     ("KMDW", "Chicago Midway"),
@@ -49,9 +72,12 @@ CRYPTO_SYMBOLS = [
     ("SOLUSDT", "Solana"),
 ]
 
-ANALYSIS_DB = Path.home() / "weather-predictor" / "analysis.db"
+STATION_CITY = {sid: name for sid, name in WEATHER_STATIONS}
+
+ANALYSIS_DB = Path(__file__).resolve().parent / "weather-predictor" / "analysis.db"
 ASSERTIONS_JSON = Path.home() / "dashboard_assertions.json"
 BTC_QUARTER_DB = Path(__file__).resolve().parent / "btc_quarter.db"
+AGENT_DB = Path(__file__).resolve().parent / "agent.db"
 N_SLOTS = 6
 PR_TZ = timezone(timedelta(hours=-4), name="AST")
 
@@ -103,14 +129,85 @@ def _bin_prob(maxes: list[float], lo: float, hi: float) -> float:
 
 def _kalshi_mid_for_bin(c: sqlite3.Connection, station: str,
                         lo: float, hi: float) -> tuple[float | None, str]:
-    """Devuelve (yes_mid, ts) del bin Kalshi más cercano al rango, o (None, "")."""
+    """Devuelve (yes_mid, ts) del bin Kalshi más cercano al rango, o (None, "").
+
+    Convención tail: lo=-1 → bin_lo=-Inf ("X or below"), hi=131 → bin_hi=+Inf ("X or above").
+    """
+    sql_lo = float("-inf") if lo == -1 else float(lo)
+    sql_hi = float("inf") if hi == 131 else float(hi)
     cur = c.execute("""SELECT yes_mid, ts FROM kalshi_snapshots
                        WHERE station = ? AND bin_lo = ? AND bin_hi = ?
-                       ORDER BY ts DESC LIMIT 1""", (station, lo, hi))
+                       ORDER BY ts DESC LIMIT 1""", (station, sql_lo, sql_hi))
     row = cur.fetchone()
     if not row:
         return None, ""
     return row[0], row[1]
+
+
+def _is_settled(snap: dict | None) -> bool:
+    """Mercado settled: ens_spread≈0 + obs presente + obs≈ens_med."""
+    if not snap:
+        return False
+    obs = snap.get("today_max_obs")
+    ens_med = snap.get("ens_med")
+    p10 = snap.get("ens_p10")
+    p90 = snap.get("ens_p90")
+    if obs is None or ens_med is None or p10 is None or p90 is None:
+        return False
+    spread = (p90 or 0) - (p10 or 0)
+    return spread <= 0.5 and abs(obs - ens_med) <= 1.0
+
+
+def _archive_assertion(slot: str, a: dict, snap: dict | None, reason: str) -> None:
+    """Guarda la aseveración en agent.db tabla assertion_archive antes de removerla del tab."""
+    try:
+        ac = sqlite3.connect(AGENT_DB)
+        ac.execute("""CREATE TABLE IF NOT EXISTS assertion_archive (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            slot TEXT, station TEXT, side TEXT,
+            lo INTEGER, hi INTEGER, user_prob INTEGER,
+            created_at TEXT, archived_at TEXT, reason TEXT,
+            today_max_obs REAL, ens_med REAL, ens_p10 REAL, ens_p90 REAL,
+            peak_status TEXT
+        )""")
+        snap = snap or {}
+        ac.execute("""INSERT INTO assertion_archive
+            (slot, station, side, lo, hi, user_prob, created_at, archived_at, reason,
+             today_max_obs, ens_med, ens_p10, ens_p90, peak_status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (slot, a.get("station"), a.get("side"), a.get("lo"), a.get("hi"),
+             a.get("prob"), a.get("created_at"),
+             datetime.now(timezone.utc).isoformat(), reason,
+             snap.get("today_max_obs"), snap.get("ens_med"),
+             snap.get("ens_p10"), snap.get("ens_p90"), snap.get("peak_status")))
+        ac.commit()
+        ac.close()
+    except Exception as e:
+        print(f"archive_assertion fail: {e}")
+
+
+def _sweep_settled_assertions(c: sqlite3.Connection, assertions: dict) -> list[str]:
+    """Mueve a archive las aseveraciones settled o de días pasados. Devuelve slots removidos."""
+    today_ast = datetime.now(PR_TZ).date()
+    removed = []
+    for slot, a in list(assertions.items()):
+        snap = _latest_station_snapshot(c, a["station"])
+        reason = None
+        try:
+            created = datetime.fromisoformat(a.get("created_at", "")).astimezone(PR_TZ).date()
+            if created < today_ast:
+                reason = "past_day"
+        except Exception:
+            pass
+        if reason is None and _is_settled(snap):
+            reason = "settled"
+        if reason is not None:
+            _archive_assertion(slot, a, snap, reason)
+            removed.append(slot)
+            del assertions[slot]
+    if removed:
+        _save_assertions(assertions)
+    return removed
 
 
 def _eval_assertion(c: sqlite3.Connection, a: dict) -> dict:
@@ -122,7 +219,6 @@ def _eval_assertion(c: sqlite3.Connection, a: dict) -> dict:
                 "current_f": None, "ens_med": None}
     lo, hi = float(a["lo"]), float(a["hi"])
     p_yes = _bin_prob(snap["ens_maxes"], lo, hi)
-    # Para NO: prob complementaria.
     model_p = p_yes if a["side"] == "YES" else (1.0 - p_yes)
 
     kalshi_yes, _k_ts = _kalshi_mid_for_bin(c, a["station"], lo, hi)
@@ -142,267 +238,7 @@ def _eval_assertion(c: sqlite3.Connection, a: dict) -> dict:
     }
 
 
-# ───────────────────── HTML templates ─────────────────────
-
-TMPL = """<!doctype html>
-<html lang="es">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Predictores · dashboard</title>
-<style>
-  :root {
-    --bg: #0e1117; --panel: #161b22; --border: #30363d;
-    --text: #c9d1d9; --muted: #8b949e; --accent: #58a6ff; --warn: #d29922;
-  }
-  * { box-sizing: border-box; }
-  body { margin: 0; padding: 18px; font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
-         background: var(--bg); color: var(--text); }
-  h1 { margin: 0 0 4px 0; font-size: 22px; }
-  .sub { color: var(--muted); margin-bottom: 18px; font-size: 13px; }
-  .tabs { display: flex; gap: 4px; margin-bottom: 14px; border-bottom: 1px solid var(--border); }
-  .tabs a { padding: 8px 14px; color: var(--muted); text-decoration: none;
-            border-bottom: 2px solid transparent; font-size: 13px; }
-  .tabs a.active { color: var(--accent); border-bottom-color: var(--accent); }
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; }
-  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px; }
-  .card h2 { margin: 0 0 8px 0; font-size: 16px; display: flex; align-items: baseline; gap: 8px; }
-  .card h2 a { color: var(--accent); text-decoration: none; }
-  .card h2 a:hover { text-decoration: underline; }
-  .card h2 .tag { font-size: 11px; color: var(--muted); font-weight: normal; }
-  .links { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-  .links a { display: inline-block; padding: 4px 8px; background: #21262d; border: 1px solid var(--border);
-             border-radius: 4px; color: var(--text); text-decoration: none; font-size: 12px; }
-  .links a:hover { border-color: var(--accent); color: var(--accent); }
-  .row { display: flex; justify-content: space-between; gap: 8px; align-items: center;
-         padding: 4px 0; border-bottom: 1px solid #21262d; font-size: 13px; }
-  .row:last-child { border-bottom: none; }
-  .row a { color: var(--accent); text-decoration: none; }
-  .row a:hover { text-decoration: underline; }
-  .row .muted { color: var(--muted); font-size: 11px; }
-  .footer { margin-top: 18px; color: var(--muted); font-size: 11px; }
-  code { background: #21262d; padding: 2px 5px; border-radius: 3px; font-size: 12px; }
-</style>
-</head>
-<body>
-<h1>Predictores</h1>
-<div class="sub">Entrada única · {{ host }} · {{ now }}</div>
-<div class="tabs">
-  <a href="/" class="active">inicio</a>
-  <a href="/analysis">análisis</a>
-  <a href="/btc-quarter">btc-15m</a>
-</div>
-
-<div class="grid">
-
-  <div class="card">
-    <h2><a href="{{ btc_base }}/">Cripto</a> <span class="tag">:8001 · AST</span></h2>
-    {% for sym, name in cryptos %}
-    <div class="row">
-      <a href="{{ btc_base }}/?symbol={{ sym }}">{{ name }}</a>
-      <span class="muted">{{ sym }}</span>
-    </div>
-    {% endfor %}
-    <div class="links">
-      <a href="{{ btc_base }}/hourly-call">hourly-call</a>
-      <a href="{{ btc_base }}/calibration">calibration</a>
-      <a href="{{ btc_base }}/history">history</a>
-      <a href="{{ btc_base }}/tutorial">tutorial</a>
-    </div>
-  </div>
-
-  <div class="card">
-    <h2><a href="{{ wx_base }}/">Weather</a> <span class="tag">:8000</span></h2>
-    {% for sid, name in stations %}
-    <div class="row">
-      <a href="{{ wx_base }}/?station={{ sid }}">{{ name }}</a>
-      <span class="muted">{{ sid }}</span>
-    </div>
-    {% endfor %}
-    <div class="links">
-      <a href="{{ wx_base }}/ladder">ladder</a>
-      <a href="{{ wx_base }}/comparison">comparison</a>
-      <a href="{{ wx_base }}/calibration">calibration</a>
-      <a href="{{ wx_base }}/edge">edge</a>
-      <a href="{{ wx_base }}/timing">timing</a>
-      <a href="{{ wx_base }}/cross">cross</a>
-      <a href="{{ wx_base }}/reweight">reweight</a>
-      <a href="{{ wx_base }}/movement">movement</a>
-      <a href="{{ wx_base }}/precip">precip</a>
-      <a href="{{ wx_base }}/bets">bets</a>
-      <a href="{{ wx_base }}/history">history</a>
-      <a href="{{ wx_base }}/status">status</a>
-      <a href="{{ wx_base }}/about">about</a>
-    </div>
-  </div>
-
-</div>
-
-<div class="footer">
-  Nota: weather sólo tiene una estación activa a la vez (single global state).
-  Hacer click en otra estación cambia la activa para todos los clientes —
-  multi-tab real requiere refactor de state.
-  <br>Accesible vía Tailscale <code>100.122.62.70:8080</code> o LAN <code>10.0.0.23:8080</code>.
-</div>
-
-</body>
-</html>
-"""
-
-
-ANALYSIS_TMPL = """<!doctype html>
-<html lang="es">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="refresh" content="600">
-<title>Análisis · aseveraciones</title>
-<style>
-  :root {
-    --bg:#0e1117; --panel:#161b22; --border:#30363d;
-    --text:#c9d1d9; --muted:#8b949e; --accent:#58a6ff;
-    --good:#3fb950; --bad:#f85149; --warn:#d29922;
-  }
-  * { box-sizing: border-box; }
-  body { margin:0; padding:18px; font:14px/1.4 system-ui,-apple-system,sans-serif;
-         background:var(--bg); color:var(--text); }
-  h1 { margin:0 0 4px 0; font-size:22px; }
-  .sub { color:var(--muted); margin-bottom:18px; font-size:13px; }
-  .tabs { display:flex; gap:4px; margin-bottom:14px; border-bottom:1px solid var(--border); }
-  .tabs a { padding:8px 14px; color:var(--muted); text-decoration:none;
-            border-bottom:2px solid transparent; font-size:13px; }
-  .tabs a.active { color:var(--accent); border-bottom-color:var(--accent); }
-  .grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(360px, 1fr)); gap:12px; }
-  .slot { background:var(--panel); border:1px solid var(--border);
-          border-radius:8px; padding:12px; }
-  .slot h3 { margin:0 0 8px 0; font-size:14px; color:var(--muted); }
-  .empty { color:var(--muted); font-style:italic; font-size:13px; }
-  form.add { display:grid; gap:6px; grid-template-columns:1fr 1fr;
-             margin-top:8px; }
-  form.add select, form.add input { background:#0d1117; color:var(--text);
-    border:1px solid var(--border); padding:5px 7px; border-radius:4px; font-size:13px; }
-  form.add button { grid-column:1/-1; padding:6px 10px; background:var(--accent); color:#0d1117;
-    border:none; border-radius:4px; cursor:pointer; font-weight:600; font-size:13px; }
-  .label { font-size:15px; font-weight:600; margin-bottom:6px; }
-  .metrics { display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px; margin-top:8px;
-             padding-top:8px; border-top:1px solid #21262d; font-size:12px; }
-  .metric { background:#0d1117; padding:6px 8px; border-radius:4px; }
-  .metric .k { color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:.5px; }
-  .metric .v { font-size:14px; font-weight:600; }
-  .diff-pos { color:var(--bad); }
-  .diff-neg { color:var(--good); }
-  .diff-flat { color:var(--muted); }
-  .ts { color:var(--muted); font-size:11px; margin-top:6px; }
-  .actions { display:flex; gap:6px; margin-top:8px; }
-  .actions form { display:inline; }
-  .actions button { padding:4px 10px; background:#21262d; color:var(--muted);
-    border:1px solid var(--border); border-radius:4px; cursor:pointer; font-size:12px; }
-  .footer { margin-top:18px; color:var(--muted); font-size:11px; }
-  .stale { color:var(--warn); }
-</style>
-</head>
-<body>
-<h1>Análisis</h1>
-<div class="sub">
-  Aseveraciones vs modelo y Kalshi · {{ now }} ·
-  poller {{ poller_status }} ·
-  <a href="/analysis" style="color:var(--accent)">refresh</a>
-</div>
-<div class="tabs">
-  <a href="/">inicio</a>
-  <a href="/analysis" class="active">análisis</a>
-  <a href="/btc-quarter">btc-15m</a>
-</div>
-
-<div class="grid">
-{% for slot in slots %}
-  <div class="slot">
-    <h3>Aseveración #{{ slot.idx }}</h3>
-    {% if slot.a %}
-      <div class="label">
-        {{ slot.a.station }} {{ slot.a.lo|int }}–{{ slot.a.hi|int }}°F
-        <span style="color:var(--accent)">{{ slot.a.side }}</span>
-        @ {{ slot.a.prob }}%
-      </div>
-      <div class="metrics">
-        <div class="metric">
-          <div class="k">tu prob</div>
-          <div class="v">{{ slot.a.prob }}%</div>
-        </div>
-        <div class="metric">
-          <div class="k">modelo</div>
-          <div class="v">
-            {% if slot.e.model_p is not none %}{{ "%.0f"|format(slot.e.model_p*100) }}%{% else %}—{% endif %}
-          </div>
-        </div>
-        <div class="metric">
-          <div class="k">kalshi</div>
-          <div class="v">
-            {% if slot.e.kalshi_p is not none %}{{ "%.0f"|format(slot.e.kalshi_p*100) }}%{% else %}—{% endif %}
-          </div>
-        </div>
-        <div class="metric">
-          <div class="k">diff vs modelo</div>
-          <div class="v {{ slot.diff_class_m }}">
-            {% if slot.e.diff_model is not none %}{{ "%+.0f"|format(slot.e.diff_model) }}pp{% else %}—{% endif %}
-          </div>
-        </div>
-        <div class="metric">
-          <div class="k">diff vs kalshi</div>
-          <div class="v {{ slot.diff_class_k }}">
-            {% if slot.e.diff_kalshi is not none %}{{ "%+.0f"|format(slot.e.diff_kalshi) }}pp{% else %}—{% endif %}
-          </div>
-        </div>
-        <div class="metric">
-          <div class="k">obs / med</div>
-          <div class="v" style="font-size:12px">
-            {% if slot.e.current_f is not none %}{{ "%.0f"|format(slot.e.current_f) }}°{% else %}—{% endif %}
-            /
-            {% if slot.e.ens_med is not none %}{{ "%.0f"|format(slot.e.ens_med) }}°{% else %}—{% endif %}
-          </div>
-        </div>
-      </div>
-      <div class="ts {{ slot.stale_class }}">snapshot: {{ slot.snap_age }}</div>
-      <div class="actions">
-        <form method="POST" action="/analysis/clear">
-          <input type="hidden" name="slot" value="{{ slot.idx }}">
-          <button type="submit">borrar</button>
-        </form>
-      </div>
-    {% else %}
-      <div class="empty">vacío</div>
-      <form method="POST" action="/analysis/set" class="add">
-        <input type="hidden" name="slot" value="{{ slot.idx }}">
-        <select name="station" required>
-          {% for sid, name in stations %}
-          <option value="{{ sid }}">{{ sid }} — {{ name }}</option>
-          {% endfor %}
-        </select>
-        <select name="side" required>
-          <option value="YES">YES</option>
-          <option value="NO">NO</option>
-        </select>
-        <input type="number" name="lo" min="0" max="130" step="1"
-               placeholder="lo °F" required>
-        <input type="number" name="hi" min="0" max="130" step="1"
-               placeholder="hi °F" required>
-        <input type="number" name="prob" min="1" max="99" step="1"
-               placeholder="tu %" required style="grid-column:1/-1">
-        <button type="submit">guardar</button>
-      </form>
-    {% endif %}
-  </div>
-{% endfor %}
-</div>
-
-<div class="footer">
-  Refresh auto cada 10 min · diff &gt; 0 = sobrestimas (rojo) · diff &lt; 0 = subestimas (verde)<br>
-  Poller corre en background; si "stale" es viejo, revisar logs de analysis_poller.
-</div>
-</body>
-</html>
-"""
-
+# ───────────────────── routes ─────────────────────
 
 @app.route("/")
 def home():
@@ -410,9 +246,10 @@ def home():
     host = request.host.split(":")[0]
     btc_base = f"http://{host}:8001"
     wx_base = f"http://{host}:8000"
-    return render_template_string(
-        TMPL, host=host, now=now, btc_base=btc_base, wx_base=wx_base,
+    return render_template(
+        "home.html", host=host, now=now, btc_base=btc_base, wx_base=wx_base,
         cryptos=CRYPTO_SYMBOLS, stations=WEATHER_STATIONS,
+        station_modes=_load_station_modes(),
     )
 
 
@@ -421,6 +258,9 @@ def analysis():
     now = datetime.now(PR_TZ).strftime("%Y-%m-%d %H:%M AST")
     assertions = _load_assertions()
     c = _conn()
+    swept = []
+    if c is not None and assertions:
+        swept = _sweep_settled_assertions(c, assertions)
 
     poller_status = "sin datos"
     if c is not None:
@@ -469,9 +309,9 @@ def analysis():
     if c:
         c.close()
 
-    return render_template_string(
-        ANALYSIS_TMPL, now=now, slots=slots, stations=WEATHER_STATIONS,
-        poller_status=poller_status,
+    return render_template(
+        "analysis.html", now=now, slots=slots, stations=WEATHER_STATIONS,
+        poller_status=poller_status, swept=swept,
     )
 
 
@@ -486,6 +326,8 @@ def analysis_set():
         prob = int(request.form["prob"])
     except (KeyError, ValueError):
         return "valores inválidos", 400
+    if not (-1 <= lo <= 131) or not (-1 <= hi <= 131):
+        return "lo/hi fuera de rango", 400
     if lo > hi:
         lo, hi = hi, lo
     if not (1 <= prob <= 99):
@@ -515,176 +357,6 @@ def analysis_clear():
         del d[slot]
         _save_assertions(d)
     return redirect(url_for("analysis"))
-
-
-BTC_QUARTER_TMPL = """<!doctype html>
-<html lang="es">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="refresh" content="60">
-<title>BTC quarter streak</title>
-<style>
-  :root {
-    --bg:#0e1117; --panel:#161b22; --border:#30363d;
-    --text:#c9d1d9; --muted:#8b949e; --accent:#58a6ff;
-    --good:#3fb950; --bad:#f85149; --warn:#d29922;
-  }
-  * { box-sizing: border-box; }
-  body { margin:0; padding:18px; font:14px/1.4 system-ui,-apple-system,sans-serif;
-         background:var(--bg); color:var(--text); }
-  h1 { margin:0 0 4px 0; font-size:22px; }
-  .sub { color:var(--muted); margin-bottom:18px; font-size:13px; }
-  .tabs { display:flex; gap:4px; margin-bottom:14px; border-bottom:1px solid var(--border); }
-  .tabs a { padding:8px 14px; color:var(--muted); text-decoration:none;
-            border-bottom:2px solid transparent; font-size:13px; }
-  .tabs a.active { color:var(--accent); border-bottom-color:var(--accent); }
-  .grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));
-          gap:12px; margin-bottom:18px; }
-  .card { background:var(--panel); border:1px solid var(--border);
-          border-radius:8px; padding:14px; }
-  .card h3 { margin:0 0 6px 0; font-size:12px; color:var(--muted);
-             text-transform:uppercase; letter-spacing:.5px; }
-  .big { font-size:32px; font-weight:700; }
-  .mid { font-size:18px; font-weight:600; }
-  .up { color:var(--good); }
-  .down { color:var(--bad); }
-  .flat { color:var(--muted); }
-  table { width:100%; border-collapse:collapse; background:var(--panel);
-          border:1px solid var(--border); border-radius:8px; overflow:hidden; }
-  th, td { padding:8px 10px; text-align:left; border-bottom:1px solid #21262d;
-           font-size:13px; }
-  th { background:#0d1117; color:var(--muted); font-weight:600;
-       text-transform:uppercase; font-size:11px; letter-spacing:.5px; }
-  tr:last-child td { border-bottom:none; }
-  .win { color:var(--good); font-weight:700; }
-  .loss { color:var(--bad); font-weight:700; }
-  .pending { color:var(--warn); font-style:italic; }
-  .footer { margin-top:18px; color:var(--muted); font-size:11px; }
-</style>
-</head>
-<body>
-<h1>BTC quarter streak</h1>
-<div class="sub">
-  Predicción direccional UP/DOWN cada 15 min con tensión score · {{ now }} ·
-  <a href="/btc-quarter" style="color:var(--accent)">refresh</a>
-</div>
-<div class="tabs">
-  <a href="/">inicio</a>
-  <a href="/analysis">análisis</a>
-  <a href="/btc-quarter" class="active">btc-15m</a>
-</div>
-
-<div class="grid">
-  <div class="card">
-    <h3>Racha actual</h3>
-    <div class="big {{ 'up' if streak > 0 else 'flat' }}">{{ streak }}</div>
-  </div>
-  <div class="card">
-    <h3>Mejor racha</h3>
-    <div class="big">{{ best_streak }}</div>
-  </div>
-  <div class="card">
-    <h3>Win-rate (headline)</h3>
-    <div class="big">{{ "%.0f"|format(win_rate) }}%</div>
-    <div class="flat" style="font-size:12px">{{ wins }}/{{ settled }} aciertos · sesgo direccional posible</div>
-  </div>
-  <div class="card">
-    <h3>Pendiente</h3>
-    {% if active %}
-      <div class="mid {{ 'up' if active.side == 'UP' else ('down' if active.side == 'DOWN' else 'flat') }}">
-        {{ active.side }}
-      </div>
-      <div class="flat" style="font-size:12px">
-        $ {{ "{:,.2f}".format(active.price_in) }} → settle {{ active.settle_hhmm }}
-      </div>
-    {% else %}
-      <div class="flat">—</div>
-    {% endif %}
-  </div>
-</div>
-
-<div class="grid">
-  <div class="card">
-    <h3>UP win-rate</h3>
-    <div class="big up">{{ "%.0f"|format(up_rate) }}%</div>
-    <div class="flat" style="font-size:12px">{{ up_wins }}/{{ up_settled }} settled</div>
-  </div>
-  <div class="card">
-    <h3>DOWN win-rate</h3>
-    <div class="big down">{{ "%.0f"|format(down_rate) }}%</div>
-    <div class="flat" style="font-size:12px">{{ down_wins }}/{{ down_settled }} settled</div>
-  </div>
-  <div class="card">
-    <h3>Lean (|score| 0.5–1.5)</h3>
-    <div class="big">{{ "%.0f"|format(lean_rate) }}%</div>
-    <div class="flat" style="font-size:12px">{{ lean_wins }}/{{ lean_settled }} settled</div>
-  </div>
-  <div class="card">
-    <h3>Conviction (|score| ≥ 1.5)</h3>
-    <div class="big">{{ "%.0f"|format(conv_rate) }}%</div>
-    <div class="flat" style="font-size:12px">{{ conv_wins }}/{{ conv_settled }} settled</div>
-  </div>
-  <div class="card">
-    <h3>FLAT count</h3>
-    <div class="big flat">{{ flat_count }}</div>
-    <div class="flat" style="font-size:12px">no apuestas · |score| &lt; {{ "%.1f"|format(flat_threshold) }}</div>
-  </div>
-  <div class="card">
-    <h3>Empates</h3>
-    <div class="big flat">{{ tie_count }}</div>
-    <div class="flat" style="font-size:12px">price_out = price_in · excluído</div>
-  </div>
-</div>
-
-<table>
-  <thead>
-    <tr>
-      <th>locked</th>
-      <th>side</th>
-      <th>side</th>
-      <th>score</th>
-      <th>p≥</th>
-      <th>price in</th>
-      <th>price out</th>
-      <th>Δ</th>
-      <th>resultado</th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for r in rows %}
-    <tr>
-      <td>{{ r.locked_hhmm }}</td>
-      <td class="{{ 'up' if r.side == 'UP' else ('down' if r.side == 'DOWN' else 'flat') }}">
-        {{ r.side }}
-      </td>
-      <td>{% if r.score is not none %}{{ "%+.2f"|format(r.score) }}{% else %}—{% endif %}</td>
-      <td>{% if r.p_above is not none %}{{ "%.0f"|format(r.p_above*100) }}%{% else %}—{% endif %}</td>
-      <td>${{ "{:,.2f}".format(r.price_in) }}</td>
-      <td>{% if r.price_out %}${{ "{:,.2f}".format(r.price_out) }}{% else %}—{% endif %}</td>
-      <td>{% if r.delta is not none %}{{ "%+.2f"|format(r.delta) }}{% else %}—{% endif %}</td>
-      <td>
-        {% if r.won == 1 %}<span class="win">✓ {{ r.streak_after }}</span>
-        {% elif r.won == 0 %}<span class="loss">✗</span>
-        {% elif r.price_out is not none %}<span class="flat">= tie</span>
-        {% else %}<span class="pending">…</span>
-        {% endif %}
-      </td>
-    </tr>
-    {% else %}
-    <tr><td colspan="8" class="flat">sin predicciones aún — el poller corre cada xx:00/15/30/45</td></tr>
-    {% endfor %}
-  </tbody>
-</table>
-
-<div class="footer">
-  Refresh auto 60s · UP gana si price_out &gt; price_in (estricto) · DOWN gana si price_out &lt; price_in · empates excluídos<br>
-  Headline win-rate puede tener sesgo direccional (e.g., bull market favorece UP). Mira UP/DOWN/lean/conviction separados.<br>
-  Signal: score de tensión (6 señales agregadas) :8001 · DB: <code>btc_quarter.db</code>
-</div>
-</body>
-</html>
-"""
 
 
 def _btc_quarter_conn() -> sqlite3.Connection | None:
@@ -770,8 +442,8 @@ def btc_quarter():
             else:
                 break
         c.close()
-    return render_template_string(
-        BTC_QUARTER_TMPL, now=now, rows=rows, active=active,
+    return render_template(
+        "btc_quarter.html", now=now, rows=rows, active=active,
         streak=streak, best_streak=best_streak,
         wins=wins, settled=settled, win_rate=_rate(wins, settled),
         up_wins=up_wins, up_settled=up_settled, up_rate=_rate(up_wins, up_settled),
@@ -780,6 +452,312 @@ def btc_quarter():
         conv_wins=conv_wins, conv_settled=conv_settled, conv_rate=_rate(conv_wins, conv_settled),
         flat_count=flat_count, tie_count=tie_count, flat_threshold=flat_threshold,
     )
+
+
+def _agent_conn() -> sqlite3.Connection | None:
+    if not AGENT_DB.exists():
+        return None
+    return sqlite3.connect(AGENT_DB)
+
+
+@app.route("/ai")
+def ai_view():
+    now = datetime.now(PR_TZ).strftime("%Y-%m-%d %H:%M AST")
+    c = _agent_conn()
+    cap = 15.00
+    spent = 0.0
+    spent_today = 0.0
+    calls_today = 0
+    paused = False
+    interval_min = "15"
+    night_off = True
+    burst_remaining = 0
+    last_ts = last_ts_human = last_summary = None
+    briefing = briefing_ts = None
+    decisions = []
+    last_ask_error = None
+    if c is not None:
+        row = c.execute("SELECT value FROM agent_state WHERE key='last_ask_error'").fetchone()
+        if row and row[0]:
+            last_ask_error = row[0]
+            c.execute("DELETE FROM agent_state WHERE key='last_ask_error'")
+            c.commit()
+        row = c.execute("SELECT value FROM agent_state WHERE key='budget_cap'").fetchone()
+        if row:
+            cap = float(row[0])
+        row = c.execute("SELECT value FROM agent_state WHERE key='paused'").fetchone()
+        paused = bool(row and row[0] == "1")
+        row = c.execute("SELECT value FROM agent_state WHERE key='interval_min'").fetchone()
+        if row:
+            interval_min = row[0]
+        row = c.execute("SELECT value FROM agent_state WHERE key='night_off'").fetchone()
+        night_off = bool(row and row[0] == "1")
+        row = c.execute("SELECT value FROM agent_state WHERE key='burst_until'").fetchone()
+        if row and row[0]:
+            try:
+                until = datetime.fromisoformat(row[0])
+                rem = (until - datetime.now(timezone.utc)).total_seconds() / 60.0
+                if rem > 0:
+                    burst_remaining = int(rem) + 1
+            except Exception:
+                pass
+        row = c.execute("SELECT COALESCE(SUM(cost_usd),0) FROM agent_decisions").fetchone()
+        spent = float(row[0] or 0)
+        today_start = datetime.now(timezone.utc).replace(
+            hour=0, minute=0, second=0, microsecond=0).isoformat()
+        row = c.execute("""SELECT COALESCE(SUM(cost_usd),0), COUNT(*)
+                           FROM agent_decisions WHERE ts >= ?""",
+                        (today_start,)).fetchone()
+        spent_today = float(row[0] or 0)
+        calls_today = int(row[1] or 0)
+        briefing = briefing_ts = None
+        try:
+            cur = c.execute("""SELECT ts, briefing_text FROM agent_decisions
+                WHERE is_briefing=1 ORDER BY ts DESC LIMIT 1""")
+            row = cur.fetchone()
+            if row:
+                try:
+                    t = datetime.fromisoformat(row[0]).astimezone(PR_TZ)
+                    briefing_ts = t.strftime("%Y-%m-%d %H:%M AST")
+                except Exception:
+                    briefing_ts = row[0]
+                briefing = row[1] or ""
+        except sqlite3.OperationalError:
+            pass
+        cur = c.execute("""SELECT ts, summary, n_opportunities, cost_usd,
+                                  opportunities_json, ask_kind
+                           FROM agent_decisions WHERE COALESCE(is_briefing,0)=0
+                           ORDER BY id DESC LIMIT 20""")
+        for ts, summary, n_opps, cost, opps_json, ask_kind in cur:
+            try:
+                t = datetime.fromisoformat(ts).astimezone(PR_TZ)
+                ts_hhmm = t.strftime("%m-%d %H:%M")
+            except Exception:
+                ts_hhmm = ts
+            try:
+                opps = json.loads(opps_json) if opps_json else []
+            except Exception:
+                opps = []
+            ask_label = ASK_PROMPTS.get(ask_kind, {}).get("label") if ask_kind else None
+            decisions.append({
+                "ts_hhmm": ts_hhmm, "summary": summary or "",
+                "n_opportunities": n_opps or 0, "cost": cost or 0,
+                "opps": opps, "ask_kind": ask_kind, "ask_label": ask_label,
+            })
+        if decisions:
+            last_ts = decisions[0]["ts_hhmm"]
+            last_ts_human = last_ts
+            last_summary = decisions[0]["summary"]
+        c.close()
+    pct = (spent / cap * 100.0) if cap else 0.0
+    projected_monthly = spent_today * 30
+    cost_per_call = 0.002
+    try:
+        mins = 1 if burst_remaining else (0 if interval_min == "off" else int(interval_min))
+        if mins > 0:
+            active_hours = 18 if night_off else 24
+            projected_at_interval = cost_per_call * (active_hours * 60 / mins)
+        else:
+            projected_at_interval = 0.0
+    except Exception:
+        projected_at_interval = 0.0
+    return render_template(
+        "ai.html", now=now, cap=cap, spent=spent, pct=pct,
+        spent_today=spent_today, calls_today=calls_today,
+        projected_monthly=projected_monthly, paused=paused,
+        interval_min=interval_min, night_off=night_off,
+        burst_remaining=burst_remaining,
+        projected_at_interval=projected_at_interval,
+        last_ts=last_ts, last_ts_human=last_ts_human, last_summary=last_summary,
+        decisions=decisions, briefing=briefing, briefing_ts=briefing_ts,
+        memory_path="~/.claude/.../MEMORY.md",
+        ask_prompts=ASK_PROMPTS, last_ask_error=last_ask_error,
+    )
+
+
+@app.route("/ai/toggle-pause", methods=["POST"])
+def ai_toggle_pause():
+    c = _agent_conn()
+    if c is None:
+        return redirect(url_for("ai_view"))
+    row = c.execute("SELECT value FROM agent_state WHERE key='paused'").fetchone()
+    new_val = "0" if (row and row[0] == "1") else "1"
+    c.execute("UPDATE agent_state SET value=? WHERE key='paused'", (new_val,))
+    c.commit()
+    c.close()
+    return redirect(url_for("ai_view"))
+
+
+VALID_INTERVALS_STR = {"1","5","10","30","60","120","240","480","600","800","1000","off"}
+
+
+def _ensure_state_keys(c: sqlite3.Connection) -> None:
+    for k, v in [("interval_min", "15"), ("night_off", "1"), ("burst_until", "")]:
+        if not c.execute("SELECT value FROM agent_state WHERE key=?", (k,)).fetchone():
+            c.execute("INSERT INTO agent_state(key,value) VALUES(?,?)", (k, v))
+    c.commit()
+
+
+@app.route("/ai/set-interval", methods=["POST"])
+def ai_set_interval():
+    c = _agent_conn()
+    if c is None:
+        return redirect(url_for("ai_view"))
+    _ensure_state_keys(c)
+    v = (request.form.get("interval_min") or "").strip()
+    if v not in VALID_INTERVALS_STR:
+        c.close()
+        return redirect(url_for("ai_view"))
+    c.execute("UPDATE agent_state SET value=? WHERE key='interval_min'", (v,))
+    c.execute("UPDATE agent_state SET value='' WHERE key='burst_until'")
+    c.commit()
+    c.close()
+    return redirect(url_for("ai_view"))
+
+
+@app.route("/ai/toggle-night-off", methods=["POST"])
+def ai_toggle_night_off():
+    c = _agent_conn()
+    if c is None:
+        return redirect(url_for("ai_view"))
+    _ensure_state_keys(c)
+    row = c.execute("SELECT value FROM agent_state WHERE key='night_off'").fetchone()
+    new_val = "0" if (row and row[0] == "1") else "1"
+    c.execute("UPDATE agent_state SET value=? WHERE key='night_off'", (new_val,))
+    c.commit()
+    c.close()
+    return redirect(url_for("ai_view"))
+
+
+@app.route("/ai/burst", methods=["POST"])
+def ai_burst():
+    c = _agent_conn()
+    if c is None:
+        return redirect(url_for("ai_view"))
+    _ensure_state_keys(c)
+    until = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    c.execute("UPDATE agent_state SET value=? WHERE key='burst_until'", (until,))
+    c.commit()
+    c.close()
+    return redirect(url_for("ai_view"))
+
+
+@app.route("/ai/ask", methods=["POST"])
+def ai_ask():
+    """Botón 'Preguntar AI ahora' — ejecuta canned prompt one-off."""
+    kind = (request.form.get("kind") or "").strip()
+    if agent_ask is None or kind not in ASK_PROMPTS:
+        return redirect(url_for("ai_view"))
+    result = agent_ask(kind)
+    c = _agent_conn()
+    if c is not None:
+        if not result.get("ok"):
+            c.execute(
+                "INSERT OR REPLACE INTO agent_state(key,value) VALUES('last_ask_error', ?)",
+                (result.get("error", "error desconocido"),))
+        else:
+            c.execute("DELETE FROM agent_state WHERE key='last_ask_error'")
+        c.commit()
+        c.close()
+    return redirect(url_for("ai_view"))
+
+
+def _comments_conn() -> sqlite3.Connection:
+    c = sqlite3.connect(AGENT_DB)
+    c.execute("""CREATE TABLE IF NOT EXISTS comments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts TEXT NOT NULL,
+        category TEXT NOT NULL DEFAULT 'note',
+        body TEXT NOT NULL
+    )""")
+    c.commit()
+    return c
+
+
+def _station_modes_conn() -> sqlite3.Connection:
+    c = sqlite3.connect(AGENT_DB)
+    c.execute("""CREATE TABLE IF NOT EXISTS station_modes (
+        station TEXT PRIMARY KEY,
+        observation INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT
+    )""")
+    c.commit()
+    return c
+
+
+def _load_station_modes() -> dict:
+    """Devuelve {station: observation_int} para todas las estaciones marcadas."""
+    try:
+        c = _station_modes_conn()
+        rows = c.execute("SELECT station, observation FROM station_modes").fetchall()
+        c.close()
+        return {sid: obs for sid, obs in rows}
+    except Exception:
+        return {}
+
+
+@app.route("/station/observe/<sid>", methods=["POST"])
+def station_toggle_observe(sid: str):
+    sid = (sid or "").strip().upper()
+    if sid not in {s for s, _ in WEATHER_STATIONS}:
+        return redirect(url_for("home"))
+    c = _station_modes_conn()
+    row = c.execute("SELECT observation FROM station_modes WHERE station=?", (sid,)).fetchone()
+    new_val = 0 if (row and row[0] == 1) else 1
+    now = datetime.now(timezone.utc).isoformat()
+    if row:
+        c.execute("UPDATE station_modes SET observation=?, updated_at=? WHERE station=?",
+                  (new_val, now, sid))
+    else:
+        c.execute("INSERT INTO station_modes(station, observation, updated_at) VALUES(?, ?, ?)",
+                  (sid, new_val, now))
+    c.commit()
+    c.close()
+    return redirect(request.referrer or url_for("home"))
+
+
+@app.route("/comments")
+def comments_view():
+    now = datetime.now(PR_TZ).strftime("%Y-%m-%d %H:%M AST")
+    c = _comments_conn()
+    cur = c.execute("SELECT id, ts, category, body FROM comments ORDER BY id DESC")
+    comments = []
+    for cid, ts, cat, body in cur:
+        try:
+            t = datetime.fromisoformat(ts).astimezone(PR_TZ)
+            ts_human = t.strftime("%Y-%m-%d %H:%M AST")
+        except Exception:
+            ts_human = ts
+        comments.append({"id": cid, "ts_human": ts_human,
+                         "category": cat or "note", "body": body})
+    total = c.execute("SELECT COUNT(*) FROM comments").fetchone()[0]
+    c.close()
+    return render_template("comments.html", now=now, comments=comments, total=total)
+
+
+@app.route("/comments/add", methods=["POST"])
+def comments_add():
+    body = (request.form.get("body") or "").strip()
+    if not body:
+        return redirect(url_for("comments_view"))
+    category = (request.form.get("category") or "note").strip()
+    if category not in ("note", "bug", "idea"):
+        category = "note"
+    c = _comments_conn()
+    c.execute("INSERT INTO comments(ts, category, body) VALUES (?, ?, ?)",
+              (datetime.now(timezone.utc).isoformat(), category, body[:5000]))
+    c.commit()
+    c.close()
+    return redirect(url_for("comments_view"))
+
+
+@app.route("/comments/delete/<int:cid>", methods=["POST"])
+def comments_delete(cid: int):
+    c = _comments_conn()
+    c.execute("DELETE FROM comments WHERE id=?", (cid,))
+    c.commit()
+    c.close()
+    return redirect(url_for("comments_view"))
 
 
 if __name__ == "__main__":

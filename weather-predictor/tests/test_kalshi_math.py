@@ -10,25 +10,52 @@ def _bin(lo, hi, yes_mid, ticker="T"):
 
 def test_our_p_for_bin_uniform_ensemble():
     ens = [60.0, 61.0, 62.0, 63.0, 64.0]
-    # Bin covering 61-62 should catch 2 of 5 members.
-    assert kalshi.our_p_for_bin(ens, 61, 62) == 2 / 5
+    # Bin covering 61-62 catches 2 of 5 → Laplace (2+1)/(5+2) = 3/7.
+    assert math.isclose(kalshi.our_p_for_bin(ens, 61, 62), 3 / 7)
 
 
 def test_our_p_for_bin_uses_half_integer_edges():
     # NWS integers; ensemble values exactly at edge go to the bin below it.
     ens = [60.5, 61.5, 62.5]
+    # 2 of 3 hit → Laplace (2+1)/(3+2) = 3/5.
     p = kalshi.our_p_for_bin(ens, 61, 62)
-    assert math.isclose(p, 2 / 3)
+    assert math.isclose(p, 3 / 5)
 
 
 def test_our_p_for_bin_open_tails():
     ens = [50.0, 70.0, 90.0]
-    assert kalshi.our_p_for_bin(ens, float("-inf"), 60) == 1 / 3
-    assert kalshi.our_p_for_bin(ens, 80, float("inf")) == 1 / 3
+    # 1 of 3 hit → Laplace (1+1)/(3+2) = 2/5.
+    assert math.isclose(kalshi.our_p_for_bin(ens, float("-inf"), 60), 2 / 5)
+    assert math.isclose(kalshi.our_p_for_bin(ens, 80, float("inf")), 2 / 5)
 
 
 def test_our_p_for_bin_empty_ensemble():
+    # Empty bails early — Laplace not applied.
     assert kalshi.our_p_for_bin([], 60, 62) == 0.0
+
+
+def test_our_p_for_bin_laplace_bounds():
+    # 31-member ensemble concentrated in one bin (real KOKC/KDEN case):
+    # raw 31/31 = 1.00 becomes (31+1)/(31+2) = 32/33 ≈ 0.970
+    # raw 0/31 = 0.00 becomes (0+1)/(31+2) = 1/33 ≈ 0.030
+    ens_hot = [92.0] * 31
+    p_in = kalshi.our_p_for_bin(ens_hot, 91, 92)
+    p_out = kalshi.our_p_for_bin(ens_hot, 95, 96)
+    assert math.isclose(p_in, 32 / 33)
+    assert math.isclose(p_out, 1 / 33)
+    assert p_in < 1.0 and p_out > 0.0
+
+
+def test_our_p_for_bin_effective_n_caps_at_31():
+    # predictor.py resamples ~31 raw members to N_SAMPLES=500 by proportional
+    # replication (no new info). With naive Laplace (cnt+1)/(n+2) at n=500,
+    # a fully-concentrated bin returns 501/502 ≈ 0.998 — shrinkage too weak
+    # to solve the phantom-edge problem. EFF_N=31 caps the prior strength.
+    ens_hot = [92.0] * 500
+    p_in = kalshi.our_p_for_bin(ens_hot, 91, 92)
+    p_out = kalshi.our_p_for_bin(ens_hot, 95, 96)
+    assert math.isclose(p_in, 32 / 33)
+    assert math.isclose(p_out, 1 / 33)
 
 
 def test_implied_prob_above_simple():

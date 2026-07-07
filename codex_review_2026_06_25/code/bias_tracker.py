@@ -63,19 +63,6 @@ NUDGE_ATTEN_HALF = 0.5
 CONDITIONAL_MIN_DAYS = 3
 COND_BUCKET_EDGE = 50.0  # below = "cold regime", at/above = "warm regime"
 
-# Fable/Codex retro 2026-07-06 (P1 #3): sesgo frío estacional persistente que
-# el EWMA no captura (rebota diariamente pero media -1.5°F sostenida). Aplicado
-# como constante ANTES del bias_tracker en predictor.py; el tracker lo compensa
-# en samples históricos pre-fecha para evitar double-correction durante el
-# transitorio de 7 días. Revisar Sep-Oct si el sesgo residual > 0.5°F sobre 30
-# días — puede ser regime shift estacional que exige recalibrar.
-SEASONAL_OFFSET_F = {
-    "KLAS": -1.70,  # ~-1 bin, cold-bias GFS
-    "KPHX": -1.55,  # cold-bias, coincide con Q1 KPHX cold-guard Round 4
-    "KBOS": -0.99,
-}
-SEASONAL_OFFSET_ACTIVE_SINCE = "2026-07-06"  # ISO date
-
 
 def compute_bias(station_id: str, today: Optional[_date] = None,
                  db_path: Path = DEFAULT_DB,
@@ -96,44 +83,26 @@ def compute_bias(station_id: str, today: Optional[_date] = None,
     con = sqlite3.connect(db_path)
     try:
         cur = con.cursor()
-        # early_pred = mediana de los primeros 3 auto-snapshots tras T08:00.
-        # Fix Codex Round 4 (2026-06-25): un solo snapshot exploratorio
-        # (ej. KLGA 06-21: 94 → 77 → 82 en 2 min antes de estabilizar en 82)
-        # antes contaba como "early_pred" y metía un err fantasma de +12°F al
-        # EWMA. La mediana de 3 es robusta a un outlier inicial.
         cur.execute(
             """
-            SELECT date, max_obs_f FROM day_outcomes
-            WHERE station_id = ? AND date < ?
-            ORDER BY date DESC LIMIT ?
+            SELECT o.date, o.max_obs_f,
+                   (SELECT threshold FROM prediction_snapshots p
+                    WHERE p.station_id = o.station_id
+                      AND p.date = o.date
+                      AND p.is_auto = 1
+                      AND p.snapshot_time > o.date || 'T08:00'
+                    ORDER BY p.snapshot_time ASC LIMIT 1) AS early_pred
+            FROM day_outcomes o
+            WHERE o.station_id = ? AND o.date < ?
+            ORDER BY o.date DESC LIMIT ?
             """,
             (station_id, today.isoformat(), N_DAYS),
         )
-        outcomes = cur.fetchall()
-        rows = []
-        for d, actual in outcomes:
-            cur.execute(
-                """
-                SELECT threshold FROM prediction_snapshots
-                WHERE station_id = ? AND date = ? AND is_auto = 1
-                  AND snapshot_time > ? || 'T08:00' AND threshold IS NOT NULL
-                ORDER BY snapshot_time ASC LIMIT 3
-                """,
-                (station_id, d, d),
-            )
-            thresholds = sorted(t[0] for t in cur.fetchall())
-            if thresholds:
-                pred = thresholds[len(thresholds) // 2]
-                # Compensación del offset estacional: si el snapshot es
-                # anterior a la fecha de activación, sumamos |offset| al pred
-                # histórico para que el err reflejado sea el residual
-                # post-offset. Evita que el EWMA de la ventana de transición
-                # (7 días) dispare una segunda corrección sobre el offset ya
-                # aplicado. Post-activación, pred_stored ya incluye offset.
-                _off = SEASONAL_OFFSET_F.get(station_id, 0.0)
-                if _off != 0.0 and d < SEASONAL_OFFSET_ACTIVE_SINCE:
-                    pred = pred - _off  # _off negativo → suma magnitud
-                rows.append((d, float(actual), float(pred)))
+        rows = [
+            (d, float(actual), float(pred))
+            for d, actual, pred in cur.fetchall()
+            if pred is not None
+        ]
     finally:
         con.close()
 

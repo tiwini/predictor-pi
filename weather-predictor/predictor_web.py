@@ -44,6 +44,22 @@ try:
     import external_models as _external_models
 except Exception:
     _external_models = None
+try:
+    import station_brief as _station_brief
+except Exception:
+    _station_brief = None
+try:
+    import sys as _sys
+    _sys.path.insert(0, "/home/popeye/predictor-pi")
+    from agent_monitor import (ask_station as _ask_station,
+                                get_last_station_ask as _get_last_station_ask,
+                                clear_last_station_ask as _clear_last_station_ask,
+                                STATION_PROMPTS as _STATION_PROMPTS)
+except Exception as _e:
+    _ask_station = None
+    _get_last_station_ask = lambda s: None
+    _clear_last_station_ask = lambda s: None
+    _STATION_PROMPTS = {}
 
 
 def build_day_chart_svg(day_chart, current_hour: int) -> str:
@@ -554,6 +570,21 @@ HTML = """<!doctype html>
         {% endif %}
       </div>
       {% endif %}
+      {% if regime_tag and regime_tag.tag != 'stable' %}
+      <div class="diff-badge diff-{% if regime_tag.bet_action == 'skip' %}hard{% elif regime_tag.bet_action == 'soft_warn' %}medium{% else %}easy{% endif %}"
+           style="margin-top:.4rem">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <strong>Régimen</strong>
+          <span class="diff-label">{{ regime_tag.tag }}</span>
+        </div>
+        <div class="diff-reasons">{{ regime_tag.reason }}</div>
+        {% if regime_tag.bet_action == 'skip' %}
+        <div class="diff-skip">⚠ saltar bets — modelo blown</div>
+        {% elif regime_tag.bet_action == 'soft_warn' %}
+        <div class="diff-reasons" style="font-style:italic">cautela en bets de cola</div>
+        {% endif %}
+      </div>
+      {% endif %}
       <h3>Hoy</h3>
       <div class="kv"><span class="kv-k">Max obs</span><span>{{ '%.1f' % snap.today_max_obs }}°F</span></div>
       <div class="kv"><span class="kv-k">Min obs</span><span>{{ '%.1f' % snap.today_min_obs }}°F</span></div>
@@ -717,6 +748,7 @@ HTML = """<!doctype html>
       <a href="/timing" style="color:#fab387">Peak timing →</a>
       <a href="/edge" style="color:#94e2d5">Edge tracking →</a>
       <a href="/cross" style="color:#cba6f7">Cross-station →</a>
+      <a href="/grid" style="color:#fab387">Grid 20 estaciones (heatmap) →</a>
       <a href="/movement" style="color:#f9e2af">Movement tracking →</a>
       <a href="/history" style="color:#b4befe">Historial diario →</a>
       <a href="/bets" style="color:#f5c2e7">Simulador P&amp;L →</a>
@@ -735,7 +767,7 @@ HTML = """<!doctype html>
     const age = Math.floor((Date.now() - lastUpdate) / 1000);
     const el = document.getElementById('age');
     if (el) el.textContent = age;
-    if (age >= 12 && age % 10 === 2) {
+    if (age >= 60 && age % 60 === 0) {
       fetch('/api/ping').then(r => r.json()).then(d => {
         if (d.ts && d.ts_ms > lastUpdate) location.reload();
       }).catch(() => {});
@@ -987,6 +1019,12 @@ def index():
 
     signals = _build_signals(difficulty, market, external, dash, snap)
 
+    try:
+        import regime as _regime
+        regime_tag = _regime.classify(snap, station.id, snap.station_local)
+    except Exception:
+        regime_tag = None
+
     return render_template_string(
         HTML, station=station, snap=snap, dash=dash, hero=hero,
         signals=signals,
@@ -1000,7 +1038,7 @@ def index():
         day_chart_svg=day_chart_svg,
         climate=climate, climate_class=climate_class, climate_word=climate_word,
         market=market, timing=timing, clock=clock, precip=precip,
-        difficulty=difficulty,
+        difficulty=difficulty, regime_tag=regime_tag,
         market_name=_market_name(station.id),
     )
 
@@ -1011,6 +1049,31 @@ def api_ping():
         return jsonify({"ts": None})
     ts_ms = int(state.last_snapshot.fetched_at.timestamp() * 1000)
     return jsonify({"ts": state.last_snapshot.fetched_at.isoformat(), "ts_ms": ts_ms})
+
+
+@app.route("/api/quota")
+def api_quota():
+    """Open-Meteo daily quota counter. Reset implícito a UTC midnight."""
+    try:
+        import om_quota
+        return jsonify({
+            **om_quota.today_count(),
+            "limit": om_quota.DAILY_LIMIT,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/streak")
+def api_streak():
+    """Top estaciones en racha de precisión por ventana horaria local."""
+    try:
+        import streaks as _streaks
+        from calibration import DB_PATH as _CAL_DB
+        out = _streaks.compute_streaks(str(_CAL_DB))
+        return jsonify(_streaks.to_json(out, top_n=3))
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/set", methods=["POST"])
@@ -1235,6 +1298,16 @@ COMPARE_TMPL = """<!doctype html>
   .diff-pos{color:#a6e3a1}
   .diff-neg{color:#f38ba8}
   .dim{color:#6c7086;font-size:12px}
+  .pill{display:inline-block;padding:.05rem .4rem;border-radius:3px;font-size:11px;font-weight:600}
+  .rec-yes{background:#2a4a32;color:#a6e3a1}
+  .rec-no{background:#4a2a32;color:#f38ba8}
+  .rec-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:.8rem}
+  .rec-row{font-family:monospace;font-size:13px;padding:5px 0;border-bottom:1px solid #313244}
+  .rec-row:last-child{border-bottom:none}
+  .card.safe{border-left:3px solid #a6e3a1}
+  .card.edge{border-left:3px solid #fab387}
+  .card.low{border-left:3px solid #89b4fa}
+  .card h3{margin:0 0 .4rem;font-size:14px}
 </style></head><body>
 <p><a href="/">&larr; volver</a></p>
 <h1>{{market_name}} vs nuestro modelo — {{station}}  {{target_date}} ({{day_label}})</h1>
@@ -1257,12 +1330,120 @@ COMPARE_TMPL = """<!doctype html>
     {% endif %}
   </div>
 </div>
+{% if brief %}
+<div class="card" style="border-left:3px solid #89b4fa">
+  <div style="color:#89b4fa;font-size:13px;font-weight:600;margin-bottom:.3rem">📍 {{brief[0]}}</div>
+  <div style="font-size:13px;line-height:1.5;color:#cdd6f4">{{brief[1]}}</div>
+</div>
+{% endif %}
+{% if station_streak %}
+<div class="card" style="border-left:3px solid #fab387">
+  <div style="color:#fab387;font-size:13px;font-weight:600;margin-bottom:.4rem">
+    🔥 Racha de precisión {{station}} — |err|≤{{'%.1f'|format(streak_thresh_f)}}°F · <a href="/api/streak" style="color:#89b4fa;font-size:11px">top global ↗</a>
+  </div>
+  <table style="font-size:13px">
+    <tr><th>ventana local</th><th>racha</th><th>últimos días</th></tr>
+    {% for w in station_streak %}
+    <tr>
+      <td class="num">{{'%02d'|format(w.window)}}:00</td>
+      <td class="num">
+        {% if w.days >= 3 %}<b style="color:#a6e3a1">{{w.days}}d 🔥</b>
+        {% elif w.days >= 1 %}<span style="color:#f9e2af">{{w.days}}d</span>
+        {% else %}<span class="dim">—</span>{% endif %}
+      </td>
+      <td class="num" style="font-size:11px">
+        {% for d in w.details %}<span title="pred {{d.pred_f}} obs {{d.obs_f}}">{{d.date[5:]}} Δ{{'%+.1f'|format(d.err_f)}}</span>{% if not loop.last %} · {% endif %}{% endfor %}
+        {% if not w.details %}<span class="dim">—</span>{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  <div class="dim" style="font-size:11px;margin-top:.4rem">Snapshot auto más cercano a cada hora ancla (±2h tolerancia). Días sin snapshot saltan; solo error &gt; umbral rompe la racha.</div>
+</div>
+{% endif %}
+{% if ask_enabled and station_prompts %}
+<div class="card" style="border-left:3px solid #f9e2af">
+  <div style="color:#f9e2af;font-size:13px;font-weight:600;margin-bottom:.4rem">🤖 Preguntar AI sobre {{station}}</div>
+  <div style="display:flex;flex-wrap:wrap;gap:6px">
+    {% for k, p in station_prompts.items() %}
+    <form method="POST" action="/ai/station-ask" style="margin:0">
+      <input type="hidden" name="kind" value="{{k}}">
+      <input type="hidden" name="station" value="{{station}}">
+      <button type="submit" style="background:#313244;color:#cdd6f4;border:1px solid #585b70;padding:5px 10px;border-radius:4px;font-size:12px;cursor:pointer">{{p.label}}</button>
+    </form>
+    {% endfor %}
+  </div>
+  {% if ask_error %}
+  <div style="margin-top:.5rem;color:#f38ba8;font-size:12px">⚠ {{ask_error}}</div>
+  {% endif %}
+  {% if last_ask %}
+  <div style="margin-top:.7rem;padding:.6rem;background:#181825;border-radius:4px;border-left:2px solid #f9e2af">
+    <div style="display:flex;justify-content:space-between;align-items:start;gap:.5rem">
+      <div style="color:#f9e2af;font-size:12px;font-weight:600">{{last_ask.label}}</div>
+      <form method="POST" action="/ai/station-ask/clear" style="margin:0">
+        <input type="hidden" name="station" value="{{station}}">
+        <button type="submit" style="background:none;border:none;color:#6c7086;cursor:pointer;font-size:11px">✕</button>
+      </form>
+    </div>
+    <div style="font-size:13px;line-height:1.5;margin-top:.4rem;white-space:pre-wrap">{{last_ask.text}}</div>
+    <div class="dim" style="font-size:10px;margin-top:.4rem">${{'%.4f'|format(last_ask.cost)}} · {{last_ask.ts[:19].replace('T',' ')}}Z</div>
+  </div>
+  {% endif %}
+  <div class="dim" style="font-size:11px;margin-top:.4rem">Cada click hace una call ad-hoc a Claude Haiku (~$0.002, ~3s). Respeta budget y pausa del agente.</div>
+</div>
+{% endif %}
 {% if not bins %}
 <div class="card">
   <p>No hay mercado activo para esta estación/fecha.</p>
   <p class="dim">Estaciones soportadas (Kalshi): KPHX, KLAX, KLAS, KLGA, KBOS.</p>
 </div>
 {% else %}
+{% if recs_safe or recs_edge or recs_low %}
+<div class="rec-grid">
+  {% if recs_safe %}
+  <div class="card safe">
+    <h3 style="color:#a6e3a1">🛡 más seguras (tail-negation)</h3>
+    {% for r in recs_safe %}
+    <div class="rec-row">
+      <b>{{r.label}}</b>
+      <span class="pill rec-{{r.side|lower}}">{{r.side}}</span>
+      · ours {{'%.0f'|format(r.our_p*100)}}% vs {{market_name}} {{'%.0f'|format(r.yes_mid*100)}}%
+      · <b style="color:#a6e3a1">+{{'%.0f'|format(r.edge_pp)}}pp</b>
+    </div>
+    {% endfor %}
+    <div class="dim" style="margin-top:.5rem">our_p extremo (≤8% o ≥92%) + edge ≥5pp: convicción alta del modelo, side opuesto al mercado. Cuidado si regime_break.</div>
+  </div>
+  {% endif %}
+  {% if recs_edge %}
+  <div class="card edge">
+    <h3 style="color:#fab387">⚡ mayor edge</h3>
+    {% for r in recs_edge %}
+    <div class="rec-row">
+      <b>{{r.label}}</b>
+      <span class="pill rec-{{r.side|lower}}">{{r.side}}</span>
+      · ours {{'%.0f'|format(r.our_p*100)}}% vs {{market_name}} {{'%.0f'|format(r.yes_mid*100)}}%
+      · <b style="color:#fab387">+{{'%.0f'|format(r.edge_pp)}}pp</b>
+    </div>
+    {% endfor %}
+    <div class="dim" style="margin-top:.5rem">top 3 por |diff| (cualquier dirección): mayor upside teórico, incluye middle-bin con más varianza.</div>
+  </div>
+  {% endif %}
+  {% if recs_low %}
+  <div class="card low">
+    <h3 style="color:#89b4fa">🤝 menor edge (consenso)</h3>
+    {% for r in recs_low %}
+    <div class="rec-row">
+      <b>{{r.label}}</b>
+      <span class="pill rec-{{r.side|lower}}">{{r.side}}</span>
+      · ours {{'%.0f'|format(r.our_p*100)}}% vs {{market_name}} {{'%.0f'|format(r.yes_mid*100)}}%
+      · <b style="color:#89b4fa">{{'%+.0f'|format(r.edge_pp if r.side=='YES' else -r.edge_pp)}}pp</b>
+    </div>
+    {% endfor %}
+    <div class="dim" style="margin-top:.5rem">bins en zona activa del mercado donde modelo y {{market_name}} más coinciden. Sanity check, no apostar — sin edge no hay valor esperado.</div>
+  </div>
+  {% endif %}
+</div>
+{% endif %}
 <div class="card"><table>
 <tr><th style="text-align:left">rango</th>
     <th>{{market_name}} (mid)</th><th>nosotros</th>
@@ -1428,11 +1609,14 @@ def _anchor_context(station, dist):
     pred_med = sorted(dist)[len(dist) // 2]
     ext_diff = pred_med - mm.median
     lam = 0.0
+    nudge_ext_used = 0.0
     snap = getattr(state, "last_snapshot", None) if state else None
     if snap is not None and getattr(snap, "ext_shift_info", None):
         lam = float(snap.ext_shift_info.get("lambda") or 0.0)
+        nudge_ext_used = float(snap.ext_shift_info.get("nudge_ext_used") or 0.0)
     return {"ext_med": mm.median, "ext_spread": mm.spread,
-            "ext_diff": ext_diff, "lam": lam}
+            "ext_diff": ext_diff, "lam": lam,
+            "nudge_ext_used": nudge_ext_used}
 
 
 def _load_day_dist(station, day_offset: int):
@@ -1558,6 +1742,42 @@ def ladder_view():
         market_name=_market_name(station.id))
 
 
+def _split_recs(bins, min_edge_pp=5.0, tail_lo=0.08, tail_hi=0.92, top_k=3,
+                low_edge_min_yes=0.05, low_edge_max_yes=0.95):
+    """Divide en 'safe' (tail-negation), 'edge' (top |diff|), 'low' (consenso).
+
+    safe = our_p extremo + side opuesto al mercado + edge ≥ min_edge_pp.
+    edge = top_k por |our_p - yes_mid|, cualquier dirección.
+    low  = top_k con MENOR |diff| dentro de la zona activa del mercado
+           (yes_mid entre low_edge_min_yes y low_edge_max_yes). Sanity check:
+           dónde modelo y Kalshi coinciden.
+    """
+    safe, edge, low = [], [], []
+    for b in bins:
+        op = b.get("our_p"); km = b.get("yes_mid")
+        if op is None or km is None:
+            continue
+        if km <= 0.01 or km >= 0.99:
+            continue
+        diff = op - km
+        side = "YES" if diff > 0 else "NO"
+        edge_pp = abs(diff) * 100
+        rec = {
+            "label": b["label"], "side": side,
+            "our_p": op, "yes_mid": km, "edge_pp": edge_pp,
+        }
+        if edge_pp >= min_edge_pp:
+            edge.append(rec)
+            if (op <= tail_lo and side == "NO") or (op >= tail_hi and side == "YES"):
+                safe.append(rec)
+        elif low_edge_min_yes <= km <= low_edge_max_yes:
+            low.append(rec)
+    safe.sort(key=lambda r: r["edge_pp"], reverse=True)
+    edge.sort(key=lambda r: r["edge_pp"], reverse=True)
+    low.sort(key=lambda r: r["edge_pp"])
+    return safe[:top_k], edge[:top_k], low[:top_k]
+
+
 @app.route("/comparison")
 def comparison_view():
     if _kalshi is None:
@@ -1621,7 +1841,8 @@ def comparison_view():
                 blended, w = _external_models.blend_with_external(
                     iso_p, anchor_ctx["ext_med"], anchor_ctx["ext_spread"],
                     b["bin_lo"], b["bin_hi"],
-                    anchor_ctx["ext_diff"], anchor_ctx["lam"])
+                    anchor_ctx["ext_diff"], anchor_ctx["lam"],
+                    ext_used=anchor_ctx.get("nudge_ext_used", 0.0))
                 b["our_p"] = blended
                 b["our_p_iso"] = iso_p
                 b["anchor_weight"] = w
@@ -1647,6 +1868,36 @@ def comparison_view():
             fetched_age = latest_ts
     else:
         fetched_age = "—"
+
+    recs_safe, recs_edge, recs_low = _split_recs(bins)
+    brief = _station_brief.get(station.id) if _station_brief else None
+    last_ask = _get_last_station_ask(station.id) if _ask_station else None
+    ask_error = None
+    # Racha de precisión por ventana local para esta estación
+    try:
+        import streaks as _streaks
+        from calibration import DB_PATH as _CAL_DB
+        _st_rows = _streaks.compute_streaks(
+            str(_CAL_DB), stations=[station.id])
+        station_streak = [
+            {"window": w,
+             "days": (_st_rows[w][0].streak_days if _st_rows.get(w) else 0),
+             "details": ([{"date": dd.date.isoformat(),
+                           "pred_f": round(dd.pred_f, 1),
+                           "obs_f": round(dd.obs_f, 1),
+                           "err_f": round(dd.err_f, 1)}
+                          for dd in _st_rows[w][0].details[:3]]
+                         if _st_rows.get(w) else [])}
+            for w in _streaks.WINDOWS_LOCAL
+        ]
+        streak_thresh_f = _streaks.THRESH_F
+    except Exception as _e:
+        station_streak = []
+        streak_thresh_f = 1.5
+    # Render-once error param coming from /ai/station-ask redirect
+    if request.args.get("ask_err"):
+        ask_error = request.args.get("ask_err")
+
     day_labels = {0: "hoy", 1: "mañana", 2: "pasado"}
     return render_template_string(
         COMPARE_TMPL,
@@ -1662,7 +1913,40 @@ def comparison_view():
         cal_n_days=(cal.n_days if cal else 0),
         cal_min_n=_iso.MIN_N, cal_min_days=_iso.MIN_DAYS,
         market_name=_market_name(station.id),
+        recs_safe=recs_safe,
+        recs_edge=recs_edge,
+        recs_low=recs_low,
+        brief=brief,
+        station_prompts=_STATION_PROMPTS,
+        last_ask=last_ask,
+        ask_error=ask_error,
+        ask_enabled=(_ask_station is not None),
+        station_streak=station_streak,
+        streak_thresh_f=streak_thresh_f,
     )
+
+
+@app.route("/ai/station-ask", methods=["POST"])
+def ai_station_ask():
+    if _ask_station is None:
+        return "agent_monitor no disponible", 500
+    kind = request.form.get("kind", "").strip()
+    sid = request.form.get("station", "").strip().upper()
+    if not kind or not sid:
+        return redirect("/comparison?ask_err=parámetros+faltantes")
+    res = _ask_station(kind, sid)
+    if not res.get("ok"):
+        from urllib.parse import quote
+        return redirect(f"/comparison?ask_err={quote(res.get('error', 'error'))}")
+    return redirect("/comparison")
+
+
+@app.route("/ai/station-ask/clear", methods=["POST"])
+def ai_station_ask_clear():
+    sid = request.form.get("station", "").strip().upper()
+    if sid:
+        _clear_last_station_ask(sid)
+    return redirect("/comparison")
 
 
 @app.route("/calibration")
@@ -2165,9 +2449,62 @@ def movement_view():
 DEFAULT_CROSS = ["KPHX", "KLAX", "KLAS", "KLGA", "KBOS"]
 
 PEAK_POLL_SEC = 180
+LOST_POLL_SEC = 2700  # 45 min para estaciones settled / sin info útil
+
+import sqlite3 as _sqlite3_modes
+from pathlib import Path as _Path_modes
+
+_AGENT_DB_FOR_MODES = _Path_modes(__file__).resolve().parent.parent / "agent.db"
+_ANALYSIS_DB_FOR_MODES = _Path_modes(__file__).resolve().parent / "analysis.db"
+
+
+def _station_mode(station_id: str) -> str:
+    """Devuelve 'observation' | 'lost' | 'normal'.
+
+    - observation: toggle manual en agent.db.station_modes (sube polling a 3 min)
+    - lost: auto si último snapshot indica mercado settled (baja polling a 45 min)
+    - normal: lógica peak/off-peak existente
+    """
+    try:
+        if _AGENT_DB_FOR_MODES.exists():
+            c = _sqlite3_modes.connect(_AGENT_DB_FOR_MODES)
+            row = c.execute(
+                "SELECT observation FROM station_modes WHERE station=?",
+                (station_id,),
+            ).fetchone()
+            c.close()
+            if row and row[0] == 1:
+                return "observation"
+    except Exception:
+        pass
+    try:
+        if _ANALYSIS_DB_FOR_MODES.exists():
+            c = _sqlite3_modes.connect(_ANALYSIS_DB_FOR_MODES)
+            row = c.execute(
+                """SELECT today_max_obs, ens_med, ens_p10, ens_p90
+                   FROM station_snapshots
+                   WHERE station=? ORDER BY ts DESC LIMIT 1""",
+                (station_id,),
+            ).fetchone()
+            c.close()
+            if row:
+                obs, ens_med, p10, p90 = row
+                if (obs is not None and ens_med is not None
+                        and p10 is not None and p90 is not None):
+                    spread = (p90 or 0) - (p10 or 0)
+                    if spread <= 0.5 and abs(obs - ens_med) <= 1.0:
+                        return "lost"
+    except Exception:
+        pass
+    return "normal"
 
 
 def _poll_interval_for(station) -> int:
+    mode = _station_mode(station.id)
+    if mode == "observation":
+        return PEAK_POLL_SEC
+    if mode == "lost":
+        return LOST_POLL_SEC
     lo, hi = PEAK_HOURS.get(station.id, (12, 16))
     hour = datetime.now(station.tz).hour
     return PEAK_POLL_SEC if lo <= hour < hi else POLL_SEC
@@ -2633,17 +2970,26 @@ def _health_badge() -> tuple[str, str]:
     return "bad", "BAD"
 
 
-SUPPORTED_STATIONS = [
-    "KPHX", "KLAX", "KLAS", "KLGA", "KBOS", "KMIA", "KMDW",
-    "KIAH", "KSFO", "KAUS", "KDEN", "KSAT", "KDCA", "KDFW",
-    "KPHL", "KSEA", "KATL", "KMSY", "KOKC", "KMSP",
-]
+from stations import STATION_IDS as SUPPORTED_STATIONS  # noqa: E402
 
 
-# Cache de Station objects para el dropdown del home. fetch_station hace
-# GET a NWS API — sin cache el home pagaba ~1s x N estaciones en cada render.
-# TTL infinito: metadata (lat/lon/tz/name) no cambia; reset via restart.
-_station_dropdown_cache: dict = {}
+# Cache de Station objects por id. fetch_station hace GET a NWS API — no
+# queremos pagarlo cada tick del poll_loop cuando iteramos SUPPORTED_STATIONS
+# para el settle multi-estación. TTL infinito: metadata (lat/lon/tz/name) no
+# cambia. Reset via restart si NWS renombra algo.
+_station_obj_cache: dict = {}
+
+
+def _get_cached_station(sid: str):
+    hit = _station_obj_cache.get(sid)
+    if hit is not None:
+        return hit
+    try:
+        st = fetch_station(sid)
+    except Exception:
+        return None
+    _station_obj_cache[sid] = st
+    return st
 
 
 def _supported_stations() -> list:
@@ -2653,13 +2999,9 @@ def _supported_stations() -> list:
     out = []
     seen = set()
     for sid in SUPPORTED_STATIONS:
-        s = _station_dropdown_cache.get(sid)
+        s = _get_cached_station(sid)
         if s is None:
-            try:
-                s = fetch_station(sid)
-            except Exception:
-                continue
-            _station_dropdown_cache[sid] = s
+            continue
         out.append((sid, s.name))
         seen.add(sid)
     if state is not None and state.station.id not in seen:
@@ -3476,6 +3818,60 @@ BETS_TMPL = """<!doctype html>
 </form>
 
 <div class="card">
+  <h2>What-if · sweep últimos {{sweep_days}}d
+    <span class="dim">(min n={{sweep_min_n}} para considerar)</span></h2>
+  <p class="dim">
+    Replica decisión sobre bets settled del periodo aplicando un filtro alternativo.
+    Solo restrictivo (subir thresholds). Sample sizes pequeños suelen ser ruido
+    estadístico — no auto-aplicar sin reflexión.
+  </p>
+
+  {% for swp in sweeps %}
+  <h3 style="color:#fab387;margin:.6rem 0 .2rem;font-size:14px">{{swp.title}}</h3>
+  {% if swp.data.rows %}
+  <table style="margin-bottom:.4rem">
+    <thead><tr>
+      <th>Config</th><th>n</th><th>wins</th><th>WR</th>
+      <th>stake</th><th>payoff</th><th>P&amp;L</th><th>ROI</th>
+    </tr></thead>
+    <tbody>
+    {% for r in swp.data.rows %}
+    <tr {% if swp.best and r.label == swp.best.label %}style="background:#1e3a2a"{% endif %}>
+      <td>{{r.label}}</td>
+      <td>{{r.n_bets}}</td>
+      <td>{{r.n_wins}}</td>
+      <td>{% if r.win_rate is not none %}{{"%.0f"|format(r.win_rate*100)}}%{% else %}—{% endif %}</td>
+      <td>${{"%.0f"|format(r.total_stake)}}</td>
+      <td>${{"%.0f"|format(r.total_payoff)}}</td>
+      <td class="{{'good' if r.pnl>0 else ('bad' if r.pnl<0 else 'neu')}}">
+        ${{ "%+.2f"|format(r.pnl) }}</td>
+      <td class="{{'good' if r.roi and r.roi>0 else ('bad' if r.roi and r.roi<0 else 'neu')}}">
+        {% if r.roi is not none %}{{"%+.1f"|format(r.roi*100)}}%{% else %}—{% endif %}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% if swp.best %}
+  <p class="dim">
+    Mejor (por PnL absoluto, n≥{{sweep_min_n}}): <b>{{swp.best.label}}</b> ·
+    PnL ${{ "%+.2f"|format(swp.best.pnl) }} ·
+    WR {% if swp.best.win_rate %}{{"%.0f"|format(swp.best.win_rate*100)}}%{% endif %} ·
+    n={{swp.best.n_bets}}
+  </p>
+  {% else %}
+  <p class="dim">Sin slice con n≥{{sweep_min_n}} — esperar más data.</p>
+  {% endif %}
+  {% if swp.data.n_with_data is defined %}
+  <p class="dim">Slices con data nueva: {{swp.data.n_with_data}}/{{swp.data.n_total_in_window}}
+    (columna añadida 2026-06-22).</p>
+  {% endif %}
+  {% else %}
+  <p class="dim">Sin bets settled en la ventana.</p>
+  {% endif %}
+  {% endfor %}
+</div>
+
+<div class="card">
 <table>
 <thead><tr>
   <th>Entrada</th><th>Est.</th><th>Fecha</th><th>Bin</th>
@@ -3518,8 +3914,13 @@ BETS_TMPL = """<!doctype html>
 @app.route("/bets")
 def bets_view():
     import bets as _bets
+    import bets_sweep as _sweep
     station_id = request.args.get("station") or None
     only = request.args.get("only") or "all"
+    try:
+        sweep_days = max(7, min(90, int(request.args.get("window") or 30)))
+    except ValueError:
+        sweep_days = 30
     rows = _bets.list_bets(station_id, only=only, limit=300)
     s = _bets.stats(station_id)
     pnl_class = "good" if s.pnl > 0 else ("bad" if s.pnl < 0 else "neu")
@@ -3529,6 +3930,25 @@ def bets_view():
     known = sorted({r["station_id"] for r in _bets.list_bets(limit=10000)})
     if state and state.station.id not in known:
         known = sorted(set(known) | {state.station.id})
+
+    edge_sw = _sweep.sweep_edge_threshold(
+        days=sweep_days, station_id=station_id,
+        current_thr_pp=_bets.EDGE_THR * 100.0)
+    spread_sw = _sweep.sweep_models_spread(
+        days=sweep_days, station_id=station_id,
+        current_cut_f=_bets.MAX_MODELS_SPREAD_F)
+    ext_sw = _sweep.sweep_ext_gate(
+        days=sweep_days, station_id=station_id,
+        current_gate_f=_bets.EXT_GATE_F)
+    sweeps = [
+        {"title": "Edge threshold (|edge_pp| ≥ X)",
+         "data": edge_sw, "best": _sweep.best_row(edge_sw)},
+        {"title": "Models spread cap (descartar día si max-min externos > X)",
+         "data": spread_sw, "best": _sweep.best_row(spread_sw)},
+        {"title": "External gate (|pred − ext_med| ≤ X para bets de cola)",
+         "data": ext_sw, "best": _sweep.best_row(ext_sw)},
+    ]
+
     return render_template_string(
         BETS_TMPL,
         bets=rows, s=s, pnl_class=pnl_class, roi_s=roi_s,
@@ -3536,6 +3956,8 @@ def bets_view():
         station_id=station_id or "todas",
         known_stations=known,
         thr=int(_bets.EDGE_THR * 100), stake=int(_bets.STAKE),
+        sweeps=sweeps, sweep_days=sweep_days,
+        sweep_min_n=_sweep.MIN_N,
     )
 
 
@@ -3818,6 +4240,15 @@ def _check_edge_alerts(snap, station) -> None:
         return
     if _k.series_for(station.id) is None:
         return
+    try:
+        import regime as _regime
+        rt = _regime.classify(snap, station.id, snap.station_local)
+        if rt.bet_action == "skip":
+            print(f"bets skip: {station.id} regime={rt.tag} ({rt.reason})",
+                  file=sys.stderr)
+            return
+    except Exception:
+        pass
     target = snap.station_local.date()
     rows = _k.latest_snapshot(station.id, target)
     models_spread = None
@@ -3847,6 +4278,22 @@ def _check_edge_alerts(snap, station) -> None:
     _cal_active = (_cal is not None and _cal.n_fit >= _iso.MIN_N
                    and _cal.n_days >= _iso.MIN_DAYS)
     _cal_for_apply = _cal if _cal_active else None
+    _diff_score = None
+    if _difficulty is not None:
+        try:
+            maxes = sorted(snap.ensemble_daily_maxes or [])
+            n_mem = len(snap.ensemble_raw_maxes) or len(maxes) or 31
+            clim_pct = (getattr(snap.climatology, "percentile", None)
+                        if snap.climatology is not None else None)
+            _dd = _difficulty.compute(
+                ens_p10=maxes[int(len(maxes) * 0.1)] if maxes else None,
+                ens_p90=maxes[int(len(maxes) * 0.9)] if maxes else None,
+                eff_n=snap.ensemble_eff_n, total_members=n_mem,
+                clim_percentile=clim_pct, p_notable_precip=None,
+                regime_breaks=len(snap.regime_break_hours or []))
+            _diff_score = _dd.score
+        except Exception:
+            pass
     for r in rows:
         op_ = r.get("our_p")
         ym = r.get("yes_mid")
@@ -3857,14 +4304,17 @@ def _check_edge_alerts(snap, station) -> None:
             op_, _ = _external_models.blend_with_external(
                 op_, anchor_ctx["ext_med"], anchor_ctx["ext_spread"],
                 r["bin_lo"], r["bin_hi"],
-                anchor_ctx["ext_diff"], anchor_ctx["lam"])
+                anchor_ctx["ext_diff"], anchor_ctx["lam"],
+                ext_used=anchor_ctx.get("nudge_ext_used", 0.0))
         edge_abs = abs(op_ - ym)
         try:
             _bets.maybe_bet(station.id, target, r["ticker"],
                             r["bin_lo"], r["bin_hi"], r.get("label") or "",
                             op_, ym, models_spread_f=models_spread,
                             our_pred_f=pred_med,
-                            ext_diff_f=gate_ext_diff)
+                            ext_diff_f=gate_ext_diff,
+                            bias_info=getattr(snap, "bias_info", None),
+                            difficulty_score=_diff_score)
         except Exception as e:
             print(f"bet error: {e}", file=sys.stderr)
         if _notify.enabled() and edge_abs >= EDGE_ALERT_THR:
@@ -4075,6 +4525,25 @@ def poll_loop():
                         print(f"settle notify error: {e}", file=sys.stderr)
                 except Exception as e:
                     print(f"settle_pending error: {e}", file=sys.stderr)
+                # Fable/Codex retro 2026-07-06: settle_pending histórico solo
+                # corría para state.station → KATL/KDEN/otros nunca settleaban
+                # (KMDW/KMIA/KLAX 2-4 semanas stale). Barrido diario del resto
+                # de estaciones curadas después del primary. Errores por
+                # estación se logean pero no rompen el loop.
+                for _sid in SUPPORTED_STATIONS:
+                    if _sid == state.station.id:
+                        continue
+                    try:
+                        _st = _get_cached_station(_sid)
+                        if _st is None:
+                            continue
+                        _settled = _calibration.settle_pending(_st)
+                        if _settled:
+                            print(f"settle_pending {_sid}: {len(_settled)} days",
+                                  file=sys.stderr)
+                    except Exception as e:
+                        print(f"settle_pending {_sid} error: {e}",
+                              file=sys.stderr)
         state.stop.wait(_poll_interval_for(state.station))
 
 
@@ -4134,6 +4603,238 @@ def main():
     print(f"   iPad:    http://{ip}:{port}    (misma WiFi)")
     print(f"\n   Ctrl+C para detener\n")
     app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
+
+
+# ============================================================
+# /grid — vista heatmap de las 20 estaciones (mobile-first)
+# Lee analysis.db (poller cada 10 min) para no quemar Open-Meteo.
+# Sin live ensemble fetch — los snapshots ya están frescos.
+# ============================================================
+
+_GRID_STATION_CITY = {
+    "KPHX": "Phoenix", "KLAX": "Los Angeles", "KLAS": "Las Vegas",
+    "KLGA": "New York (CP)", "KBOS": "Boston", "KMIA": "Miami",
+    "KMDW": "Chicago", "KIAH": "Houston", "KSFO": "San Francisco",
+    "KAUS": "Austin", "KDEN": "Denver", "KSAT": "San Antonio",
+    "KDCA": "Washington", "KDFW": "Dallas", "KPHL": "Philadelphia",
+    "KSEA": "Seattle", "KATL": "Atlanta", "KMSY": "New Orleans",
+    "KOKC": "Oklahoma City", "KMSP": "Minneapolis",
+}
+_GRID_ANALYSIS_DB = _Path_modes(__file__).resolve().parent / "analysis.db"
+
+
+def _grid_payload() -> dict:
+    """Lee analysis.db y devuelve {stations: [...]} con un row por estación.
+    Cada row: station, city, current_f, today_max_obs, ens_med, ens_p10,
+    ens_p90, regime_tag, regime_reason, top_edge_pp, top_bin_label,
+    top_side, snap_age_min."""
+    out = {"generated_at": datetime.now(timezone.utc).isoformat(),
+           "stations": []}
+    if not _GRID_ANALYSIS_DB.exists():
+        return out
+    c = _sqlite3_modes.connect(_GRID_ANALYSIS_DB)
+    c.row_factory = _sqlite3_modes.Row
+    rows = c.execute("""
+        WITH latest AS (
+            SELECT station, MAX(ts) AS ts FROM station_snapshots GROUP BY station
+        )
+        SELECT s.station, s.ts, s.current_f, s.today_max_obs,
+               s.ens_med, s.ens_p10, s.ens_p90,
+               s.regime_tag, s.regime_reason
+        FROM station_snapshots s
+        JOIN latest l ON s.station=l.station AND s.ts=l.ts
+        ORDER BY s.station
+    """).fetchall()
+    by_station = {}
+    for r in rows:
+        sid = r["station"]
+        try:
+            age_min = int((datetime.now(timezone.utc)
+                           - datetime.fromisoformat(r["ts"])).total_seconds() / 60)
+        except Exception:
+            age_min = None
+        by_station[sid] = {
+            "station": sid,
+            "city": _GRID_STATION_CITY.get(sid, ""),
+            "current_f": r["current_f"],
+            "today_max_obs": r["today_max_obs"],
+            "ens_med": round(r["ens_med"], 1) if r["ens_med"] else None,
+            "ens_p10": round(r["ens_p10"], 1) if r["ens_p10"] else None,
+            "ens_p90": round(r["ens_p90"], 1) if r["ens_p90"] else None,
+            "regime_tag": r["regime_tag"] or "stable",
+            "regime_reason": r["regime_reason"] or "",
+            "snap_age_min": age_min,
+            "top_edge_pp": None,
+            "top_bin_label": None,
+            "top_side": None,
+        }
+    bins = c.execute("""
+        WITH latest AS (
+            SELECT station, bin_lo, bin_hi, MAX(ts) AS ts
+            FROM kalshi_snapshots GROUP BY station, bin_lo, bin_hi
+        )
+        SELECT k.station, k.label, k.yes_mid, k.our_p
+        FROM kalshi_snapshots k
+        JOIN latest l ON k.station=l.station AND k.bin_lo=l.bin_lo
+                     AND k.bin_hi=l.bin_hi AND k.ts=l.ts
+        WHERE k.yes_mid IS NOT NULL AND k.our_p IS NOT NULL
+    """).fetchall()
+    c.close()
+    best = {}
+    for r in bins:
+        sid = r["station"]
+        edge = (r["our_p"] - r["yes_mid"]) * 100
+        if sid not in best or abs(edge) > abs(best[sid][0]):
+            best[sid] = (edge, r["label"])
+    for sid, (edge, label) in best.items():
+        if sid in by_station:
+            by_station[sid]["top_edge_pp"] = round(edge, 1)
+            by_station[sid]["top_bin_label"] = label
+            by_station[sid]["top_side"] = "YES" if edge > 0 else "NO"
+    out["stations"] = list(by_station.values())
+    return out
+
+
+@app.route("/api/grid")
+def api_grid():
+    try:
+        return jsonify(_grid_payload())
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+GRID_TMPL = """<!doctype html><html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Grid · 20 estaciones</title>
+<style>
+  body{background:#1e1e2e;color:#cdd6f4;font-family:system-ui,-apple-system,sans-serif;
+       margin:0;padding:.6rem;max-width:1400px;margin-inline:auto}
+  h1{color:#f9e2af;margin:.2rem 0 .4rem;font-size:1.3rem}
+  .meta{color:#6c7086;font-size:12px;margin-bottom:.6rem}
+  .meta a{color:#89b4fa}
+  .filters{display:flex;gap:.4rem;flex-wrap:wrap;margin-bottom:.7rem}
+  .chip{background:#313244;color:#cdd6f4;border:1px solid #45475a;
+        border-radius:14px;padding:.25rem .7rem;font-size:12px;cursor:pointer;
+        user-select:none}
+  .chip.active{background:#89b4fa;color:#1e1e2e;border-color:#89b4fa;font-weight:600}
+  .grid{display:grid;gap:.5rem;
+        grid-template-columns:repeat(auto-fill,minmax(170px,1fr))}
+  .card{background:#313244;border-radius:8px;padding:.55rem .65rem;
+        border-left:4px solid #6c7086;font-size:13px;line-height:1.35}
+  .card.stable{border-left-color:#a6e3a1}
+  .card.transition{border-left-color:#f9e2af;background:#3d3b2e}
+  .card.heatwave{border-left-color:#fab387;background:#3d352b}
+  .card.cold_snap{border-left-color:#89b4fa;background:#2b3340}
+  .card.marine_bimodal{border-left-color:#cba6f7;background:#33293d}
+  .card.regime_break{border-left-color:#f38ba8;background:#3d2932}
+  .stn{font-weight:700;color:#f9e2af;font-size:14px}
+  .city{color:#a6adc8;font-size:11px;margin-bottom:.25rem}
+  .row{display:flex;justify-content:space-between;gap:.4rem;
+       font-variant-numeric:tabular-nums}
+  .lbl{color:#6c7086;font-size:11px}
+  .val{color:#cdd6f4}
+  .edge{font-weight:700;margin-top:.3rem}
+  .edge.pos{color:#a6e3a1} .edge.neg{color:#f38ba8}
+  .badge{display:inline-block;padding:1px 6px;border-radius:9px;
+         font-size:10px;font-weight:600;text-transform:uppercase;
+         letter-spacing:.03em;margin-top:.2rem}
+  .badge.stable{background:#a6e3a1;color:#1e1e2e}
+  .badge.transition{background:#f9e2af;color:#1e1e2e}
+  .badge.heatwave{background:#fab387;color:#1e1e2e}
+  .badge.cold_snap{background:#89b4fa;color:#1e1e2e}
+  .badge.marine_bimodal{background:#cba6f7;color:#1e1e2e}
+  .badge.regime_break{background:#f38ba8;color:#1e1e2e}
+  .stale{opacity:.55}
+  .empty{color:#6c7086;text-align:center;padding:2rem;font-style:italic}
+  @media(max-width:480px){
+    .grid{grid-template-columns:repeat(2,1fr)}
+    .card{font-size:12px}
+  }
+</style></head><body>
+<h1>Grid · 20 estaciones</h1>
+<div class="meta">
+  <a href="/">&larr; volver</a> ·
+  <a href="/stations">5 curadas</a> ·
+  <a href="/cross">cross</a> ·
+  snapshot del poller (cada 10 min) ·
+  auto-refresh 60s ·
+  <span id="updated">cargando...</span>
+</div>
+<div class="filters">
+  <span class="chip active" data-filter="all">todas (20)</span>
+  <span class="chip" data-filter="not_stable">régimen ≠ stable</span>
+  <span class="chip" data-filter="edge5">|edge| ≥ 5pp</span>
+  <span class="chip" data-filter="break">regime_break</span>
+</div>
+<div id="grid" class="grid"><div class="empty">cargando...</div></div>
+<script>
+let DATA = [];
+let FILTER = 'all';
+
+function fmt(v, d){return v==null?'—':v.toFixed(d||1);}
+
+function render(){
+  const el = document.getElementById('grid');
+  let rows = DATA;
+  if (FILTER === 'not_stable') rows = rows.filter(r => r.regime_tag !== 'stable');
+  if (FILTER === 'edge5') rows = rows.filter(r => Math.abs(r.top_edge_pp||0) >= 5);
+  if (FILTER === 'break') rows = rows.filter(r => r.regime_tag === 'regime_break');
+  if (!rows.length){ el.innerHTML = '<div class="empty">sin estaciones que cumplan filtro</div>'; return; }
+  rows.sort((a,b) => Math.abs(b.top_edge_pp||0) - Math.abs(a.top_edge_pp||0));
+  el.innerHTML = rows.map(r => {
+    const tag = r.regime_tag || 'stable';
+    const stale = (r.snap_age_min||0) > 20 ? 'stale' : '';
+    const edgeCls = (r.top_edge_pp||0) > 0 ? 'pos' : 'neg';
+    const edgeStr = r.top_edge_pp != null
+      ? `<div class="edge ${edgeCls}">${r.top_side||''} ${r.top_bin_label||''} · ${r.top_edge_pp>0?'+':''}${r.top_edge_pp.toFixed(1)}pp</div>`
+      : '<div class="edge" style="color:#6c7086">sin mercado</div>';
+    return `<div class="card ${tag} ${stale}">
+      <div class="stn">${r.station}</div>
+      <div class="city">${r.city}</div>
+      <div class="row"><span class="lbl">ahora</span><span class="val">${fmt(r.current_f)}°F</span></div>
+      <div class="row"><span class="lbl">obs hoy</span><span class="val">${fmt(r.today_max_obs)}°F</span></div>
+      <div class="row"><span class="lbl">pred</span><span class="val">${fmt(r.ens_med)}°F</span></div>
+      <div class="row"><span class="lbl">p10-p90</span><span class="val">${fmt(r.ens_p10)}-${fmt(r.ens_p90)}</span></div>
+      ${edgeStr}
+      <span class="badge ${tag}" title="${r.regime_reason||''}">${tag.replace('_',' ')}</span>
+    </div>`;
+  }).join('');
+}
+
+async function load(){
+  try{
+    const r = await fetch('/api/grid');
+    const j = await r.json();
+    DATA = j.stations || [];
+    const t = new Date(j.generated_at);
+    document.getElementById('updated').textContent =
+      'actualizado ' + t.toLocaleTimeString();
+    render();
+  } catch(e){
+    document.getElementById('grid').innerHTML =
+      '<div class="empty">error fetch: '+e+'</div>';
+  }
+}
+
+document.querySelectorAll('.chip').forEach(ch => {
+  ch.addEventListener('click', () => {
+    document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+    ch.classList.add('active');
+    FILTER = ch.dataset.filter;
+    render();
+  });
+});
+
+load();
+setInterval(load, 60000);
+</script>
+</body></html>"""
+
+
+@app.route("/grid")
+def grid_view():
+    return render_template_string(GRID_TMPL)
 
 
 if __name__ == "__main__":

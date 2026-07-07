@@ -28,45 +28,69 @@ blockquote { border-left: 3px solid #bbb; margin: .6em 0; padding: .2em .8em; co
 h2, h3, h4 { page-break-after: avoid; }
 </style></head><body>
 <h1>Weather Predictor — Tutorial de progreso</h1>
-<p><strong>Autor:</strong> José Rubio · <strong>Fecha:</strong> 2026-04-22 · <strong>Versión:</strong> checkpoint pre-demo (rev 3)</p>
+<p><strong>Autor:</strong> José Rubio · <strong>Fecha:</strong> 2026-06-21 · <strong>Versión:</strong> rev 5 (Pi + Kalshi + AI agent)</p>
 <hr />
 <h2>1. Resumen ejecutivo</h2>
-<p><strong>Weather Predictor</strong> es una aplicación educativa que predice la temperatura máxima diaria en cinco ciudades curadas — <strong>KPHX (Phoenix)</strong>, <strong>KLAX (Los Angeles)</strong>, <strong>KLAS (Las Vegas)</strong>, <strong>KLGA (New York)</strong> y <strong>KBOS (Boston)</strong> — y la compara contra los precios del mercado de contratos de eventos de <strong>Robinhood</strong> para esa misma temperatura. El objetivo no es apostar con dinero real, sino medir cuánto &quot;edge&quot; tiene un modelo ensemble propio frente al mercado y cómo mejora esa precisión con el paso de las horas del día. El scope se curó en torno a lo que Robinhood cubre con mercado líquido: 3 ciudades del Southwest (clima estable, alto poder predictivo) + 2 de la Costa Este (régimen más variable, para balancear la cartera).</p>
-<p>Hay tres interfaces (CLI, TUI terminal y web Flask), un polling automático cada 10 minutos y toda la información se persiste en SQLite para poder hacer análisis retrospectivo (Brier scores, reliability, histórico).</p>
+<p><strong>Weather Predictor</strong> es una aplicación educativa que predice la temperatura máxima diaria y la compara contra los precios del mercado de contratos de eventos de <strong>Kalshi</strong> (KXHIGHT* / KXHIGH*) para esa misma temperatura. El scope curado son siete estaciones — <strong>KPHX (Phoenix)</strong>, <strong>KLAX (Los Angeles)</strong>, <strong>KLAS (Las Vegas)</strong>, <strong>KLGA (New York)</strong>, <strong>KBOS (Boston)</strong>, <strong>KMIA (Miami)</strong> y <strong>KMDW (Chicago)</strong> — elegidas por liquidez en Kalshi y diversidad climática (3 desierto + 2 costa este + Miami subtropical + Chicago continental).</p>
+<p>El objetivo no es apostar con dinero real, sino medir cuánto &quot;edge&quot; tiene un modelo ensemble propio frente al mercado y cómo mejora esa precisión con el paso de las horas del día.</p>
+<p>El sistema corre 24/7 en una <strong>Raspberry Pi 4B (8GB)</strong> accesible vía Tailscale en <code>100.83.162.24</code>. Tres servicios en puertos separados:</p>
+<ul>
+<li><code>:8000</code> — Weather predictor (este proyecto, 7 estaciones)</li>
+<li><code>:8001</code> — Crypto predictor (proyecto paralelo BTC quarterly, mismo enfoque)</li>
+<li><code>:8080</code> — Dashboard agregado (escanea 20 estaciones, monitor BTC, tab AI)</li>
+</ul>
+<p>Toda la información se persiste en SQLite (5 bases entre proyectos) para análisis retrospectivo. Polling adaptativo cada 3 min en pico, 10 min fuera.</p>
 <hr />
 <h2>2. Objetivo del proyecto</h2>
 <ul>
 <li><strong>Predecir</strong> el máximo diario en °F con una distribución de probabilidad, no un solo número.</li>
-<li><strong>Comparar</strong> esa distribución contra los precios de Robinhood en las 5 ciudades curadas.</li>
+<li><strong>Comparar</strong> esa distribución contra los precios de Kalshi para las 7 estaciones curadas.</li>
 <li><strong>Medir</strong> si el modelo es consistente, calibrado, y si ofrece ventaja sistemática frente al mercado.</li>
-<li><strong>Identificar</strong> días &quot;difíciles&quot; (fronts, anomalías) donde lo seguro es saltar la apuesta.</li>
+<li><strong>Identificar</strong> días &quot;difíciles&quot; (fronts, anomalías, ruptura de régimen) donde lo seguro es saltar la apuesta.</li>
 <li><strong>Aprender</strong> sobre ensemble forecasting, calibración probabilística y prediction markets sin usar dinero real.</li>
 </ul>
-<p>El diseño apunta a algo usable en el día a día: abro el iPad vía Tailscale por la mañana, miro <code>/cross</code> y decido qué ciudad tiene la mejor combinación de edge + dificultad baja para el día.</p>
+<p>El diseño apunta a uso diario: el iPad muestra el dashboard <code>:8080</code> vía Tailscale por la mañana, recibo el <strong>briefing matutino</strong> automático del agente AI a las 8:00 AM AST y decido qué estación tiene la mejor combinación de edge + dificultad baja.</p>
 <hr />
 <h2>3. Arquitectura</h2>
-<pre><code>┌─────────────────┐     ┌──────────────────┐     ┌──────────────────┐
-│  Open-Meteo     │     │  NWS CLI         │     │  Robinhood       │
-│  (observación + │     │  (settlement     │     │  (precios        │
-│   ensemble GFS) │     │   oficial max)   │     │   contratos)     │
-└────────┬────────┘     └────────┬─────────┘     └────────┬─────────┘
-         │                       │                         │
-         ▼                       ▼                         ▼
-    ┌────────────────────────────────────────────────────────┐
-    │  predictor.py  (núcleo: fetch, ensemble, bayesian,    │
-    │                 peak timing, cache, persistencia)     │
-    └────────┬───────────┬───────────┬───────────┬──────────┘
-             │           │           │           │
-        ┌────▼────┐ ┌────▼────┐ ┌────▼────┐ ┌───▼──────┐
-        │  CLI    │ │  TUI    │ │  Flask  │ │  SQLite  │
-        │ (Rich)  │ │(Textual)│ │  (web)  │ │  3 DBs   │
-        └─────────┘ └─────────┘ └─────────┘ └──────────┘
+<pre><code>┌─────────────────┐   ┌──────────────────┐   ┌──────────────────┐
+│  Open-Meteo     │   │  NWS CLI report  │   │  Kalshi          │
+│  (obs + ens GFS │   │  (settlement     │   │  (precios yes/no │
+│   31 miembros)  │   │   oficial max)   │   │   por bin)       │
+└────────┬────────┘   └────────┬─────────┘   └────────┬─────────┘
+         │                     │                       │
+         ▼                     ▼                       ▼
+   ┌───────────────────────────────────────────────────────┐
+   │  predictor.py  (núcleo: fetch, ensemble GFS 31m,     │
+   │  reweight bayesiano + σ temporal, bias tracker EWMA, │
+   │  climatology anchor, isotonic, peak timing, cache,   │
+   │  persistencia)                                       │
+   └────┬─────────┬─────────┬──────────┬────────┬─────────┘
+        │         │         │          │        │
+   ┌────▼───┐ ┌───▼────┐ ┌──▼──────┐ ┌▼──────┐ ┌▼────────┐
+   │  TUI   │ │ Flask  │ │ SQLite  │ │ ntfy  │ │ bets.py │
+   │(Text.) │ │  :8000 │ │  3 DBs  │ │ push  │ │ auto-bet│
+   └────────┘ └────────┘ └─────────┘ └───────┘ └─────────┘
+
+   Encima corre dashboard.py :8080 que escanea 20 estaciones
+   (no solo las 7 curadas) y consume analysis.db propio.
+
+   AI Agent (cron):
+   · agent_monitor.py — Haiku cada 15 min, ~$0.10/día
+   · agent_briefing.py — Sonnet 1×/día 8 AM AST, ~$0.014/run
 </code></pre>
 <ul>
-<li><strong>Polling adaptativo:</strong> un thread de background refresca la observación + ensemble cada 10 minutos <strong>fuera del pico</strong> y cada <strong>3 minutos durante la ventana de pico</strong> (12–17h local según estación). Durante pico también se invalida el cache de observaciones para leer el METAR fresco.</li>
-<li><strong>Cache:</strong> TTL de 10 min sobre llamadas a Open-Meteo para evitar rate-limits (se bypassa durante pico).</li>
-<li><strong>Persistencia:</strong> tres bases SQLite — <code>market_cache.db</code> (precios mercado + nuestro p por bin), <code>calibration.db</code> (snapshots de predicciones, outcomes diarios, resúmenes, bets simulados), y el archivo de climatología (30 años).</li>
-<li><strong>Acceso remoto:</strong> la web corre en puerto 8000 y es visible desde el iPad por Tailscale (100.x.x.x) o la LAN local.</li>
+<li><strong>Polling adaptativo:</strong> un thread de background refresca obs + ensemble cada <strong>3 min en ventana de pico</strong> (12–17h local según estación) y <strong>10 min fuera</strong>. Durante pico invalida cache de obs para leer METAR fresco.</li>
+<li><strong>Persistencia:</strong>
+<ul>
+<li><code>market_cache.db</code> — precios mercado + nuestro p por bin (Kalshi snapshots)</li>
+<li><code>calibration.db</code> — prediction_snapshots, day_outcomes, day_summary, simulated_bets, bias_tracker, isotonic_state</li>
+<li><code>climatology.db</code> — 30 años de max diarios (Open-Meteo archive cacheado)</li>
+<li><code>analysis.db</code> — dashboard :8080, 20 estaciones</li>
+<li><code>agent.db</code> — decisiones AI, budget, briefings</li>
+</ul>
+</li>
+<li><strong>Acceso remoto:</strong> los tres servicios visibles desde iPad/laptop vía Tailscale (<code>100.83.162.24</code>) o LAN local.</li>
+<li><strong>Auto-start:</strong> <code>~/start_all.sh</code> arranca los 3 servicios al rebooteo (cron <code>@reboot</code>).</li>
 </ul>
 <hr />
 <h2>4. Fuentes de datos</h2>
@@ -82,167 +106,209 @@ h2, h3, h4 { page-break-after: avoid; }
 <tr>
 <td>Open-Meteo Current</td>
 <td>Temperatura actual, dewpoint, humedad, viento, presión</td>
-<td>API JSON, llamada cada 10 min</td>
+<td>API JSON, llamada cada 3/10 min</td>
 </tr>
 <tr>
 <td>Open-Meteo Ensemble GFS</td>
-<td>31 miembros del modelo GFS, cada hora hoy/mañana/pasado mañana</td>
-<td>API JSON, temperatura + precipitación + nieve</td>
+<td>31 miembros del GFS, hora a hoy/mañana/pasado</td>
+<td>API JSON: temperatura + precipitación + nieve</td>
 </tr>
 <tr>
 <td>Open-Meteo Archive</td>
-<td>30 años de max diarios para la estación</td>
-<td>API JSON, cacheado en SQLite localmente</td>
+<td>30 años de max diarios por estación</td>
+<td>API JSON, cache SQLite local</td>
 </tr>
 <tr>
-<td>NWS Climate Report (CLI)</td>
-<td>Max oficial del día (settlement ground truth)</td>
-<td>Scraping texto plano NWS</td>
+<td><strong>NWS Climate Report (CLI)</strong></td>
+<td><strong>Max oficial del día (settle source)</strong></td>
+<td><strong>Scraping texto NWS</strong></td>
 </tr>
 <tr>
-<td>Robinhood event pages</td>
-<td>Precios yes/no por threshold de temperatura</td>
-<td>Scraping del <code>__NEXT_DATA__</code> JSON embebido</td>
+<td>Kalshi REST API</td>
+<td>Precios yes/no por bin de temperatura</td>
+<td>JSON oficial (sin auth, endpoints públicos)</td>
+</tr>
+<tr>
+<td>Modelos externos</td>
+<td>ECMWF/GFS/NAM/HRRR/Wunderground como sanity check</td>
+<td>Open-Meteo seasonal API</td>
 </tr>
 </tbody>
 </table>
-<p>Ninguna requiere autenticación. Robinhood no expone API pública pero la página pública del contrato incluye los precios en un blob JSON que parseamos.</p>
+<p><strong>Settle:</strong> desde el swap a Kalshi, <strong>NWS CLI es la única fuente de settlement</strong> (sin fallback a Open-Meteo archive). Los días pendientes esperan a que el reporte final NWS llegue. NY (KXHIGHNY) liquida con KNYC (Central Park), no LGA — KLGA sigue siendo nuestro id de predicción METAR pero la prob se ajusta al settle de Central Park.</p>
 <hr />
 <h2>5. Modelo predictivo</h2>
 <p>La idea central: en vez de predecir un solo número, generar <strong>una distribución de probabilidad</strong> sobre cuál va a ser el máximo del día.</p>
 <h3>5.1 Ensemble GFS (baseline)</h3>
-<p>Open-Meteo ofrece los 31 miembros del ensemble GFS por separado. Cada miembro es una simulación del modelo con pequeñas perturbaciones en las condiciones iniciales. Para cada miembro extraemos el max del día, y eso nos da 31 muestras de la distribución predictiva. Calculamos p10, mediana y p90 directamente.</p>
-<h3>5.2 Reweight bayesiano (Fase 3c) + σ temporal</h3>
-<p>A medida que avanza el día, ya sabemos cuál fue la temperatura real las primeras horas. Esa observación nos permite reweightear los miembros del ensemble: los miembros que &quot;se parecen&quot; a lo observado reciben más peso; los que divergieron mucho, menos.</p>
-<p>Implementación: softmax sobre la suma de errores cuadrados (SSE) estandarizada por un <strong>σ dependiente de la hora</strong> — horas dentro del pico usan σ=1.5°F (más exigente, más discriminación), horas adyacentes σ=2.0, medias σ=2.5, lejanas σ=3.5. Esto hace que un error de 2°F a las 14:00 pese mucho más que el mismo error a las 7:00. Re-muestreamos a N=500. El reporte muestra &quot;eff N&quot; (cuántos miembros efectivos quedan tras el reweight).</p>
+<p>Open-Meteo ofrece los 31 miembros del ensemble GFS por separado. Cada miembro es una simulación con pequeñas perturbaciones en condiciones iniciales. Para cada miembro extraemos el max del día, dando 31 muestras de la distribución predictiva. Calculamos p10, mediana, p90 y modal directamente.</p>
+<h3>5.2 Reweight bayesiano + σ temporal</h3>
+<p>A medida que avanza el día, ya conocemos la temperatura real las primeras horas. Esa observación reweightea los miembros del ensemble: los miembros que &quot;se parecen&quot; a lo observado reciben más peso; los que divergieron mucho, menos.</p>
+<p>Implementación: softmax sobre la suma de errores cuadrados (SSE) estandarizada por un <strong>σ dependiente de la hora</strong>:</p>
+<ul>
+<li>Pico (12-17h): σ=1.5°F (más exigente, más discriminación)</li>
+<li>Adyacentes: σ=2.0°F</li>
+<li>Medias: σ=2.5°F</li>
+<li>Lejanas: σ=3.5°F</li>
+</ul>
+<p>Re-muestreamos a N=500. El reporte muestra &quot;eff N&quot; (miembros efectivos tras reweight). Si eff_N &lt;20 → &quot;reweight colapsado&quot;, la predicción es inestable.</p>
 <h3>5.2.1 Detector de ruptura de régimen</h3>
-<p>Si la observación de una hora cae fuera de la envolvente p1–p99 del ensemble (con margen de 4°F para absorber sesgos sistemáticos de estaciones urbanas desérticas), esa hora se marca como <strong>ruptura</strong>. Con ≥2 horas rotas:</p>
+<p>Si la observación de una hora cae fuera de la envolvente <strong>p1–p99</strong> del ensemble (con margen 4°F para absorber sesgos de estaciones urbanas), esa hora se marca como <strong>ruptura</strong>. Con ≥2 horas rotas:</p>
 <ul>
-<li>se fuerza la dificultad del día a 100 (&quot;ruptura de régimen&quot;)</li>
-<li>se envía push notification vía ntfy</li>
-<li>se recomienda saltar el día en <code>/cross</code></li>
+<li>Se fuerza la dificultad del día a 100 (&quot;ruptura de régimen&quot;)</li>
+<li>Push ntfy al iPad</li>
+<li><code>/cross</code> recomienda saltar el día</li>
+<li>El agente AI (monitor + briefing) filtra todas las opps de esa estación</li>
 </ul>
-<p>El detector expone los frentes fríos/cálidos o errores de inicialización del modelo que harían el reweight ineficaz.</p>
-<h3>5.3 Peak timing (Fase 4)</h3>
-<p>Además del valor del máximo, predecimos <strong>cuándo</strong> va a ocurrir. Para cada miembro extraemos la hora del max y reportamos la hora modal, percentiles p10/p50/p90, P(ya ocurrió) y P(ocurrirá en las próximas 1/2/3/6 horas).</p>
-<h3>5.4 Calibración isotónica (pendiente activar)</h3>
-<p>Con los snapshots históricos (predicted_p, outcome) corremos <strong>Pool-Adjacent-Violators</strong> para aprender un mapa monótono p_raw → p_cal. El gate actual exige ≥20 pares y ≥7 días distintos; con los datos actuales (3 días, 286 samples) el fit colapsa a un solo bloque → marcamos como &quot;poco confiable&quot; y no se aplica en vivo. Queda listo para activarse automáticamente cuando acumule más días.</p>
+<p><strong>Lección importante (2026-06-21):</strong> la &quot;triple convergencia&quot; (nuestro modelo + mediana de externos + mispricing Kalshi) <strong>NO funciona</strong> con régimen roto o difficulty=100. Los modelos externos también pierden calibración en regímenes extremos — no son independientes del nuestro. Regla dura: nunca recomendar entry si <code>difficulty&gt;70</code>, <code>régimen roto</code> o <code>eff_N&lt;25</code>.</p>
+<h3>5.3 Peak timing</h3>
+<p>Además del valor del máximo, predecimos <strong>cuándo</strong>. Para cada miembro extraemos la hora del max y reportamos modal, p10/p50/p90, P(ya ocurrió), P(ocurrirá en próximas 1/2/3/6 horas).</p>
+<h3>5.4 Bias tracker EWMA</h3>
+<p>Por estación mantenemos un EWMA del bias del modelo (predicción modal vs observación). Si la estación tiene bias persistente +2°F (modelo sobrepronostica) → la mediana se ajusta hacia abajo. Activo desde 2026-04-29.</p>
+<h3>5.5 Climatology anchor</h3>
+<p>En heatwave (<code>ext_diff ≥ +1.5°F</code> en oeste/sur o p≥85% de cola alta), anclamos a la mediana de modelos externos en vez de NO-sellar bins altos. Memoria de fallos previos confirmó que en heatwave los externos ganan al modelo crudo.</p>
+<h3>5.6 Calibración isotónica</h3>
+<p>PAV (Pool-Adjacent-Violators) sobre snapshots históricos <code>(predicted_p, outcome)</code>. Gate actual: ≥20 pares y ≥7 días distintos. Cuando pasa el gate, se aplica en vivo a ladder/comparison. Estado actual: variable según estación.</p>
 <hr />
-<h2>6. Integración con el mercado (Robinhood)</h2>
-<p>Robinhood publica contratos &quot;greater than N°F&quot; por cada grado entero alrededor del pico esperado. Los parseamos de la página pública y convertimos a bins per-grado (compatibles con el formato Kalshi original).</p>
-<h3>6.1 <code>/comparison</code> — Robinhood vs modelo</h3>
-<p>Tabla bin por bin con los precios yes_mid de Robinhood y nuestra probabilidad derivada del ensemble. Barra visual y diff en pp.</p>
+<h2>6. Integración con el mercado (Kalshi)</h2>
+<p>Desde el swap de 2026-05-08 usamos Kalshi como mercado en lugar de Robinhood. Kalshi tiene API REST oficial (sin auth para market data), bins definidos por rango de temperatura (<code>[lo, hi]</code>, con tails <code>≤X</code> y <code>≥Y</code>), y settlement alineado con NWS CLI — exactamente lo que necesitamos para no tener divergencia de fuentes.</p>
+<p>Series tracker: <code>KXHIGHTPHX</code> (Phoenix), <code>KXHIGHTLAX</code> (LA), <code>KXHIGHTLV</code> (Las Vegas), <code>KXHIGHNY</code> (NY/Central Park), <code>KXHIGHTBOS</code> (Boston), más Miami y Chicago.</p>
+<h3>6.1 <code>/comparison</code> — Kalshi vs modelo</h3>
+<p>Tabla bin por bin con yes_mid de Kalshi y nuestra probabilidad post-calibración (bayes + bias + isotonic). Barra visual y diff en pp. Esta es la <strong>predicción final</strong> del modelo, la que usa el bot para auto-bets — no confundir con el <code>/analysis</code> del dashboard <code>:8080</code> que muestra el ensemble crudo.</p>
 <h3>6.2 <code>/ladder</code> — Decision ladder</h3>
-<p>Para cada threshold de temperatura (±N alrededor de la mediana):</p>
+<p>Para cada threshold (±N alrededor de mediana):</p>
 <ul>
-<li><code>yes/no</code> nuestro vs <code>yes/no</code> Robinhood</li>
+<li><code>yes/no</code> nuestro vs <code>yes/no</code> Kalshi</li>
 <li><code>edge</code> en puntos porcentuales</li>
-<li><code>EV</code> al apostar $1 a cada lado: <code>EV_yes = (p-k)/k</code>, <code>EV_no = (k-p)/(1-k)</code></li>
-<li><code>Kelly fraction</code> por lado: <code>f*_yes = (p-k)/(1-k)</code>, <code>f*_no = (k-p)/k</code></li>
-<li>Pill <strong>YES/NO</strong> señalando el lado recomendado</li>
+<li><code>EV</code> al apostar $1: <code>EV_yes = (p-k)/k</code>, <code>EV_no = (k-p)/(1-k)</code></li>
+<li><code>Kelly fraction</code>: <code>f*_yes = (p-k)/(1-k)</code>, <code>f*_no = (k-p)/k</code></li>
+<li>Pill <strong>YES/NO</strong> señalando lado recomendado</li>
 </ul>
-<p>Sirve para ver a simple vista qué thresholds tienen edge accionable.</p>
 <h3>6.3 <code>/edge</code> y <code>/movement</code></h3>
 <ul>
-<li><strong>Edge tracking</strong>: lista los contratos con mayor edge actual y un análisis histórico (edges por bucket, ROI hipotético).</li>
-<li><strong>Movement</strong>: evolución temporal del <code>yes_mid</code> Robinhood vs nuestro <code>our_p</code> para un bin dado — permite ver si el mercado converge a nosotros, si nosotros convergemos al mercado, o si divergen.</li>
+<li><strong>Edge tracking</strong> — contratos con mayor edge actual + análisis histórico (edges por bucket, ROI hipotético).</li>
+<li><strong>Movement</strong> — evolución temporal de <code>yes_mid</code> Kalshi vs <code>our_p</code> para un bin dado.</li>
 </ul>
 <h3>6.4 <code>/bets</code> — Simulador P&amp;L</h3>
-<p>Cuando <code>|edge| ≥ 5pp</code>, el sistema &quot;apuesta&quot; automáticamente $10 hipotéticos en el lado correcto (yes si <code>our_p &gt; kalshi</code>, no al revés), con guardias contra precios ≤0.01 o ≥0.99. Al settlearse el día, calcula payoff real. Vista con n, win rate, stake total, P&amp;L, ROI.</p>
-<p>Dedupe por <code>(station, date, ticker)</code>: solo registra el primer edge visto por ticker por día.</p>
-<h3>6.5 <code>/calibration</code> + <code>/history</code></h3>
+<p>Cuando <code>|edge| ≥ 5pp</code>, el sistema &quot;apuesta&quot; $10 hipotéticos en el lado correcto (guard contra precios ≤0.01 o ≥0.99). Al settlearse el día, calcula payoff real. Filtros anti-pérdidas vigentes (desde 2026-05-26):</p>
 <ul>
-<li><strong>Calibration</strong>: reliability diagram dual (nuestro vs Robinhood) + Brier score per-bin para que sean comparables.</li>
-<li><strong>History</strong>: tabla diaria con max observado, Brier nuestro, Brier Robinhood, mejor edge y si fue correcto. Agregado: cuántos días ganamos al mercado.</li>
+<li>Bloqueo por bias o losing streak</li>
+<li>Mid-bin via <code>our_pred</code> (no apostar bins muy estrechos)</li>
+<li>Divergence overnight con externos</li>
+<li>Auto-cleanup de bets erróneas</li>
 </ul>
-<h3>6.6 Push notifications (ntfy)</h3>
-<p>Opt-in vía variable de entorno <code>NTFY_TOPIC</code>. Al detectar <code>|edge| ≥ 10pp</code> manda push al iPad; al settlearse un día, manda resultado con Briers comparados.</p>
+<p>Dedupe por <code>(station, date, ticker)</code>.</p>
+<h3>6.5 Tail-negation preferida</h3>
+<p>Con modelo sesgado, <strong>preferir NO [≤X] de cola con edge ≥40pp</strong> sobre point-bets centrales (validado KLGA 2026-05-25: ganó +$7.50). Memoria activa.</p>
+<h3>6.6 <code>/calibration</code> + <code>/history</code></h3>
+<ul>
+<li><strong>Calibration</strong>: reliability diagram dual (nuestro vs Kalshi) + Brier per-bin.</li>
+<li><strong>History</strong>: tabla diaria con max observado, Brier nuestro, Brier Kalshi, mejor edge, si fue correcto. Total días ganando al mercado.</li>
+</ul>
+<h3>6.7 Push notifications (ntfy)</h3>
+<p>Opt-in vía env <code>NTFY_TOPIC</code>. Edge ≥10pp → push al iPad. Settle → push con Briers comparados. El briefing matutino del AI agent también puede empujar a ntfy si está configurado.</p>
 <hr />
 <h2>7. Guía por página</h2>
-<p>La web corre en <code>http://100.122.62.70:8000</code> (Tailscale) o <code>http://&lt;LAN-ip&gt;:8000</code>. Todas las páginas se actualizan cuando el poll loop termina un ciclo (cada 10 min).</p>
+<p>La web <code>predictor.py</code> corre en <code>http://100.83.162.24:8000</code>. El dashboard agregado en <code>:8080</code>. Crypto en <code>:8001</code>.</p>
 <h3>Para decidir si apostar hoy</h3>
 <ul>
-<li><strong><code>/</code> (dashboard principal)</strong> — Todo lo importante del día en una pantalla: temperatura actual, pronóstico, distribución del ensemble, <strong>badge de dificultad del día</strong>, <strong>dropdown para cambiar entre KPHX/KLAX/KLAS sin reiniciar</strong>, cards de clima/viento/presión, peak timing, precipitación, y slots de aserciones personalizadas.</li>
-<li><strong><code>/cross</code></strong> — Las 3 ciudades lado a lado con <strong>ranking 1-2-3</strong> y una <strong>pill de recomendación</strong> arriba: o bien &quot;apuesta a STATION SIDE +Xpp&quot; (cuando el #1 tiene edge ≥5pp y dificultad &lt;30) o &quot;⚠ mejor saltar hoy&quot;. Selector hoy/mañana/pasado.</li>
-<li><strong><code>/ladder</code></strong> — Para cada temperatura umbral (ej. &gt;80°, &gt;82°...): nuestro yes/no vs el de Robinhood, edge en pp, EV% al apostar $1, Kelly fraction, y una pill YES/NO con el lado recomendado. Selector de ventana ±2/±3/±4/±6/±10/todo.</li>
-<li><strong><code>/edge</code></strong> — Tabla con los edges disponibles ahora ordenados por magnitud + performance histórica por bucket de edge (si edges &gt;5pp ganaron dinero hipotético o no).</li>
-<li><strong><code>/comparison</code></strong> — Barra visual bin-por-bin: yes_mid de Robinhood vs nuestra probabilidad + diff en pp.</li>
+<li><strong><code>/</code> (dashboard principal :8000)</strong> — Todo del día en una pantalla: temp actual, pronóstico, distribución del ensemble, <strong>badge de dificultad</strong>, <strong>dropdown KPHX/KLAX/KLAS/KLGA/KBOS/KMIA/KMDW</strong> sin reiniciar, cards de clima/viento/presión, peak timing, precipitación, aserciones personalizadas. <strong>Línea &quot;edge máx&quot; arriba indica la decisión final del bot.</strong></li>
+<li><strong><code>/cross</code></strong> — Las estaciones lado a lado con <strong>ranking</strong> y <strong>pill de recomendación</strong>: &quot;apuesta a STATION SIDE +Xpp&quot; (#1 con edge ≥5pp y dificultad &lt;30) o &quot;⚠ mejor saltar hoy&quot;. Selector hoy/mañana/pasado.</li>
+<li><strong><code>/comparison</code></strong> — Barra visual bin-por-bin: yes_mid Kalshi vs nuestra prob <strong>post-calibración</strong> + diff en pp.</li>
+<li><strong><code>/ladder</code></strong> — Por temperatura umbral: nuestro yes/no vs Kalshi, edge en pp, EV%, Kelly, pill YES/NO. Selector ventana ±2/±3/±4/±6/±10/todo.</li>
+<li><strong><code>/edge</code></strong> — Tabla edges disponibles + performance histórica por bucket.</li>
+</ul>
+<h3>Dashboard agregado <code>:8080</code></h3>
+<ul>
+<li><strong><code>/analysis</code></strong> — 20 estaciones (más allá de las 7 curadas), bins Kalshi vs <code>our_p</code> raw, tabla de aseveraciones del user con probabilidad declarada. <strong><code>our_p</code> aquí es ensemble crudo (count_in_bin/N)</strong> — no aplica bayes/bias/isotonic. Para predicción final ir a <code>:8000/comparison</code>.</li>
+<li><strong><code>/btc-quarter</code></strong> — Monitor BTC quarterly (proyecto paralelo, ver crypto predictor).</li>
+<li><strong><code>/ai</code></strong> — Tab del AI agent: budget, gasto del día, briefing matutino destacado arriba, tabla de decisiones del monitor.</li>
 </ul>
 <h3>Para entender el clima</h3>
 <ul>
-<li><strong><code>/timing</code></strong> — A qué hora se espera el pico de temperatura: hora modal, rango p10-p90, P(ya ocurrió), P(en las próximas 1/2/3/6h).</li>
-<li><strong><code>/precip</code></strong> — Probabilidad de lluvia/nieve para hoy/mañana/pasado: P(any), P(notable), P(heavy), mm esperados, P(nieve).</li>
+<li><strong><code>/timing</code></strong> — Hora del pico: modal, rango p10-p90, P(ya ocurrió), P(en próximas 1/2/3/6h).</li>
+<li><strong><code>/precip</code></strong> — Probabilidad lluvia/nieve hoy/mañana/pasado.</li>
 </ul>
 <h3>Para ver si el sistema funciona</h3>
 <ul>
-<li><strong><code>/reweight</code></strong> — Diagnóstico hora por hora del reweight bayesiano: obs real vs ensemble p10/p50/p90, σ aplicado en esa hora (verde cuando está en la ventana de pico), n miembros matcheados, y flag de si la obs cayó dentro/fuera de p1–p99. Las filas de ruptura se marcan en rojo. Sirve para detectar sesgos sistemáticos del modelo y validar que el detector de régimen funciona.</li>
-<li><strong><code>/calibration</code></strong> — Reliability diagram dual: cuando decimos 70%, ¿realmente pasa 70% de las veces? Muestra nosotros (azul) + Robinhood (rosa) + curva calibrada isotónica (verde, cuando aplique). Brier score crudo vs calibrado.</li>
-<li><strong><code>/history</code></strong> — Tabla diaria con max observado, Brier nuestro vs Robinhood, mejor edge, si fue correcto. Total de días que ganamos al mercado.</li>
-<li><strong><code>/bets</code></strong> — Simulador P&amp;L: &quot;si hubiera apostado $10 cada vez que aparece edge ≥5pp, ¿cuánto habría ganado?&quot;. Muestra n bets, win rate, stake total, payoff, ROI.</li>
-<li><strong><code>/movement</code></strong> — Cómo evoluciona el precio de Robinhood vs nuestro pronóstico a lo largo del día para un bin específico. Útil para ver si el mercado converge a nosotros o divergimos.</li>
+<li><strong><code>/reweight</code></strong> — Diagnóstico hora por hora del reweight: obs vs ensemble p10/p50/p90, σ aplicado (verde=pico), n miembros matched, flag dentro/fuera p1–p99. Rupturas en rojo.</li>
+<li><strong><code>/calibration</code></strong> — Reliability dual + Brier crudo vs calibrado.</li>
+<li><strong><code>/history</code></strong> — Tabla diaria, Brier nuestro vs Kalshi, mejor edge, hit/miss. Total días ganando.</li>
+<li><strong><code>/bets</code></strong> — Simulador P&amp;L: n bets, win rate, stake, payoff, ROI.</li>
+<li><strong><code>/movement</code></strong> — Evolución temporal Kalshi vs nuestro pronóstico para un bin.</li>
 </ul>
 <h3>Utilidades</h3>
 <ul>
-<li><strong><code>/notify</code></strong> — Configuración de push notifications (ntfy.sh). Envía alerta al iPad/móvil cuando aparece un edge grande (≥10pp) o cuando se settlea el día.</li>
-<li><strong><code>/export</code></strong> — Descarga CSV de cualquiera de las 5 tablas (snapshots, market_prices, day_summary, day_outcomes, simulated_bets) filtrado por estación y/o fecha. Para análisis en Excel.</li>
-<li><strong><code>/status</code></strong> — Salud del sistema: último poll OK, errores recientes, edad de los datos.</li>
-<li><strong><code>/about</code></strong> — Este mismo tutorial renderizado en HTML + link al PDF descargable.</li>
+<li><strong><code>/notify</code></strong>, <strong><code>/export</code></strong> (CSV de 5 tablas), <strong><code>/status</code></strong> (salud), <strong><code>/about</code></strong> (este tutorial).</li>
 </ul>
 <hr />
-<h2>8. Decisiones abiertas (invito feedback)</h2>
+<h2>8. AI Agent</h2>
+<p>Componente añadido en 2026-06-21. Dos procesos cron-driven que usan la API de Anthropic Claude:</p>
+<h3>8.1 <code>agent_monitor.py</code> (cada 15 min, Haiku 4.5)</h3>
+<p>Lee <code>analysis.db</code> (snapshots + bins de las 20 estaciones del dashboard) + aseveraciones del usuario, manda contexto estructurado a Claude Haiku con un system prompt que codifica:</p>
+<ul>
+<li>Reglas duras: spread ≤5°F, KLGA→KNYC, conviction tiers, lógica de side correcta</li>
+<li>Detección de mercado settled (ens_spread=0 + obs≈ens_med)</li>
+<li>Triple convergencia (modelo + ext_med + mispricing) solo con difficulty≤70 + eff_N≥25 + ext_spread≤4°F</li>
+</ul>
+<p>Output JSON con oportunidades (conviction high/med). Guarda en <code>agent.db</code>. Costo medido: ~$0.001/call → ~$0.10/día. Budget cap soft $14.50; auto-pausa al alcanzarlo.</p>
+<h3>8.2 <code>agent_briefing.py</code> (8:00 AM AST, Sonnet 4.6)</h3>
+<p>Lee snapshots actuales + outcomes de ayer + última decisión del monitor. Genera briefing narrativo de 6-8 líneas con setups del día, estaciones a evitar, lección de ayer. Se muestra al tope de <code>/ai</code>. Push ntfy opcional.</p>
+<p>Costo medido: ~$0.014/call → ~$0.42/mes.</p>
+<h3>8.3 Control y visibilidad</h3>
+<ul>
+<li>Tab <code>/ai</code> en dashboard: budget cap, gasto total, gasto hoy, proyección mensual, estado (activo/pausado con botón toggle), briefing destacado, tabla de últimos 20 ciclos con opps detectadas y razonamiento.</li>
+<li>Hard cap definible en Anthropic Console por si el soft cap falla.</li>
+<li>Lecciones aprendidas se guardan como memorias del usuario (<code>feedback_*.md</code>) y se inyectan en el system prompt de futuras corridas.</li>
+</ul>
+<hr />
+<h2>9. Decisiones abiertas</h2>
 <ol>
-<li>
-<p><strong>Robinhood scraping vs IBKR ForecastEx API.</strong> Hoy scrapeo el HTML público de Robinhood. Funciona, pero es frágil si cambian la estructura. IBKR ForecastEx (el backend probable) ofrece API pero pide cuenta IBKR + OAuth. ¿Vale la pena migrar?</p>
-</li>
-<li>
-<p><strong>Cross-station Bayesian reweight.</strong> Extensión natural de Fase 3c: usar observaciones matutinas de KEWR, KJFK, KJRB (estaciones cercanas a KLGA) para reweightear el ensemble de KLGA. No implementado. ¿Prioridad?</p>
-</li>
-<li>
-<p><strong>Manual bet entry.</strong> Hoy solo hay auto-bet cuando se detecta edge ≥5pp. ¿Tiene valor permitir registrar bets manuales para llevar un portfolio personal?</p>
-</li>
-<li>
-<p><strong>Más features del ensemble.</strong> Ya se expone lluvia/nieve. Quedan: viento max, nubosidad, probabilidad de ráfagas fuertes. ¿Interés?</p>
-</li>
-<li>
-<p><strong>Calibración en vivo.</strong> Está implementada la isotónica pero no se aplica todavía en producción (gate de ≥7 días). Cuando se active, se aplicará a ladder, comparison y a la evaluación de aserciones. ¿Algún cambio en el gate?</p>
-</li>
-<li>
-<p><strong>Otras estaciones/mercados.</strong> Hoy scope = KPHX/KLAX/KLAS/KLGA/KBOS (Robinhood). Robinhood cubre ~23 ciudades; los cálculos funcionan para cualquiera que Robinhood liste. ¿Expandir el scope curado o mantener estas 5?</p>
-</li>
+<li><strong>Más estaciones curadas.</strong> Hoy 7. Kalshi tiene ~12 con liquidez decente. ¿Expandir o mantener foco?</li>
+<li><strong>Cross-station Bayesian reweight.</strong> Usar obs matutinas de KEWR/KJFK para reweightear KLGA. No implementado.</li>
+<li><strong>AI agent fase 2 — chat endpoint <code>/ask</code>.</strong> Conversación con el modelo sobre estado actual (usaría Sonnet, ~$0.03/pregunta).</li>
+<li><strong>AI agent fase 3 — post-mortem automático.</strong> Al settlearse el día, agente compara predicción vs outcome y guarda lecciones en <code>agent_lessons.db</code> que se inyectan al prompt del día siguiente.</li>
+<li><strong>Más features ensemble.</strong> Ya: lluvia/nieve. Falta: viento max, nubosidad, ráfagas.</li>
+<li><strong>Gate isotónica.</strong> Hoy ≥20 pares, ≥7 días. ¿Bajar a 5 días para activar antes?</li>
 </ol>
 <hr />
-<h2>9. Próximos pasos propuestos (ordenados por ROI)</h2>
-<p><strong>Completados desde la revisión previa (rev 1 → rev 2):</strong></p>
+<h2>10. Próximos pasos por ROI</h2>
+<p><strong>Completados desde rev 3 (abril → junio 2026):</strong></p>
 <ul>
-<li>✅ Parametrización Robinhood/Kalshi → <code>_market_name()</code> dinámico</li>
-<li>✅ Ruta <code>/about</code> con tutorial accesible + <code>/tutorial.pdf</code></li>
-<li>✅ Pre-warm del cache de <code>/cross</code> (20s → 1.6s)</li>
-<li>✅ Tests unitarios (52 tests: isotonic, kalshi math, robinhood, difficulty, predictor)</li>
-<li>✅ Scope curado de 5 ciudades (KPHX/KLAX/KLAS + KLGA/KBOS para Costa Este)</li>
-<li>✅ Polling adaptativo (3 min en pico, 10 min fuera) + invalidación de cache en pico</li>
-<li>✅ σ temporal en reweight bayesiano (1.5°F en pico → 3.5°F lejos)</li>
-<li>✅ Detector de ruptura de régimen (obs fuera de p1-p99 con margen 4°F) + push alert</li>
-<li>✅ Panel <code>/reweight</code> con diagnóstico hora por hora</li>
-<li>✅ Dropdown para cambiar estación sin reiniciar</li>
-<li>✅ Score de <strong>dificultad del día</strong> (spread + eff_N + clim + precip)</li>
-<li>✅ <code>/cross</code> con ranking 1-2-3 + pill de recomendación &quot;apuesta a X / saltar hoy&quot;</li>
+<li>✅ Swap Robinhood → Kalshi (2026-05-08) con KLGA override a Central Park</li>
+<li>✅ Bias tracker EWMA por estación</li>
+<li>✅ Climatology anchor en heatwave</li>
+<li>✅ Detector de divergencia con modelos externos + card en dashboard</li>
+<li>✅ KMIA + KMDW añadidos al scope curado</li>
+<li>✅ Filtros anti-pérdidas (bias/streak block, mid-bin guard, divergence overnight, auto-cleanup)</li>
+<li>✅ Tail-negation rule documentada (NO [≤X] con edge ≥40pp preferido sobre point-bets)</li>
+<li>✅ Settle exclusivo NWS CLI (sin fallback Open-Meteo)</li>
+<li>✅ Codex review 2026-06-18 — P0+P2 aplicados, P1/P3 pendientes</li>
+<li>✅ Crypto predictor paralelo en <code>:8001</code> (BTC quarterly)</li>
+<li>✅ Migración a Raspberry Pi 4B (2026-06-19) — 100.83.162.24, auto-start, 24/7</li>
+<li>✅ Dashboard agregado <code>:8080</code> con <code>/analysis</code>, <code>/btc-quarter</code>, <code>/ai</code></li>
+<li>✅ AI agent (monitor 15min + briefing matutino) deployado 2026-06-21</li>
 </ul>
 <p><strong>Pendientes:</strong></p>
 <ol>
-<li><strong>Validación de umbrales de dificultad con datos reales.</strong> Los umbrales actuales (≥75 muy difícil, ≥55 difícil, ≥30 normal) son heurísticos. Después de acumular ~2 semanas de datos, medir si días &quot;fácil&quot; realmente tienen mejor Brier que días &quot;difícil&quot; y recalibrar.</li>
-<li><strong>Activación gradual de calibración isotónica</strong> conforme acumulemos días settleados (auto-activación cuando pase el gate de 7 días).</li>
-<li><strong>Dificultad completa en <code>/cross</code></strong> (actualmente light: sólo spread + eff_N; falta añadir clim + precip que ya se usan en el badge del index).</li>
-<li><strong>Cross-station reweight</strong> (usar obs matutinas de estaciones cercanas para reweightear el ensemble de la estación objetivo).</li>
-<li><strong>Histórico de dificultad vs accuracy</strong> — tabla/gráfica que correlacione score del día con Brier real.</li>
+<li><strong>Validación umbrales dificultad con datos reales.</strong> Tras 2+ semanas, medir si días &quot;fácil&quot; tienen mejor Brier que &quot;difícil&quot; y recalibrar.</li>
+<li><strong>Activación gradual isotónica</strong> conforme acumulemos días.</li>
+<li><strong>Cross-station reweight</strong> (obs matutinas de estaciones cercanas).</li>
+<li><strong>Histórico dificultad vs accuracy</strong> — tabla/gráfica correlacionando score con Brier real.</li>
+<li><strong>AI agent /ask chat</strong> — endpoint de conversación con Sonnet.</li>
+<li><strong>Post-mortem agent</strong> — lecciones automáticas inyectadas al prompt.</li>
+<li><strong>Codex review P1+P3</strong> pendientes de aplicar.</li>
 </ol>
 <hr />
 <h2>Apéndice: métricas mencionadas</h2>
 <ul>
-<li><strong>Brier score</strong>: error cuadrático medio entre probabilidad predicha y outcome binario (0 o 1). Menor = mejor. Comparable entre predictores si usan el mismo universo de preguntas.</li>
-<li><strong>Reliability diagram</strong>: para cada bucket de probabilidad predicha, qué fracción de esos eventos ocurrieron. Si el punto cae en la diagonal, está calibrado.</li>
-<li><strong>Kelly fraction</strong>: fracción óptima del bankroll a apostar para maximizar crecimiento logarítmico esperado. Requiere saber tu probabilidad verdadera (nunca la sabes exactamente).</li>
-<li><strong>Edge en pp (puntos porcentuales)</strong>: diferencia entre tu probabilidad y la del mercado. Positivo = mercado subestima.</li>
-<li><strong>eff N</strong>: número efectivo de miembros del ensemble tras un reweight bayesiano. Si baja mucho respecto a 31, el ensemble no capturó bien la realidad reciente.</li>
+<li><strong>Brier score</strong>: error cuadrático medio entre prob predicha y outcome (0/1). Menor = mejor.</li>
+<li><strong>Reliability diagram</strong>: por bucket de prob predicha, qué fracción ocurrió. Si cae en diagonal, calibrado.</li>
+<li><strong>Kelly fraction</strong>: fracción óptima del bankroll para maximizar crecimiento log esperado.</li>
+<li><strong>Edge en pp</strong>: diferencia entre tu prob y la del mercado. Positivo = mercado subestima.</li>
+<li><strong>eff N</strong>: miembros efectivos del ensemble tras reweight bayesiano. Bajo respecto a 31 = ensemble no capturó la realidad reciente.</li>
+<li><strong>Difficulty 0-100</strong>: score combinado (spread + eff_n + clim + precip + regime). ≥75 muy difícil, ≥55 difícil, ≥30 normal.</li>
+<li><strong>Ruptura de régimen</strong>: ≥2 horas con obs fuera de p1–p99 del ensemble. Fuerza difficulty=100, bloquea entries.</li>
+<li><strong>Conviction tier (AI agent)</strong>: high = edge≥30pp + 3 señales convergen + difficulty≤70; med = 15-30pp; low no se reporta.</li>
 </ul>
 
 </body></html>

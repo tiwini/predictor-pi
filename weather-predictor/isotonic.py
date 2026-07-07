@@ -76,27 +76,35 @@ def apply(cal: Optional[Calibrator], p: float) -> float:
     return centers[-1][1]
 
 
-def fit_from_db(station_id: Optional[str] = None) -> Optional[Calibrator]:
+def fit_from_db(station_id: Optional[str] = None,
+                p_version: Optional[str] = None,
+                op: tuple = ("b",)) -> Optional[Calibrator]:
     """Pull (predicted_p, outcome) from calibration.db prediction_snapshots
     where outcome is known. Returns Calibrator (or None if no data).
 
-    Two filters protect the fit from being dominated by uncalibratable noise:
+    Filters protecting the fit from uncalibratable noise:
       1. Dedupes to one row per (station, date, op, threshold), keeping the
-         LAST snapshot before settle — represents the final decision for that
-         bet. Without this, intra-day repeated polls (often with identical p)
-         flood PAV with correlated samples (KLGA: 1457 raw → 64 deduped).
-      2. Restricts to op IN ('>', '<'). The 'approx-equal' op uses a different
-         predicted_p semantic (closeness of model median to a decimal target);
-         since NWS settles to integer °F, op='~' rows are nearly always
-         outcome=0 even when p=1.0, which forces PAV to pool everything.
+         LAST snapshot before settle. Without this, intra-day repeated polls
+         (often with identical p) flood PAV with correlated samples.
+      2. Default op=('b',) — solo bins Kalshi post-instrumentation. Legacy
+         op='>' viene del sistema pre-Kalshi de point-threshold predictions
+         (predicted_p semánticamente distinto a bin_p → PAV no debería
+         poolearlos). Callers que quieran incluir legacy pasan
+         op=('>','<','b'). Excluye siempre op='~' (closeness a decimal
+         target; NWS settles a integer °F → outcome=0 casi siempre).
+      3. Optional p_version filter: pass 'post_laplace' cuando N lo permita
+         para excluir pairs pre-Laplace donde predicted_p vive en [0,1]
+         saturada; mezclar no rompe PAV pero saturados dominan bloques
+         extremos.
     """
     import sqlite3
     from calibration import DB_PATH
     c = sqlite3.connect(DB_PATH)
-    base = """
+    ops_ph = ",".join("?" * len(op))
+    base = f"""
         SELECT predicted_p, outcome, date FROM prediction_snapshots ps1
         WHERE outcome IS NOT NULL
-          AND op IN ('>', '<')
+          AND op IN ({ops_ph})
           AND snapshot_time = (
             SELECT MAX(snapshot_time) FROM prediction_snapshots ps2
             WHERE ps2.station_id = ps1.station_id
@@ -106,10 +114,14 @@ def fit_from_db(station_id: Optional[str] = None) -> Optional[Calibrator]:
               AND ps2.outcome IS NOT NULL
           )
     """
+    params: list = list(op)
     if station_id:
-        cur = c.execute(base + " AND station_id=?", (station_id,))
-    else:
-        cur = c.execute(base)
+        base += " AND station_id=?"
+        params.append(station_id)
+    if p_version is not None:
+        base += " AND p_version=?"
+        params.append(p_version)
+    cur = c.execute(base, params)
     rows = cur.fetchall()
     c.close()
     pairs = [(p, o) for p, o, _ in rows]

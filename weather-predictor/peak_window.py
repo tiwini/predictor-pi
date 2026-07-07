@@ -43,6 +43,11 @@ def _fetch_peak_hours(station: Station, days: int = 7) -> Optional[list[int]]:
             "timezone": station.tz.key,
             "temperature_unit": "fahrenheit",
         }, timeout=30, headers={"User-Agent": UA})
+        try:
+            import om_quota
+            om_quota.count_call("peak_window_archive")
+        except Exception:
+            pass
         if r.status_code != 200:
             return None
         h = r.json().get("hourly", {})

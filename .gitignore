@@ -17,3 +17,12 @@ logs/
 .idea/
 .vscode/
 codex_intro_*.zip
+
+# Backups locales (no ir a git)
+*.db.bak_*
+*.py.bak.*
+*.py.bak_*
+*.sh.bak
+
+# State/quota tracking (mutable at runtime)
+weather-predictor/om_quota.json

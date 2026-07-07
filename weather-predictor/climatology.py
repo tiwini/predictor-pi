@@ -73,6 +73,11 @@ def ensure_cache(station, years: int = 30, force: bool = False) -> None:
         "timezone": station.tz.key,
         "temperature_unit": "fahrenheit",
     }, timeout=60, headers={"User-Agent": UA})
+    try:
+        import om_quota
+        om_quota.count_call("climatology_archive")
+    except Exception:
+        pass
     r.raise_for_status()
     d = r.json()["daily"]
     rows = [(station.id, t, v) for t, v in zip(d["time"], d["temperature_2m_max"])

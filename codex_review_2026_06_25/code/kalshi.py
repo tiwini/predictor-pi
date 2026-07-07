@@ -145,18 +145,12 @@ def _conn() -> sqlite3.Connection:
 
 def our_p_for_bin(ensemble_maxes: list, bin_lo: float, bin_hi: float) -> float:
     """Fraction of ensemble members whose simulated daily max falls in
-    [bin_lo, bin_hi] (inclusive). For open tails, use ±inf.
-
-    Laplace smoothing avoids reporting 0.00/1.00 when the ensemble
-    concentrates in one bin — those extremes propagate through the
-    pipeline as "calibrated" probs and give phantom infinite edges.
-    predictor._prepare_ensemble resamples ~31 raw GFS+external members
-    to N_SAMPLES=500 via proportional replication (no new info), so we
-    anchor the prior strength to the effective sample size ~31.
-    Natural range with EFF_N=31: [0.030, 0.970]."""
+    [bin_lo, bin_hi] (inclusive). For open tails, use ±inf."""
     if not ensemble_maxes:
         return 0.0
     n = len(ensemble_maxes)
+    # NWS reports max rounded to whole °F; use half-integer edges for clean
+    # comparison to ensemble values (which are continuous).
     if bin_lo == float("-inf"):
         lo = float("-inf")
     else:
@@ -166,9 +160,7 @@ def our_p_for_bin(ensemble_maxes: list, bin_lo: float, bin_hi: float) -> float:
     else:
         hi = bin_hi + 0.5
     cnt = sum(1 for v in ensemble_maxes if lo <= v < hi)
-    raw_p = cnt / n
-    eff_n = min(n, 31)
-    return (raw_p * eff_n + 1) / (eff_n + 2)
+    return cnt / n
 
 
 def record(station_id: str, target_date: date, bins: list[MarketBin],

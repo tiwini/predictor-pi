@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% set active_tab = 'analysis' %}
+{% set meta_refresh = 600 %}
+{% block title %}Análisis · aseveraciones{% endblock %}
+{% block heading %}Análisis{% endblock %}
+{% block subtitle %}
+  Aseveraciones vs modelo y Kalshi · {{ now }} ·
+  poller {{ poller_status }} ·
+  <a href="/analysis" style="color:var(--accent)">refresh</a>
+{% endblock %}
+
+{% block banners %}
+{% if swept %}
+<div class="banner ok">
+  Slots {{ swept|join(', ') }} archivados — mercado settled (datos guardados en assertion_archive).
+</div>
+{% endif %}
+{% endblock %}
+
+{% block content %}
+<div class="grid grid-wide">
+{% for slot in slots %}
+  <div class="slot">
+    <h3>Aseveración #{{ slot.idx }}</h3>
+    {% if slot.a %}
+      <div class="label">
+        {{ station_label(slot.a.station) }} {{ slot.a.lo|int }}–{{ slot.a.hi|int }}°F
+        <span style="color:var(--accent)">{{ slot.a.side }}</span>
+        @ {{ slot.a.prob }}%
+      </div>
+      <div class="metric-row">
+        <div class="metric"><div class="k">tu prob</div><div class="v">{{ slot.a.prob }}%</div></div>
+        <div class="metric"><div class="k">modelo</div><div class="v">
+          {% if slot.e.model_p is not none %}{{ "%.0f"|format(slot.e.model_p*100) }}%{% else %}—{% endif %}
+        </div></div>
+        <div class="metric"><div class="k">kalshi</div><div class="v">
+          {% if slot.e.kalshi_p is not none %}{{ "%.0f"|format(slot.e.kalshi_p*100) }}%{% else %}—{% endif %}
+        </div></div>
+        <div class="metric"><div class="k">diff vs modelo</div><div class="v {{ slot.diff_class_m }}">
+          {% if slot.e.diff_model is not none %}{{ "%+.0f"|format(slot.e.diff_model) }}pp{% else %}—{% endif %}
+        </div></div>
+        <div class="metric"><div class="k">diff vs kalshi</div><div class="v {{ slot.diff_class_k }}">
+          {% if slot.e.diff_kalshi is not none %}{{ "%+.0f"|format(slot.e.diff_kalshi) }}pp{% else %}—{% endif %}
+        </div></div>
+        <div class="metric"><div class="k">obs / med</div><div class="v" style="font-size:12px">
+          {% if slot.e.current_f is not none %}{{ "%.0f"|format(slot.e.current_f) }}°{% else %}—{% endif %}
+          /
+          {% if slot.e.ens_med is not none %}{{ "%.0f"|format(slot.e.ens_med) }}°{% else %}—{% endif %}
+        </div></div>
+      </div>
+      <div class="ts {{ slot.stale_class }}">snapshot: {{ slot.snap_age }}</div>
+      <div style="display:flex; gap:6px; margin-top:8px">
+        <form method="POST" action="/analysis/clear">
+          <input type="hidden" name="slot" value="{{ slot.idx }}">
+          <button type="submit" class="btn-small">borrar</button>
+        </form>
+      </div>
+    {% else %}
+      <div class="empty">vacío</div>
+      <form method="POST" action="/analysis/set" class="add-assertion">
+        <input type="hidden" name="slot" value="{{ slot.idx }}">
+        <select name="station" required>
+          {% for sid, name in stations %}
+          <option value="{{ sid }}">{{ sid }} ({{ name }})</option>
+          {% endfor %}
+        </select>
+        <select name="side" required>
+          <option value="YES">YES</option>
+          <option value="NO">NO</option>
+        </select>
+        <input type="number" name="lo" min="0" max="130" step="1" placeholder="lo °F" required>
+        <input type="number" name="hi" min="0" max="130" step="1" placeholder="hi °F" required>
+        <input type="number" name="prob" min="1" max="99" step="1" placeholder="tu %" required class="full">
+        <button type="submit" class="btn-primary">guardar</button>
+      </form>
+    {% endif %}
+  </div>
+{% endfor %}
+</div>
+{% endblock %}
+
+{% block footer %}
+<div class="footer">
+  Refresh auto cada 10 min · diff &gt; 0 = sobrestimas (rojo) · diff &lt; 0 = subestimas (verde)<br>
+  Poller corre en background; si "stale" es viejo, revisar logs de analysis_poller.
+</div>
+{% endblock %}

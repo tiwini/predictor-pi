@@ -21,7 +21,7 @@ import requests
 # Justificación 2026-05-26: KLAS cold-side perdió 5 veces seguidas con
 # ext_diff típico ≤-2°F; el bias rolling no captura regime shifts agudos.
 ANCHOR_SIGMA_FLOOR_F = 1.5     # piso de incertidumbre externa (°F)
-ANCHOR_SIGMA_FROM_RANGE = 2.5  # spread es max-min ≈ 2.5-2.7σ para n=6-7 modelos
+ANCHOR_SIGMA_FROM_RANGE = 2.5  # spread es max-min ≈ 2.5σ para n=6 modelos
 ANCHOR_WEIGHT_CAP = 0.50       # peso máximo en la externa (nunca >50%)
 ANCHOR_EXT_DIFF_THRESHOLD = 1.5  # |ext_diff| sobre este → empieza a blendear
 
@@ -40,10 +40,6 @@ _MODELS_TTL = 3600      # 60 min · runs Open-Meteo cada 1-6h por modelo,
 # `gfs_hrrr` a `gfs_seamless` (probado el 2026-04-28: valores idénticos),
 # así que HRRR no añade independencia real — usamos UK Met Office y
 # GraphCast (ML de DeepMind) como aportes US-relevantes adicionales.
-# NBM añadido 2026-07-01: es el blend calibrado que NWS usa como base
-# del gridded forecast, por lo que semanticamente es el anchor más cercano
-# al settle NWS (aunque estadísticamente correlaciona con GFS/ECMWF).
-# CONUS-only (viene como null para non-CONUS; el resto de código maneja None).
 OPEN_METEO_MODELS = [
     ("gfs_seamless", "GFS"),
     ("ecmwf_ifs025", "ECMWF"),
@@ -51,7 +47,6 @@ OPEN_METEO_MODELS = [
     ("meteofrance_seamless", "MétéoFR"),
     ("ukmo_seamless", "UKMO"),
     ("gfs_graphcast025", "GraphCast"),
-    ("ncep_nbm_conus", "NBM"),
 ]
 
 

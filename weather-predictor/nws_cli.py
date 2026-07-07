@@ -24,29 +24,9 @@ UA = "weather-predictor/0.1 jose.rubio.uhy@gmail.com"
 API = "https://api.weather.gov"
 
 # Station id NWS → location code que NWS usa en /products?location=...
-# Ojo NY: Kalshi (KXHIGHNY) liquida con NYC CLI = Central Park, no LGA.
-STATION_TO_LOCATION: dict[str, str] = {
-    "KPHX": "PHX",
-    "KLAX": "LAX",
-    "KLAS": "LAS",
-    "KLGA": "NYC",
-    "KBOS": "BOS",
-    "KMIA": "MIA",
-    "KMDW": "MDW",
-    "KIAH": "IAH",
-    "KSFO": "SFO",
-    "KAUS": "AUS",
-    "KDEN": "DEN",
-    "KSAT": "SAT",
-    "KDCA": "DCA",
-    "KDFW": "DFW",
-    "KPHL": "PHL",
-    "KSEA": "SEA",
-    "KATL": "ATL",
-    "KMSY": "MSY",
-    "KOKC": "OKC",
-    "KMSP": "MSP",
-}
+# Override KLGA→NYC (Kalshi KXHIGHNY liquida con Central Park, no LGA).
+# Source of truth en stations.py.
+from stations import STATION_TO_LOCATION  # noqa: E402
 
 _MONTHS = {m: i for i, m in enumerate(
     ["JANUARY", "FEBRUARY", "MARCH", "APRIL", "MAY", "JUNE",

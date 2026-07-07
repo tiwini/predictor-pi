@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% set active_tab = 'btc' %}
+{% set meta_refresh = 60 %}
+{% block title %}BTC quarter streak{% endblock %}
+{% block heading %}BTC quarter streak{% endblock %}
+{% block subtitle %}
+  Predicción direccional UP/DOWN cada 15 min con tensión score · {{ now }} ·
+  <a href="/btc-quarter" style="color:var(--accent)">refresh</a>
+{% endblock %}
+
+{% block content %}
+<div class="grid grid-narrow" style="margin-bottom:14px">
+  <div class="card">
+    <h3>Racha actual</h3>
+    <div class="big {{ 'up' if streak > 0 else 'flat' }}">{{ streak }}</div>
+  </div>
+  <div class="card">
+    <h3>Mejor racha</h3>
+    <div class="big">{{ best_streak }}</div>
+  </div>
+  <div class="card">
+    <h3>Win-rate (headline)</h3>
+    <div class="big">{{ "%.0f"|format(win_rate) }}%</div>
+    <div class="flat" style="font-size:12px">{{ wins }}/{{ settled }} aciertos · sesgo direccional posible</div>
+  </div>
+  <div class="card">
+    <h3>Pendiente</h3>
+    {% if active %}
+      <div class="mid {{ 'up' if active.side == 'UP' else ('down' if active.side == 'DOWN' else 'flat') }}">
+        {{ active.side }}
+      </div>
+      <div class="flat" style="font-size:12px">
+        $ {{ "{:,.2f}".format(active.price_in) }} → settle {{ active.settle_hhmm }}
+      </div>
+    {% else %}
+      <div class="flat">—</div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="grid grid-narrow" style="margin-bottom:14px">
+  <div class="card">
+    <h3>UP win-rate</h3>
+    <div class="big up">{{ "%.0f"|format(up_rate) }}%</div>
+    <div class="flat" style="font-size:12px">{{ up_wins }}/{{ up_settled }} settled</div>
+  </div>
+  <div class="card">
+    <h3>DOWN win-rate</h3>
+    <div class="big down">{{ "%.0f"|format(down_rate) }}%</div>
+    <div class="flat" style="font-size:12px">{{ down_wins }}/{{ down_settled }} settled</div>
+  </div>
+  <div class="card">
+    <h3>Lean (|score| 0.5–1.5)</h3>
+    <div class="big">{{ "%.0f"|format(lean_rate) }}%</div>
+    <div class="flat" style="font-size:12px">{{ lean_wins }}/{{ lean_settled }} settled</div>
+  </div>
+  <div class="card">
+    <h3>Conviction (|score| ≥ 1.5)</h3>
+    <div class="big">{{ "%.0f"|format(conv_rate) }}%</div>
+    <div class="flat" style="font-size:12px">{{ conv_wins }}/{{ conv_settled }} settled</div>
+  </div>
+  <div class="card">
+    <h3>FLAT count</h3>
+    <div class="big flat">{{ flat_count }}</div>
+    <div class="flat" style="font-size:12px">no apuestas · |score| &lt; {{ "%.1f"|format(flat_threshold) }}</div>
+  </div>
+  <div class="card">
+    <h3>Empates</h3>
+    <div class="big flat">{{ tie_count }}</div>
+    <div class="flat" style="font-size:12px">price_out = price_in · excluído</div>
+  </div>
+</div>
+
+<table class="data-table">
+  <thead>
+    <tr>
+      <th>locked</th>
+      <th>side</th>
+      <th>score</th>
+      <th>p≥</th>
+      <th>price in</th>
+      <th>price out</th>
+      <th>Δ</th>
+      <th>resultado</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in rows %}
+    <tr>
+      <td>{{ r.locked_hhmm }}</td>
+      <td class="{{ 'up' if r.side == 'UP' else ('down' if r.side == 'DOWN' else 'flat') }}">
+        {{ r.side }}
+      </td>
+      <td>{% if r.score is not none %}{{ "%+.2f"|format(r.score) }}{% else %}—{% endif %}</td>
+      <td>{% if r.p_above is not none %}{{ "%.0f"|format(r.p_above*100) }}%{% else %}—{% endif %}</td>
+      <td>${{ "{:,.2f}".format(r.price_in) }}</td>
+      <td>{% if r.price_out %}${{ "{:,.2f}".format(r.price_out) }}{% else %}—{% endif %}</td>
+      <td>{% if r.delta is not none %}{{ "%+.2f"|format(r.delta) }}{% else %}—{% endif %}</td>
+      <td>
+        {% if r.won == 1 %}<span class="good" style="font-weight:700">✓ {{ r.streak_after }}</span>
+        {% elif r.won == 0 %}<span class="bad" style="font-weight:700">✗</span>
+        {% elif r.price_out is not none %}<span class="flat">= tie</span>
+        {% else %}<span class="warn" style="font-style:italic">…</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="8" class="flat">sin predicciones aún — el poller corre cada xx:00/15/30/45</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
+
+{% block footer %}
+<div class="footer">
+  Refresh auto 60s · UP gana si price_out &gt; price_in (estricto) · DOWN gana si price_out &lt; price_in · empates excluídos<br>
+  Headline win-rate puede tener sesgo direccional (e.g., bull market favorece UP). Mira UP/DOWN/lean/conviction separados.<br>
+  Signal: score de tensión (6 señales agregadas) :8001 · DB: <code>btc_quarter.db</code>
+</div>
+{% endblock %}

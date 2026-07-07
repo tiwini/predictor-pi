@@ -15,8 +15,13 @@ import requests
 import nws_cli
 
 DB_PATH = Path(__file__).parent / "calibration.db"
+ANALYSIS_DB_PATH = Path(__file__).parent / "analysis.db"
 ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
 UA = "weather-predictor/0.1"
+
+# Poller PID 330050 restart deployed Laplace fix ~2026-07-01 22:00 UTC
+# (kalshi.py:146). Anterior a esto our_p en kalshi_snapshots viene saturado.
+LAPLACE_CUTOFF_TS = "2026-07-01T22:00:00+00:00"
 
 
 @dataclass
@@ -103,6 +108,15 @@ def _conn() -> sqlite3.Connection:
             PRIMARY KEY (station_id, date)
         );
     """)
+    # Migración no-destructiva: p_version en prediction_snapshots. Distingue
+    # predicted_p pre-Laplace (kalshi.our_p_for_bin saturado en [0,1] hasta
+    # 2026-07-01) de post-Laplace ([0.03, 0.97]). PAV mezcla sin romper pero
+    # pairs saturados viejos dominan bloques extremos; filtrar cuando N lo
+    # permita.
+    ps_cols = {r[1] for r in c.execute("PRAGMA table_info(prediction_snapshots)").fetchall()}
+    if "p_version" not in ps_cols:
+        c.execute("ALTER TABLE prediction_snapshots ADD COLUMN p_version TEXT")
+
     # Migración no-destructiva: añade columnas a day_summary si faltan
     cols = {r[1] for r in c.execute("PRAGMA table_info(day_summary)").fetchall()}
     for col, ctype in [("ext_med", "REAL"), ("ext_spread", "REAL"),
@@ -203,6 +217,13 @@ def settle_day(station, target_date: date,
         hit = outcome_for(max_f, op, thr, bh)
         c.execute("UPDATE prediction_snapshots SET outcome=? WHERE id=?",
                   (1 if hit else 0, sid))
+    # Instrumentar bins de Kalshi como (predicted_p, outcome) pairs para
+    # isotonic. Fuente unbiased (todos los bins del poller, no solo apostados).
+    try:
+        n_bins = _instrument_kalshi_bins(c, station.id, target_date,
+                                         float(max_f))
+    except Exception:
+        n_bins = 0
     c.commit()
     c.close()
     try:
@@ -214,6 +235,14 @@ def settle_day(station, target_date: date,
         _bets.settle_day(station.id, target_date, float(max_f))
     except Exception:
         pass
+    # Refit isotonic cuando llegaron pairs nuevos — sin esto, el proceso 24/7
+    # sigue con el calibrador cargado al arranque.
+    if n_bins > 0:
+        try:
+            import isotonic
+            isotonic.refit(station.id)
+        except Exception:
+            pass
     return max_f
 
 
@@ -223,6 +252,77 @@ def _bin_contains(max_f: float, lo: float, hi: float) -> bool:
     l = float("-inf") if lo == float("-inf") else lo - 0.5
     h = float("inf") if hi == float("inf") else hi + 0.5
     return l <= max_f < h
+
+
+def _instrument_kalshi_bins(c, station_id: str, target_date: date,
+                            max_f: float) -> int:
+    """Espeja la LAST snapshot de kalshi_snapshots por (bin_lo, bin_hi) en
+    prediction_snapshots como pares (predicted_p, outcome) para isotonic.
+
+    Fuente unbiased: analysis_poller escribe TODOS los bins cada ciclo, no
+    solo los apostados. Backfillear desde simulated_bets tendría sesgo de
+    selección (solo bins donde el sistema decidió apostar con edge > mín).
+
+    Escribe una row por bin con op='b' (bin-shaped), threshold estable
+    (finite side de tail bins), p_version tag pre/post-Laplace. Idempotente
+    en (station, date, op, threshold, snapshot_time).
+    """
+    if not ANALYSIS_DB_PATH.exists():
+        return 0
+    # Read from analysis.db in a separate connection para no atrapar la
+    # transacción de calibration.db (ATTACH+DETACH pelea con writes pending
+    # y da 'database is locked' cuando el mismo conn hace ambos).
+    src = sqlite3.connect(ANALYSIS_DB_PATH)
+    try:
+        rows = src.execute("""
+            SELECT k.bin_lo, k.bin_hi, k.our_p, k.ts
+            FROM kalshi_snapshots k
+            WHERE k.station=? AND DATE(k.ts)=?
+              AND k.our_p IS NOT NULL
+              AND k.ts = (
+                SELECT MAX(k2.ts) FROM kalshi_snapshots k2
+                WHERE k2.station=k.station
+                  AND k2.bin_lo=k.bin_lo AND k2.bin_hi=k.bin_hi
+                  AND DATE(k2.ts)=DATE(k.ts)
+                  AND k2.our_p IS NOT NULL
+              )
+        """, (station_id, target_date.isoformat())).fetchall()
+    finally:
+        src.close()
+    n = 0
+    for lo, hi, our_p, ts in rows:
+        lo_f = float(lo)
+        hi_f = float(hi)
+        outc = 1 if _bin_contains(max_f, lo_f, hi_f) else 0
+        if lo_f == float("-inf"):
+            threshold = hi_f
+            bin_half = None
+        elif hi_f == float("inf"):
+            threshold = lo_f
+            bin_half = None
+        else:
+            threshold = lo_f
+            bin_half = (hi_f - lo_f) / 2.0
+        p_version = ("post_laplace" if ts >= LAPLACE_CUTOFF_TS
+                     else "pre_laplace")
+        existing = c.execute(
+            """SELECT id FROM prediction_snapshots
+               WHERE station_id=? AND date=? AND op='b'
+                 AND threshold=? AND snapshot_time=?""",
+            (station_id, target_date.isoformat(), threshold, ts)
+        ).fetchone()
+        if existing:
+            continue
+        expr = f"kalshi_bin[{lo_f},{hi_f}]"
+        c.execute(
+            """INSERT INTO prediction_snapshots
+               (station_id, date, snapshot_time, slot, is_auto, expr,
+                op, threshold, bin_half, predicted_p, outcome, p_version)
+               VALUES (?, ?, ?, 0, 1, ?, 'b', ?, ?, ?, ?, ?)""",
+            (station_id, target_date.isoformat(), ts, expr,
+             threshold, bin_half, float(our_p), outc, p_version))
+        n += 1
+    return n
 
 
 def record_ext_signal(station_id: str, target_date: date,

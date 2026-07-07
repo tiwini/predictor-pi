@@ -660,19 +660,6 @@ def build_snapshot(station: Station) -> Snapshot:
     else:
         daily_maxes = list(raw_maxes)
 
-    # Fable/Codex retro 2026-07-06 (P1 #3): seasonal offset por estación con
-    # sesgo frío GFS persistente (KLAS -1.70, KPHX -1.55, KBOS -0.99). El
-    # bias_tracker EWMA rebota y no captura el nivel sostenido; este offset
-    # se aplica ANTES para que el tracker vea residual limpio. La compensación
-    # en compute_bias sobre samples pre-fecha evita double-correction.
-    try:
-        import bias_tracker as _bt_off
-        _seasonal = _bt_off.SEASONAL_OFFSET_F.get(station.id, 0.0)
-        if _seasonal != 0.0 and daily_maxes:
-            daily_maxes = [v - _seasonal for v in daily_maxes]  # _seasonal<0 → suma
-    except Exception:
-        pass
-
     # Apply per-station rolling bias correction (subtract historical bias from
     # the prior). Conditional by climatology regime when available — KLGA
     # is bimodal (cold on warm days, warm on cold days). Falls back to global

@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% set active_tab = 'comments' %}
+{% block title %}Comments · notas para Claude{% endblock %}
+{% block heading %}Comments · notas para Claude{% endblock %}
+{% block subtitle %}
+  Escribe aquí bugs, ideas, observaciones. Quedan guardados en <code>agent.db</code>
+  · {{ now }}
+{% endblock %}
+
+{% block content %}
+<form class="card" method="POST" action="/comments/add" style="margin-bottom:18px">
+  <textarea name="body" placeholder="Lo que sea — bug, idea, observación. Si es largo está bien, esto es para tu yo del futuro." required></textarea>
+  <div style="display:flex; gap:8px; align-items:center; margin-top:10px; flex-wrap:wrap">
+    <select name="category">
+      <option value="note">nota</option>
+      <option value="bug">bug</option>
+      <option value="idea">idea</option>
+    </select>
+    <button type="submit" class="btn-primary">guardar</button>
+    <span class="muted" style="font-size:12px; margin-left:auto">{{ total }} comentarios guardados</span>
+  </div>
+</form>
+
+{% if comments %}
+  {% for c in comments %}
+  <div class="comment {{ c.category }}">
+    <div class="meta">
+      <span><span class="tag">{{ c.category }}</span> · {{ c.ts_human }}</span>
+      <form method="POST" action="/comments/delete/{{ c.id }}" onsubmit="return confirm('borrar este comentario?')">
+        <button type="submit" class="btn-danger btn-small">borrar</button>
+      </form>
+    </div>
+    <div class="body">{{ c.body }}</div>
+  </div>
+  {% endfor %}
+{% else %}
+  <div class="empty">aún no hay comentarios — escribe el primero arriba</div>
+{% endif %}
+{% endblock %}

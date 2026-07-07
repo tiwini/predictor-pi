@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% set active_tab = 'home' %}
+{% block title %}Predictores · dashboard{% endblock %}
+{% block heading %}Predictores{% endblock %}
+{% block subtitle %}Entrada única · {{ host }} · {{ now }}{% endblock %}
+
+{% block content %}
+<div class="grid">
+
+  <div class="card">
+    <h2><a href="{{ btc_base }}/">Cripto</a> <span class="tag">:8001 · AST</span></h2>
+    {% for sym, name in cryptos %}
+    <div class="row">
+      <a href="{{ btc_base }}/?symbol={{ sym }}">{{ name }}</a>
+      <span class="muted">{{ sym }}</span>
+    </div>
+    {% endfor %}
+    <div class="links">
+      <a href="{{ btc_base }}/hourly-call">hourly-call</a>
+      <a href="{{ btc_base }}/calibration">calibration</a>
+      <a href="{{ btc_base }}/history">history</a>
+      <a href="{{ btc_base }}/tutorial">tutorial</a>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2><a href="{{ wx_base }}/">Weather</a> <span class="tag">:8000</span></h2>
+    {% for sid, name in stations %}
+    <div class="row">
+      <a href="{{ wx_base }}/?station={{ sid }}">{{ sid }} ({{ name }})</a>
+      <form method="POST" action="/station/observe/{{ sid }}" style="margin:0">
+        <button type="submit" class="btn-small"
+                title="{% if station_modes.get(sid) == 1 %}observación ON · 3 min polling{% else %}activar observación (3 min polling){% endif %}"
+                style="padding:4px 8px; min-height:auto; background:transparent; border:1px solid {% if station_modes.get(sid) == 1 %}var(--accent){% else %}var(--border){% endif %}">
+          {% if station_modes.get(sid) == 1 %}👁{% else %}<span class="muted">○</span>{% endif %}
+        </button>
+      </form>
+    </div>
+    {% endfor %}
+    <div class="links">
+      <a href="{{ wx_base }}/ladder">ladder</a>
+      <a href="{{ wx_base }}/comparison">comparison</a>
+      <a href="{{ wx_base }}/calibration">calibration</a>
+      <a href="{{ wx_base }}/edge">edge</a>
+      <a href="{{ wx_base }}/timing">timing</a>
+      <a href="{{ wx_base }}/cross">cross</a>
+      <a href="{{ wx_base }}/reweight">reweight</a>
+      <a href="{{ wx_base }}/movement">movement</a>
+      <a href="{{ wx_base }}/precip">precip</a>
+      <a href="{{ wx_base }}/bets">bets</a>
+      <a href="{{ wx_base }}/history">history</a>
+      <a href="{{ wx_base }}/status">status</a>
+      <a href="{{ wx_base }}/about">about</a>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block footer %}
+<div class="footer">
+  Nota: weather sólo tiene una estación activa a la vez (single global state).
+  Hacer click en otra estación cambia la activa para todos los clientes —
+  multi-tab real requiere refactor de state.
+  <br>Accesible vía Tailscale <code>100.83.162.24:8080</code> o LAN <code>10.0.0.27:8080</code>.
+</div>
+{% endblock %}

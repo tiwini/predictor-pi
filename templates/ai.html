@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+{% set active_tab = 'ai' %}
+{% block title %}AI · oportunidades{% endblock %}
+{% block heading %}Agente AI · oportunidades{% endblock %}
+{% block subtitle %}
+  Monitor automático con Claude Haiku · {{ now }} ·
+  <a href="/ai" style="color:var(--accent)">refresh</a>
+{% endblock %}
+
+{% block content %}
+<div class="grid grid-narrow" style="margin-bottom:14px">
+  <div class="card">
+    <h3>Budget cap</h3>
+    <div class="big">${{ "%.2f"|format(cap) }}</div>
+    <div class="flat" style="font-size:12px">tope mensual configurado</div>
+  </div>
+  <div class="card">
+    <h3>Gastado total</h3>
+    <div class="big {{ 'warn' if pct >= 80 else ('bad' if pct >= 95 else '') }}">
+      ${{ "%.2f"|format(spent) }}
+    </div>
+    <div class="flat" style="font-size:12px">{{ "%.1f"|format(pct) }}% del cap</div>
+    <div class="progress">
+      <div class="progress-bar {{ 'warn' if pct >= 80 else ('bad' if pct >= 95 else '') }}"
+           style="width:{{ pct }}%"></div>
+    </div>
+  </div>
+  <div class="card">
+    <h3>Hoy</h3>
+    <div class="big">${{ "%.3f"|format(spent_today) }}</div>
+    <div class="flat" style="font-size:12px">{{ calls_today }} calls · proy ${{ "%.2f"|format(projected_monthly) }}/mes</div>
+  </div>
+  <div class="card">
+    <h3>Estado</h3>
+    <div class="mid {{ 'bad' if paused else 'good' }}">
+      {{ "PAUSADO" if paused else "ACTIVO" }}
+    </div>
+    <form method="POST" action="/ai/toggle-pause" style="margin-top:8px">
+      <button type="submit" class="btn-small">{{ "reanudar" if paused else "pausar" }}</button>
+    </form>
+  </div>
+</div>
+
+<div class="card" style="margin-bottom:14px">
+  <h3>Throttle</h3>
+  <div style="display:flex; gap:16px; align-items:center; flex-wrap:wrap; margin-top:8px">
+    <form method="POST" action="/ai/set-interval" class="stack">
+      <label style="font-size:12px; color:var(--muted)">intervalo:</label>
+      <select name="interval_min">
+        {% for v in [1,5,10,30,60,120,240,480,600,800,1000] %}
+          <option value="{{ v }}" {% if interval_min == v|string %}selected{% endif %}>{{ v }} min</option>
+        {% endfor %}
+        <option value="off" {% if interval_min == "off" %}selected{% endif %}>off</option>
+      </select>
+      <button type="submit" class="btn-small">guardar</button>
+    </form>
+    <form method="POST" action="/ai/burst" class="stack">
+      <button type="submit" class="btn-primary">
+        {% if burst_remaining %}burst {{ burst_remaining }} min ▶{% else %}🔥 burst 1 hora (1 min){% endif %}
+      </button>
+    </form>
+    <form method="POST" action="/ai/toggle-night-off" class="stack">
+      <label style="font-size:12px; color:var(--muted)">auto-off 00-06 AST:</label>
+      <button type="submit" class="btn-small {{ 'good' if night_off else 'flat' }}">
+        {{ "ON" if night_off else "OFF" }}
+      </button>
+    </form>
+  </div>
+  <div class="flat" style="font-size:11px; margin-top:8px">
+    proyección con intervalo actual: ~${{ "%.2f"|format(projected_at_interval) }}/día ·
+    polling de snapshots sigue 24/7 independiente del agente
+  </div>
+</div>
+
+{% if ask_prompts %}
+<div class="card" style="margin-bottom:14px">
+  <h3>Preguntar AI ahora</h3>
+  <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px">
+    {% for kind, p in ask_prompts.items() %}
+    <form method="POST" action="/ai/ask" style="margin:0">
+      <input type="hidden" name="kind" value="{{ kind }}">
+      <button type="submit" class="btn-small" {% if paused %}disabled{% endif %}>
+        {{ p.label }}
+      </button>
+    </form>
+    {% endfor %}
+  </div>
+  {% if last_ask_error %}
+  <div class="bad" style="margin-top:10px; font-size:13px">⚠ {{ last_ask_error }}</div>
+  {% endif %}
+  <div class="flat" style="font-size:11px; margin-top:8px">
+    Cada click ejecuta una call ad-hoc al modelo (~$0.002, ~3 s). Respeta budget
+    y pausa. La respuesta aparece arriba en la tabla con su badge.
+  </div>
+</div>
+{% endif %}
+
+{% if briefing %}
+<div class="card" style="border-left:3px solid var(--accent); margin-bottom:14px">
+  <h3>Briefing matutino · {{ briefing_ts }}</h3>
+  <div style="white-space:pre-wrap; font-size:13px; line-height:1.55">{{ briefing }}</div>
+</div>
+{% else %}
+<div class="flat" style="margin-bottom:8px">briefing matutino se genera a las 8:00 AM AST diariamente</div>
+{% endif %}
+
+{% if last_ts %}
+<div class="flat" style="margin-bottom:8px">último ciclo monitor: {{ last_ts_human }} · {{ last_summary }}</div>
+{% else %}
+<div class="warn" style="margin-bottom:8px">aún sin ciclos — espera al próximo cron, o ejecuta manual: <code>python3 ~/predictor-pi/agent_monitor.py</code></div>
+{% endif %}
+
+<table class="data-table">
+  <thead><tr>
+    <th>cuando</th><th>resumen</th><th>opps</th><th>cost</th>
+  </tr></thead>
+  <tbody>
+  {% for d in decisions %}
+    <tr>
+      <td class="ts">{{ d.ts_hhmm }}{% if d.ask_label %}<div class="flat" style="font-size:10px; margin-top:3px">{{ d.ask_label }}</div>{% endif %}</td>
+      <td>
+        <div>{{ d.summary }}</div>
+        {% for o in d.opps %}
+        <div class="opp {{ o.conviction }}">
+          <strong>{{ station_label(o.station) }} {{ o.side }} {{ o.bin }}</strong>
+          · Kalshi {{ "%.0f"|format(o.kalshi_yes*100) }}¢
+          · modelo {{ "%.0f"|format(o.model_p_raw*100) }}%
+          · {{ o.conviction|upper }}
+          <div class="flat" style="margin-top:3px">{{ o.reasoning }}</div>
+        </div>
+        {% endfor %}
+      </td>
+      <td>{{ d.n_opportunities }}</td>
+      <td class="flat">${{ "%.4f"|format(d.cost) }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
+
+{% block footer %}
+<div class="footer">
+  ⚙️ Soft cap pausa al 96% del budget · Hard cap en Anthropic Console ·
+  Reglas en {{ memory_path }}
+</div>
+{% endblock %}

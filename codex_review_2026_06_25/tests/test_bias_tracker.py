@@ -47,16 +47,6 @@ def _seed(db_path: Path, station: str, rows):
     con.close()
 
 
-
-
-@pytest.fixture(autouse=True)
-def _no_seasonal_offset(monkeypatch):
-    # Fable 2026-07-06 P1 #3: los tests unitarios del tracker verifican logica
-    # regime/EWMA/nudge sobre errores raw. El offset estacional se aplica en
-    # predictor.py antes del tracker; aqui lo desactivamos para no confundir
-    # los asserts de bias esperados.
-    monkeypatch.setattr(bt, 'SEASONAL_OFFSET_F', {})
-
 @pytest.fixture
 def db(tmp_path):
     return tmp_path / "calibration.db"
@@ -139,73 +129,6 @@ def test_recent_days_weighted_more(db):
     # the 0-err day → result must be < plain mean
     assert r["bias"] < 4.0
     assert r["bias"] > 0  # but still positive overall
-
-
-def _seed_with_multi_snapshots(db_path: Path, station: str, date_str: str,
-                               actual: float, thresholds: list):
-    """Variante de _seed que mete VARIOS snapshots auto para un mismo día.
-    `thresholds`: list[float] en orden cronológico. Permite simular el bug
-    KLGA 06-21 (94 → 77 → 82 antes de estabilizar)."""
-    con = sqlite3.connect(db_path)
-    cur = con.cursor()
-    cur.executescript("""
-        CREATE TABLE IF NOT EXISTS day_outcomes (
-            station_id TEXT, date TEXT, max_obs_f REAL, settled_at TEXT,
-            PRIMARY KEY (station_id, date)
-        );
-        CREATE TABLE IF NOT EXISTS prediction_snapshots (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            station_id TEXT, date TEXT, snapshot_time TEXT,
-            slot INTEGER, is_auto INTEGER,
-            expr TEXT, op TEXT, threshold REAL, bin_half REAL,
-            predicted_p REAL, outcome INTEGER
-        );
-    """)
-    cur.execute(
-        "INSERT INTO day_outcomes (station_id,date,max_obs_f,settled_at) VALUES (?,?,?,?)",
-        (station, date_str, float(actual), "2026-01-01T00:00:00+00:00"),
-    )
-    for i, thr in enumerate(thresholds):
-        # snapshot times 15:18:00, 15:18:30, 15:19:00, ... siempre >T08:00
-        ts = f"{date_str}T15:{18 + i//2:02d}:{(i % 2) * 30:02d}+00:00"
-        cur.execute(
-            "INSERT INTO prediction_snapshots "
-            "(station_id,date,snapshot_time,slot,is_auto,expr,op,threshold,predicted_p) "
-            "VALUES (?,?,?,?,?,?,?,?,?)",
-            (station, date_str, ts, 3, 1, f"~{thr}F", "~", float(thr), 0.5),
-        )
-    con.commit()
-    con.close()
-
-
-def test_early_pred_median_robust_to_outlier_snapshot(db):
-    """KLGA 2026-06-21 reproducer: primeros 3 snapshots 94→77→82, actual=82.
-    El bug viejo (LIMIT 1) lee 94 → err fantasma +12°F → bias EWMA contaminado.
-    La mediana de 3 elige 82 → err real 0°F."""
-    _seed_with_multi_snapshots(db, "KLGA", "2026-06-21", actual=82.0,
-                               thresholds=[94.0, 77.0, 82.0])
-    # Llenar con 3 días neutrales para superar MIN_DAYS
-    for d, a, p in [("2026-06-20", 80, 80), ("2026-06-19", 81, 81),
-                    ("2026-06-18", 86, 86)]:
-        _seed_with_multi_snapshots(db, "KLGA", d, actual=a, thresholds=[p])
-    r = bt.compute_bias("KLGA", today=date(2026, 6, 22), db_path=db)
-    # Con el fix: err de 06-21 = 82 - 82 = 0 → bias ~0, no +5°F
-    assert abs(r["bias"]) < 0.5, (
-        f"early_pred median fix failed: bias={r['bias']:.2f} "
-        f"(esperado ~0; bug viejo daba ~+5)")
-
-
-def test_early_pred_median_picks_middle_when_3_distinct(db):
-    """Si los 3 primeros son 70, 80, 90, la mediana es 80."""
-    _seed_with_multi_snapshots(db, "KBOS", "2026-04-28", actual=85.0,
-                               thresholds=[70.0, 80.0, 90.0])
-    for d, a, p in [("2026-04-27", 80, 80), ("2026-04-26", 80, 80)]:
-        _seed_with_multi_snapshots(db, "KBOS", d, actual=a, thresholds=[p])
-    r = bt.compute_bias("KBOS", today=date(2026, 5, 1), db_path=db)
-    # err 06-28 = 80 - 85 = -5. Otros 2 días err=0. EWMA pondera más
-    # el reciente (-5), entonces bias < 0 y |bias| < 5.
-    samples = dict(r["samples"])
-    assert samples["2026-04-28"] == pytest.approx(-5.0, abs=0.01)
 
 
 def test_excludes_other_stations(db):
