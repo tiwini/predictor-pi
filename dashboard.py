@@ -13,6 +13,7 @@ Cada tab extiende `base.html`.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -758,6 +759,38 @@ def comments_delete(cid: int):
     c.commit()
     c.close()
     return redirect(url_for("comments_view"))
+
+
+# ─────── Q1 — bookmark preservation cross-port (:8080 → :8000) ───────
+# Rutas dueñas del predictor weather. Bookmark viejo en :8080 → 301 al :8000.
+_PREDICTOR_ROUTES = {
+    "/comparison", "/edge", "/timing", "/movement", "/history",
+    "/bets", "/intraday", "/stations", "/ladder", "/reweight",
+    "/cross", "/grid", "/calibration", "/precip",
+    "/system", "/status", "/notify", "/alerts", "/about",
+}
+_PREDICTOR_PREFIXES = ("/station/",)
+
+
+def _predictor_base() -> str:
+    """Prefiere env PREDICTOR_URL; fallback: mismo host que el request, puerto 8000."""
+    env = os.environ.get("PREDICTOR_URL", "").strip().rstrip("/")
+    if env:
+        return env
+    host = request.host.split(":")[0]
+    return f"http://{host}:8000"
+
+
+@app.errorhandler(404)
+def _redirect_predictor_bookmarks(_e):
+    path = request.path
+    is_predictor = (path in _PREDICTOR_ROUTES
+                    or any(path.startswith(p) for p in _PREDICTOR_PREFIXES))
+    if is_predictor:
+        qs = request.query_string.decode("utf-8")
+        target = f"{_predictor_base()}{path}" + (f"?{qs}" if qs else "")
+        return redirect(target, code=301)
+    return "Not Found", 404
 
 
 if __name__ == "__main__":
