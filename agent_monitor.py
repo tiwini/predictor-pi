@@ -520,7 +520,7 @@ def _call_haiku(api_key: str, system: str, user: str) -> dict:
         raise
 
 
-PICK_KINDS = {"top_picks_now", "best_setup", "best_no_tail", "skip_or_bet"}
+PICK_KINDS = {"top_picks_now", "best_setup", "skip_or_bet"}
 
 
 def _filter_actionable_opps(opps: list, ctx: dict) -> tuple[list, list]:
@@ -591,14 +591,6 @@ PROMPTS = {
             "estaciones con régimen roto — sólo flagealas como riesgo."
         ),
     },
-    "best_no_tail": {
-        "label": "🛑 Mejor NO de cola",
-        "instructions": (
-            "Encuentra LA mejor oportunidad de NO en bin de cola (≤X°F o "
-            "≥X°F en label). Solo 1 opp. side='NO'. Razón debe explicar por "
-            "qué la cola está mal-priced (modelo + climatología + observación)."
-        ),
-    },
     "summary_3bullets": {
         "label": "📊 Resumen 3 bullets",
         "instructions": (
@@ -623,7 +615,8 @@ PROMPTS = {
             "Escanea TODAS las estaciones del contexto y devuelve las 3 "
             "mejores oportunidades 'casi seguras con edge'. Criterio de "
             "aceptación (cualquiera de los dos): "
-            "(A) tail-negation NO con our_p ≤ 5% y |edge| ≥ 40pp; "
+            "(A) Bin límite (label 'X or below' o 'X or above') con our_p ≤ 10% "
+            "o ≥ 90% y |edge| ≥ 30pp; "
             "(B) YES en bin bound ('X or below' / 'X or above') con "
             "our_p ≥ 95%, kalshi ≤ 10¢ y models_spread ≤ 2°F. "
             "Excluye estaciones bloqueadas por cold-bias, streak o "
@@ -670,8 +663,8 @@ STATION_PROMPTS = {
         "label": "🛡 Bracket más seguro",
         "question": (
             "¿Cuál bracket te parece MÁS SEGURO para apostar en esta estación? "
-            "Prioriza tail-negation (NO en cola con our_p ≤8% y edge ≥10pp) o "
-            "YES en cola con our_p ≥92%. Da: bin exacto, side (YES/NO), edge en pp."
+            "Prioriza bin límite (label 'X or below' o 'X or above') con our_p "
+            "≤ 10% o ≥ 90% y |edge| ≥ 10pp. Da: bin exacto, side (YES/NO), edge en pp."
         ),
     },
     "profit_bracket": {
