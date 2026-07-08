@@ -445,6 +445,26 @@ HTML = """<!doctype html>
   .streak-sid { color: var(--cyan); font-weight: 600; }
   .streak-days { font-variant-numeric: tabular-nums; color: var(--yellow); font-weight: 600; }
   .streak-empty { color: var(--muted); font-size: .85rem; padding: .3rem 0; }
+  /* E.1 — BRIER WATCHDOG (snapshot semanal) */
+  .brier-card { padding: .75rem 1rem; border-radius: 14px; margin-bottom: 1rem;
+                border: 1px solid var(--surface2); background: var(--surface); }
+  .brier-title { font-size: .68rem; color: var(--muted); text-transform: uppercase;
+                 letter-spacing: .08em; margin-bottom: .35rem; }
+  .brier-title b { color: var(--text); }
+  .brier-alert { background: rgba(243,139,168,0.15); color: var(--red);
+                 padding: .1rem .4rem; border-radius: 5px; font-size: .7rem;
+                 font-weight: 600; margin-left: .3rem; }
+  .brier-ok { background: rgba(166,227,161,0.15); color: var(--green);
+              padding: .1rem .4rem; border-radius: 5px; font-size: .7rem;
+              font-weight: 600; margin-left: .3rem; }
+  .brier-row { display: flex; justify-content: space-between; padding: .25rem 0;
+               border-bottom: 1px solid var(--surface2); font-size: .88rem;
+               font-variant-numeric: tabular-nums; }
+  .brier-row:last-child { border-bottom: none; }
+  .brier-sid { color: var(--cyan); font-weight: 600; min-width: 3.8rem; }
+  .brier-ratio.hot { color: var(--red); font-weight: 600; }
+  .brier-ratio.ok { color: var(--green); }
+  .brier-meta { font-size: .7rem; color: var(--muted); margin-top: .35rem; }
   /* F2b.3 — QUICK ASKS (canned prompts globales) */
   .quickask { padding: .75rem 1rem; border-radius: 14px; margin-bottom: 1rem;
               border: 1px solid var(--surface2); background: var(--surface); }
@@ -526,6 +546,29 @@ HTML = """<!doctype html>
       <div class="streak-empty">Sin rachas ≥1d en las últimas 14</div>
     {% endif %}
   </div>
+  {% if brier_watchdog %}
+  <div class="brier-card">
+    <div class="brier-title">
+      🎯 Brier watchdog · <b>{{ brier_watchdog.week_iso }}</b>
+      · lookback {{ brier_watchdog.lookback_days }}d
+      {% if brier_watchdog.n_alert %}
+        <span class="brier-alert">🔴 {{ brier_watchdog.n_alert }} over</span>
+      {% else %}
+        <span class="brier-ok">🟢 OK</span>
+      {% endif %}
+    </div>
+    {% for s in brier_watchdog.stations[:5] %}
+    <div class="brier-row">
+      <span class="brier-sid">{{ s.sid }}</span>
+      <span style="color:var(--muted);font-size:.78rem">n={{ s.n }} · ours {{ '%.3f'|format(s.our) if s.our else '—' }} vs K {{ '%.3f'|format(s.kalshi) if s.kalshi else '—' }}</span>
+      <span class="brier-ratio {% if s.alerted %}hot{% else %}ok{% endif %}">
+        {% if s.ratio %}{{ '%.2f'|format(s.ratio) }}×{% else %}—{% endif %}
+      </span>
+    </div>
+    {% endfor %}
+    <div class="brier-meta">ratio {{ '<' }}1 = mejor que Kalshi · alert &gt;1.30 · genera lunes 08:00 AST</div>
+  </div>
+  {% endif %}
   {% if station_strip %}
   <div class="stationstrip">
     <div class="stationstrip-title">Estaciones · tap para drill-down</div>
@@ -1015,6 +1058,47 @@ def _build_streak_top3():
     return flat[:3]
 
 
+def _build_brier_watchdog():
+    """E.1 — Latest weekly Brier snapshot from brier_weekly table.
+    Cron writes weekly; home reads. Table missing / empty → return None.
+    """
+    try:
+        import sqlite3
+        from calibration import DB_PATH as _CAL_DB
+        conn = sqlite3.connect(str(_CAL_DB))
+        try:
+            cur = conn.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE type='table' AND name='brier_weekly'")
+            if not cur.fetchone():
+                return None
+            latest = conn.execute(
+                "SELECT MAX(week_iso) FROM brier_weekly").fetchone()[0]
+            if not latest:
+                return None
+            rows = conn.execute(
+                """SELECT station_id, n, our_brier, kalshi_brier,
+                          ratio, alerted, generated_at, lookback_days
+                   FROM brier_weekly WHERE week_iso=?
+                   ORDER BY (ratio IS NULL), ratio DESC""",
+                (latest,)).fetchall()
+        finally:
+            conn.close()
+    except Exception:
+        return None
+    if not rows:
+        return None
+    stations = [{"sid": r[0], "n": r[1], "our": r[2], "kalshi": r[3],
+                  "ratio": r[4], "alerted": bool(r[5])} for r in rows]
+    return {
+        "week_iso": latest,
+        "generated_at": rows[0][6],
+        "lookback_days": rows[0][7],
+        "stations": stations,
+        "n_alert": sum(1 for s in stations if s["alerted"]),
+    }
+
+
 def _build_decision_pill(station, market, difficulty,
                           dist_med, dist_p10, dist_p90):
     """F2b.1 — DECISIÓN HOY pill (active station).
@@ -1296,6 +1380,7 @@ def index():
                                     dist_med, dist_p10, dist_p90)
     streak_top3 = _build_streak_top3()
     station_strip = _build_station_strip(station.id)
+    brier_watchdog = _build_brier_watchdog()
     home_ask_last = _get_last_home_ask() if _ask_global else None
     home_ask_prompts = [{"kind": k, "label": v["label"]}
                         for k, v in _HOME_PROMPTS.items()]
@@ -1316,6 +1401,7 @@ def index():
         difficulty=difficulty, regime_tag=regime_tag,
         decision=decision, streak_top3=streak_top3,
         station_strip=station_strip,
+        brier_watchdog=brier_watchdog,
         home_ask_last=home_ask_last, home_ask_prompts=home_ask_prompts,
         market_name=_market_name(station.id),
     )

@@ -56,6 +56,44 @@ def _push_ntfy(title: str, msg: str) -> None:
         print(f"[brier_watchdog] ntfy push failed: {e}", file=sys.stderr)
 
 
+def _ensure_brier_weekly_table(conn: sqlite3.Connection) -> None:
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS brier_weekly (
+            week_iso TEXT NOT NULL,
+            station_id TEXT NOT NULL,
+            generated_at TEXT NOT NULL,
+            lookback_days INTEGER NOT NULL,
+            n INTEGER NOT NULL,
+            our_brier REAL,
+            kalshi_brier REAL,
+            ratio REAL,
+            alerted INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (week_iso, station_id)
+        )""")
+    conn.commit()
+
+
+def persist_weekly(stats: list[dict], week_iso: str,
+                    alert_thr: float = BRIER_RATIO_ALERT_THR) -> None:
+    conn = sqlite3.connect(CALIBRATION_DB)
+    try:
+        _ensure_brier_weekly_table(conn)
+        ts = datetime.now().isoformat(timespec="seconds")
+        for s in stats:
+            alerted = 1 if (s["ratio"] is not None
+                            and s["ratio"] > alert_thr) else 0
+            conn.execute(
+                """INSERT OR REPLACE INTO brier_weekly
+                   (week_iso, station_id, generated_at, lookback_days, n,
+                    our_brier, kalshi_brier, ratio, alerted)
+                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                (week_iso, s["station_id"], ts, LOOKBACK_DAYS, s["n"],
+                 s["our_brier"], s["kalshi_brier"], s["ratio"], alerted))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def compute_brier_by_station(days: int = LOOKBACK_DAYS) -> list[dict]:
     since = (date.today() - timedelta(days=days)).isoformat()
     conn = sqlite3.connect(CALIBRATION_DB)
@@ -143,7 +181,8 @@ def main() -> None:
     REVIEWS_DIR.mkdir(parents=True, exist_ok=True)
     outfile = REVIEWS_DIR / f"brier_{week_iso}.md"
     outfile.write_text(md, encoding="utf-8")
-    print(f"[brier_watchdog] escrito {outfile}")
+    persist_weekly(stats, week_iso)
+    print(f"[brier_watchdog] escrito {outfile} + tabla brier_weekly")
 
     alerted = [s["station_id"] for s in stats
                if s["ratio"] is not None and s["ratio"] > BRIER_RATIO_ALERT_THR]
