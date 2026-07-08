@@ -54,12 +54,20 @@ try:
     from agent_monitor import (ask_station as _ask_station,
                                 get_last_station_ask as _get_last_station_ask,
                                 clear_last_station_ask as _clear_last_station_ask,
-                                STATION_PROMPTS as _STATION_PROMPTS)
+                                STATION_PROMPTS as _STATION_PROMPTS,
+                                ask as _ask_global,
+                                get_last_home_ask as _get_last_home_ask,
+                                clear_last_home_ask as _clear_last_home_ask,
+                                PROMPTS as _HOME_PROMPTS)
 except Exception as _e:
     _ask_station = None
     _get_last_station_ask = lambda s: None
     _clear_last_station_ask = lambda s: None
     _STATION_PROMPTS = {}
+    _ask_global = None
+    _get_last_home_ask = lambda: None
+    _clear_last_home_ask = lambda: None
+    _HOME_PROMPTS = {}
 
 
 def build_day_chart_svg(day_chart, current_hour: int) -> str:
@@ -437,6 +445,31 @@ HTML = """<!doctype html>
   .streak-sid { color: var(--cyan); font-weight: 600; }
   .streak-days { font-variant-numeric: tabular-nums; color: var(--yellow); font-weight: 600; }
   .streak-empty { color: var(--muted); font-size: .85rem; padding: .3rem 0; }
+  /* F2b.3 — QUICK ASKS (canned prompts globales) */
+  .quickask { padding: .75rem 1rem; border-radius: 14px; margin-bottom: 1rem;
+              border: 1px solid var(--surface2); background: var(--surface); }
+  .quickask-title { font-size: .68rem; color: var(--muted); text-transform: uppercase;
+                    letter-spacing: .08em; margin-bottom: .5rem; }
+  .quickask-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: .4rem;
+                   margin-bottom: .5rem; }
+  .quickask-grid form { margin: 0; display: block; }
+  .quickask-grid button { width: 100%; background: var(--surface2); color: var(--text);
+                          border: 1px solid #45475a; border-radius: 10px;
+                          padding: .55rem .4rem; font-size: .82rem;
+                          font-weight: 500; text-align: left; }
+  .quickask-grid button:active { background: var(--accent); color: var(--bg); }
+  .quickask-last { margin-top: .5rem; padding-top: .55rem;
+                   border-top: 1px solid var(--surface2); position: relative; }
+  .quickask-last-hdr { font-size: .72rem; color: var(--muted); margin-bottom: .3rem; }
+  .quickask-last-hdr b { color: var(--cyan); }
+  .quickask-last-txt { font-size: .88rem; color: var(--text); line-height: 1.45;
+                       white-space: pre-wrap; }
+  .quickask-meta { color: var(--muted); font-size: .72rem; margin-top: .35rem;
+                   font-variant-numeric: tabular-nums; }
+  .quickask-clear { position: absolute; top: .3rem; right: .1rem;
+                    background: transparent; border: none; color: var(--muted);
+                    font-size: 1rem; padding: .1rem .3rem; cursor: pointer; }
+  .quickask-clear:hover { color: var(--red); }
 </style>
 </head>
 <body>
@@ -816,6 +849,36 @@ HTML = """<!doctype html>
       <a href="/about" style="color:#cba6f7">About / tutorial →</a>
     </div>
   </details>
+  {% if home_ask_prompts %}
+  <div class="quickask">
+    <div class="quickask-title">🤖 Quick asks (global AI)</div>
+    <div class="quickask-grid">
+      {% for p in home_ask_prompts %}
+      <form method="post" action="/api/home-ask">
+        <input type="hidden" name="kind" value="{{ p.kind }}">
+        <button type="submit">{{ p.label }}</button>
+      </form>
+      {% endfor %}
+    </div>
+    {% if home_ask_last %}
+    <div class="quickask-last">
+      <form method="post" action="/api/home-ask/clear"
+            style="position:absolute;top:.3rem;right:.1rem;margin:0">
+        <button type="submit" class="quickask-clear" title="borrar">⊗</button>
+      </form>
+      <div class="quickask-last-hdr">
+        Última respuesta · <b>{{ home_ask_last.label }}</b>
+      </div>
+      <div class="quickask-last-txt">{{ home_ask_last.summary }}</div>
+      <div class="quickask-meta">
+        ${{ '%.4f'|format(home_ask_last.cost) }}
+        · {{ home_ask_last.n_opps }} opps
+        · {{ home_ask_last.ts[11:16] }}Z
+      </div>
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
 </div>
 <script>
   let lastUpdate = {{ (snap.fetched_at.timestamp() * 1000)|int }};
@@ -1136,6 +1199,9 @@ def index():
     decision = _build_decision_pill(station, market, difficulty,
                                     dist_med, dist_p10, dist_p90)
     streak_top3 = _build_streak_top3()
+    home_ask_last = _get_last_home_ask() if _ask_global else None
+    home_ask_prompts = [{"kind": k, "label": v["label"]}
+                        for k, v in _HOME_PROMPTS.items()]
 
     return render_template_string(
         HTML, station=station, snap=snap, dash=dash, hero=hero,
@@ -1152,6 +1218,7 @@ def index():
         market=market, timing=timing, clock=clock, precip=precip,
         difficulty=difficulty, regime_tag=regime_tag,
         decision=decision, streak_top3=streak_top3,
+        home_ask_last=home_ask_last, home_ask_prompts=home_ask_prompts,
         market_name=_market_name(station.id),
     )
 
@@ -1233,6 +1300,24 @@ def api_station():
 @app.route("/api/refresh", methods=["POST"])
 def api_refresh():
     threading.Thread(target=do_poll, daemon=True).start()
+    return redirect("/")
+
+
+@app.route("/api/home-ask", methods=["POST"])
+def api_home_ask():
+    """F2b.3 — canned prompt global desde home. Bloqueante (~2-4s Haiku call)."""
+    if _ask_global is None:
+        return redirect("/")
+    kind = (request.form.get("kind") or "").strip()
+    if kind not in _HOME_PROMPTS:
+        return redirect("/")
+    _ask_global(kind)
+    return redirect("/")
+
+
+@app.route("/api/home-ask/clear", methods=["POST"])
+def api_home_ask_clear():
+    _clear_last_home_ask()
     return redirect("/")
 
 

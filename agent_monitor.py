@@ -946,11 +946,43 @@ def ask(kind: str) -> dict:
         (datetime.now(timezone.utc).isoformat(), MODEL, tin, tout, cost,
          len(opps), summary, json.dumps(opps),
          json.dumps(resp.get("content", []))[:2000], kind))
+    # F2b.3 — persistir última respuesta global para home QUICK ASKS
+    home_payload = json.dumps({
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "kind": kind,
+        "label": PROMPTS[kind]["label"],
+        "summary": summary,
+        "n_opps": len(opps),
+        "cost": cost,
+    })
+    c.execute(
+        "INSERT OR REPLACE INTO agent_state (key, value) VALUES ('last_home_ask', ?)",
+        (home_payload,))
     c.commit()
     c.close()
     return {"ok": True, "kind": kind, "label": PROMPTS[kind]["label"],
             "summary": summary, "opportunities": opps,
             "cost": cost, "n_opps": len(opps)}
+
+
+def get_last_home_ask() -> dict | None:
+    """F2b.3 — última respuesta global (cualquier kind) para home."""
+    c = _conn()
+    row = c.execute("SELECT value FROM agent_state WHERE key='last_home_ask'").fetchone()
+    c.close()
+    if not row:
+        return None
+    try:
+        return json.loads(row[0])
+    except Exception:
+        return None
+
+
+def clear_last_home_ask() -> None:
+    c = _conn()
+    c.execute("DELETE FROM agent_state WHERE key='last_home_ask'")
+    c.commit()
+    c.close()
 
 
 def main() -> None:
