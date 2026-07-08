@@ -470,6 +470,35 @@ HTML = """<!doctype html>
                     background: transparent; border: none; color: var(--muted);
                     font-size: 1rem; padding: .1rem .3rem; cursor: pointer; }
   .quickask-clear:hover { color: var(--red); }
+  /* F2b.4 — Station strip (horizontal scroll, click swaps active station) */
+  .stationstrip { margin-bottom: 1rem; }
+  .stationstrip-title { font-size: .68rem; color: var(--muted); text-transform: uppercase;
+                        letter-spacing: .08em; margin-bottom: .4rem; }
+  .stationstrip-scroll { display: flex; gap: .5rem; overflow-x: auto;
+                         padding-bottom: .3rem; scroll-snap-type: x mandatory;
+                         -webkit-overflow-scrolling: touch; }
+  .stcard { flex: 0 0 auto; scroll-snap-align: start; min-width: 128px;
+            background: var(--surface); border: 1px solid var(--surface2);
+            border-radius: 12px; padding: .55rem .7rem; margin: 0; display: block; }
+  .stcard button { width: 100%; background: transparent; border: none; color: inherit;
+                    padding: 0; text-align: left; font: inherit; cursor: pointer; }
+  .stcard-active { border-color: var(--cyan); background: rgba(137,220,235,0.05); }
+  .stcard-sid { font-size: .95rem; font-weight: 700; color: var(--cyan);
+                letter-spacing: .02em; }
+  .stcard-max { font-size: 1.15rem; font-variant-numeric: tabular-nums;
+                color: var(--yellow); font-weight: 600; margin: .1rem 0 .05rem; }
+  .stcard-band { font-size: .72rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .stcard-diff { font-size: .68rem; font-weight: 600; margin-top: .35rem;
+                 padding: .1rem .35rem; border-radius: 5px; display: inline-block;
+                 text-transform: uppercase; letter-spacing: .04em; }
+  .stcard-diff.easy     { background: rgba(166,227,161,0.15); color: var(--green); }
+  .stcard-diff.normal   { background: rgba(137,180,250,0.15); color: var(--cyan); }
+  .stcard-diff.hard     { background: rgba(249,226,175,0.15); color: var(--yellow); }
+  .stcard-diff.veryhard { background: rgba(243,139,168,0.15); color: var(--red); }
+  .stcard-edge { font-size: .7rem; margin-top: .3rem;
+                 font-variant-numeric: tabular-nums; color: var(--muted); }
+  .stcard-edge.pos { color: var(--green); }
+  .stcard-edge.neg { color: var(--red); }
 </style>
 </head>
 <body>
@@ -498,6 +527,34 @@ HTML = """<!doctype html>
       <div class="streak-empty">Sin rachas ≥1d en las últimas 14</div>
     {% endif %}
   </div>
+  {% if station_strip %}
+  <div class="stationstrip">
+    <div class="stationstrip-title">Estaciones · tap para cambiar</div>
+    <div class="stationstrip-scroll">
+      {% for c in station_strip %}
+      <form method="post" action="/api/station"
+            class="stcard {% if c.is_active %}stcard-active{% endif %}">
+        <input type="hidden" name="id" value="{{ c.sid }}">
+        <button type="submit">
+          <div class="stcard-sid">{{ c.sid }}</div>
+          {% if c.p50 is not none %}
+          <div class="stcard-max">{{ '%.0f'|format(c.p50) }}°F</div>
+          <div class="stcard-band">±{{ '%.1f'|format(c.band or 0) }}</div>
+          {% else %}
+          <div class="stcard-max">—</div>
+          {% endif %}
+          <div class="stcard-diff {{ c.diff_klass }}">{{ c.diff_label }}</div>
+          {% if c.edge_pp is not none %}
+          <div class="stcard-edge {% if c.edge_pp > 0 %}pos{% elif c.edge_pp < 0 %}neg{% endif %}">
+            {{ '%+.1f'|format(c.edge_pp) }}pp{% if c.modal_lbl %} · {{ c.modal_lbl }}{% endif %}
+          </div>
+          {% endif %}
+        </button>
+      </form>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
   <div class="header">
     <div>
       <div class="station-name">{{ station.id }} — {{ station.name }}</div>
@@ -899,6 +956,49 @@ HTML = """<!doctype html>
 """
 
 
+def _build_station_strip(active_sid: str):
+    """F2b.4 — 8 station cards horizontal (max, band, difficulty, edge).
+    Reads _stations_cache only (populated por _warm_cross_cache cada poll).
+    Cold cache → devuelve [] (no bloqueamos home load con fetch).
+    """
+    now = datetime.now(timezone.utc)
+    cached = _stations_cache.get("results")
+    cached_at = _stations_cache.get("computed_at")
+    if not cached or not cached_at:
+        return []
+    if (now - cached_at).total_seconds() > _STATIONS_TTL_SEC * 2:
+        return []
+    cards = []
+    for r in cached:
+        if r.get("error"):
+            continue
+        p50 = r.get("p50_precise") or r.get("p50")
+        p10 = r.get("p10")
+        p90 = r.get("p90")
+        band = (p90 - p10) / 2.0 if p10 is not None and p90 is not None else None
+        diff = r.get("difficulty") or {}
+        edge_pp = r["edge"] * 100.0 if r.get("edge") is not None else None
+        modal_lbl = None
+        if r.get("modal_bin") is not None:
+            mb = r["modal_bin"]
+            modal_lbl = getattr(mb, "label", None) or f"{mb.bin_lo:.0f}-{mb.bin_hi:.0f}"
+        cards.append({
+            "sid": r["station"],
+            "name": r.get("name") or r["station"],
+            "p50": p50,
+            "band": band,
+            "diff_label": diff.get("label") or "—",
+            "diff_klass": {"fácil": "easy", "normal": "normal",
+                            "difícil": "hard", "muy difícil": "veryhard"}.get(
+                                diff.get("label") or "", "normal"),
+            "diff_skip": diff.get("skip", False),
+            "edge_pp": edge_pp,
+            "modal_lbl": modal_lbl,
+            "is_active": r["station"] == active_sid,
+        })
+    return cards
+
+
 def _build_streak_top3():
     """F2b.2 — RACHA ACTIVA card data. Flatten /api/streak windows into top-3
     by streak_days (desc) across all stations × windows.
@@ -1199,6 +1299,7 @@ def index():
     decision = _build_decision_pill(station, market, difficulty,
                                     dist_med, dist_p10, dist_p90)
     streak_top3 = _build_streak_top3()
+    station_strip = _build_station_strip(station.id)
     home_ask_last = _get_last_home_ask() if _ask_global else None
     home_ask_prompts = [{"kind": k, "label": v["label"]}
                         for k, v in _HOME_PROMPTS.items()]
@@ -1218,6 +1319,7 @@ def index():
         market=market, timing=timing, clock=clock, precip=precip,
         difficulty=difficulty, regime_tag=regime_tag,
         decision=decision, streak_top3=streak_top3,
+        station_strip=station_strip,
         home_ask_last=home_ask_last, home_ask_prompts=home_ask_prompts,
         market_name=_market_name(station.id),
     )
