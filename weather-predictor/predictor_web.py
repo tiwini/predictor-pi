@@ -420,6 +420,23 @@ HTML = """<!doctype html>
   .decision-skip  .decision-text { color: var(--red); }
   .decision-wait  { background: rgba(249,226,175,0.06); border-color: #5e4a2a; }
   .decision-wait  .decision-text { color: var(--yellow); }
+  /* F2b.2 — RACHA ACTIVA card (top-3 global streaks) */
+  .streak-card { padding: .75rem 1rem; border-radius: 14px; margin-bottom: 1rem;
+                 border: 1px solid var(--surface2); background: var(--surface); }
+  .streak-title { font-size: .68rem; color: var(--muted); text-transform: uppercase;
+                  letter-spacing: .08em; margin-bottom: .4rem;
+                  display:flex; justify-content:space-between; align-items:baseline; }
+  .streak-title a { color: var(--accent); text-decoration: none; font-size: .78rem;
+                    text-transform: none; letter-spacing: 0; }
+  .streak-row { display: flex; justify-content: space-between; align-items: baseline;
+                padding: .3rem 0; border-bottom: 1px solid var(--surface2);
+                font-size: .95rem; }
+  .streak-row:last-child { border-bottom: none; }
+  .streak-w { color: var(--muted); font-variant-numeric: tabular-nums;
+              min-width: 3.2rem; }
+  .streak-sid { color: var(--cyan); font-weight: 600; }
+  .streak-days { font-variant-numeric: tabular-nums; color: var(--yellow); font-weight: 600; }
+  .streak-empty { color: var(--muted); font-size: .85rem; padding: .3rem 0; }
 </style>
 </head>
 <body>
@@ -431,6 +448,23 @@ HTML = """<!doctype html>
     {% if decision.detail %}<div class="decision-detail">{{ decision.detail }}</div>{% endif %}
   </div>
   {% endif %}
+  <div class="streak-card">
+    <div class="streak-title">
+      <span>🔥 Racha activa (global)</span>
+      <a href="/comparison">ver más ↗</a>
+    </div>
+    {% if streak_top3 %}
+      {% for s in streak_top3 %}
+      <div class="streak-row">
+        <span class="streak-w">{{ '%02d'|format(s.window) }}h</span>
+        <span class="streak-sid">{{ s.station_id }}</span>
+        <span class="streak-days">{{ s.streak_days }}d{% if s.streak_days >= 3 %} 🔥{% endif %}</span>
+      </div>
+      {% endfor %}
+    {% else %}
+      <div class="streak-empty">Sin rachas ≥1d en las últimas 14</div>
+    {% endif %}
+  </div>
   <div class="header">
     <div>
       <div class="station-name">{{ station.id }} — {{ station.name }}</div>
@@ -802,6 +836,26 @@ HTML = """<!doctype html>
 """
 
 
+def _build_streak_top3():
+    """F2b.2 — RACHA ACTIVA card data. Flatten /api/streak windows into top-3
+    by streak_days (desc) across all stations × windows.
+    """
+    try:
+        import streaks as _streaks
+        from calibration import DB_PATH as _CAL_DB
+        rows = _streaks.compute_streaks(str(_CAL_DB))
+    except Exception:
+        return []
+    flat = []
+    for w, entries in rows.items():
+        for r in entries:
+            if r.streak_days >= 1:
+                flat.append({"window": w, "station_id": r.station_id,
+                             "streak_days": r.streak_days})
+    flat.sort(key=lambda x: (-x["streak_days"], x["window"]))
+    return flat[:3]
+
+
 def _build_decision_pill(station, market, difficulty,
                           dist_med, dist_p10, dist_p90):
     """F2b.1 — DECISIÓN HOY pill (active station).
@@ -1081,6 +1135,7 @@ def index():
 
     decision = _build_decision_pill(station, market, difficulty,
                                     dist_med, dist_p10, dist_p90)
+    streak_top3 = _build_streak_top3()
 
     return render_template_string(
         HTML, station=station, snap=snap, dash=dash, hero=hero,
@@ -1096,7 +1151,7 @@ def index():
         climate=climate, climate_class=climate_class, climate_word=climate_word,
         market=market, timing=timing, clock=clock, precip=precip,
         difficulty=difficulty, regime_tag=regime_tag,
-        decision=decision,
+        decision=decision, streak_top3=streak_top3,
         market_name=_market_name(station.id),
     )
 
