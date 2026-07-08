@@ -620,7 +620,7 @@ HTML = """<!doctype html>
       </a>
       {% if dash.brier_n %}
       <span style="color:var(--muted)">·</span>
-      <a href="/history" style="color:inherit;text-decoration:none">
+      <a href="/bets?view=history" style="color:inherit;text-decoration:none">
         <span style="color:var(--muted)">Brier {{dash.brier_n}}d</span>
         <span style="font-weight:600;color:{% if dash.brier_ours < dash.brier_kalshi %}#a6e3a1{% elif dash.brier_ours > dash.brier_kalshi %}#f38ba8{% else %}#cdd6f4{% endif %}">{{'%.4f'|format(dash.brier_ours)}}</span>
         <span style="color:var(--muted);font-size:.8rem">vs K {{'%.4f'|format(dash.brier_kalshi)}}</span>
@@ -895,7 +895,7 @@ HTML = """<!doctype html>
       <a href="/comparison?sort=edge" style="color:#94e2d5">Edge tracking →</a>
       <a href="/cross" style="color:#cba6f7">Cross-station →</a>
       <a href="/grid" style="color:#fab387">Grid 20 estaciones (heatmap) →</a>
-      <a href="/history" style="color:#b4befe">Historial diario →</a>
+      <a href="/bets?view=history" style="color:#b4befe">Historial Brier diario →</a>
       <a href="/bets" style="color:#f5c2e7">Simulador P&amp;L →</a>
       <a href="/notify" style="color:#f38ba8">Push notifications →</a>
       <a href="/alerts" style="color:#f38ba8">Alertas NWS →</a>
@@ -3777,6 +3777,10 @@ HISTORY_TMPL = """<!doctype html>
   .lose{background:#4a2a32;color:#f38ba8;padding:.1rem .4rem;border-radius:3px;font-size:11px}
 </style></head><body>
 <p><a href="/">&larr; volver</a></p>
+<div style="margin-bottom:.5rem;font-size:13px">
+  <a href="/bets" style="color:#89b4fa">simulador P&amp;L</a> ·
+  <a href="/bets?view=history" style="color:#f9e2af;font-weight:600">historial Brier diario</a>
+</div>
 <h1>Historial diario · {{station_id}}</h1>
 <p class="dim">
   Un row por día settleado. <b>B-nuestro/B-{{market_name}}</b> = Brier del día (&lt; mejor).
@@ -4112,6 +4116,10 @@ BETS_TMPL = """<!doctype html>
   select{background:#181825;color:#cdd6f4;border:1px solid #313244;border-radius:4px;padding:.3rem}
 </style></head><body>
 <p><a href="/">&larr; volver</a></p>
+<div style="margin-bottom:.5rem;font-size:13px">
+  <a href="/bets" style="color:#f9e2af;font-weight:600">simulador P&amp;L</a> ·
+  <a href="/bets?view=history" style="color:#89b4fa">historial Brier diario</a>
+</div>
 <h1>Simulador de ganancias · {{station_id}}</h1>
 <p class="dim">
   Apuesta hipotética de <b>${{stake}}</b> cada vez que encontramos |edge| ≥ {{thr}}pp
@@ -4242,6 +4250,9 @@ BETS_TMPL = """<!doctype html>
 
 @app.route("/bets")
 def bets_view():
+    # F3.2c — ?view=history sirve historial Brier diario (audit R1 §D2 trap #5).
+    if request.args.get("view") == "history":
+        return _render_history_view()
     import bets as _bets
     import bets_sweep as _sweep
     station_id = request.args.get("station") or None
@@ -4441,6 +4452,13 @@ def _fmt_brier(b):
 
 @app.route("/history")
 def history_view():
+    # F3.2c — /history folded into /bets?view=history (audit R1 §D2 trap #5).
+    qs = request.query_string.decode("utf-8")
+    sep = "&" if qs else ""
+    return redirect(f"/bets?view=history{sep}{qs}", code=301)
+
+
+def _render_history_view():
     import calibration as _calibration
     station_id = request.args.get("station", state.station.id if state else "KPHX")
     raw = _calibration.list_summaries(station_id, limit=90)
