@@ -891,11 +891,10 @@ HTML = """<!doctype html>
       <a href="/comparison" style="color:#f5c2e7">{{market_name}} vs nuestro modelo →</a>
       <a href="/ladder" style="color:#a6e3a1">Threshold ladder →</a>
       <a href="/calibration" style="color:#89b4fa">Reliability diagram →</a>
-      <a href="/timing" style="color:#fab387">Peak timing →</a>
-      <a href="/edge" style="color:#94e2d5">Edge tracking →</a>
+      <a href="/intraday" style="color:#fab387">Intraday (peak timing + movement) →</a>
+      <a href="/comparison?sort=edge" style="color:#94e2d5">Edge tracking →</a>
       <a href="/cross" style="color:#cba6f7">Cross-station →</a>
       <a href="/grid" style="color:#fab387">Grid 20 estaciones (heatmap) →</a>
-      <a href="/movement" style="color:#f9e2af">Movement tracking →</a>
       <a href="/history" style="color:#b4befe">Historial diario →</a>
       <a href="/bets" style="color:#f5c2e7">Simulador P&amp;L →</a>
       <a href="/notify" style="color:#f38ba8">Push notifications →</a>
@@ -2465,58 +2464,6 @@ def _timing_hist_svg(hour_hist: dict, current_hour: int,
             + "".join(bars) + marker + "".join(labels) + "</svg>")
 
 
-TIMING_TMPL = """<!doctype html>
-<html><head><meta charset="utf-8"><title>Peak timing</title>
-<link rel="stylesheet" href="/static/app.css">
-<style>
-  body{background:#11111b;color:#cdd6f4;font-family:system-ui,sans-serif;padding:1rem;max-width:720px;margin:0 auto}
-  h1{color:#fab387;margin:0 0 .4rem} a{color:#89b4fa}
-  .card{background:#1e1e2e;border-radius:8px;padding:1rem;margin:.8rem 0}
-  .big{font-size:36px;color:#fab387;font-weight:600}
-  .row{display:flex;gap:1rem;flex-wrap:wrap}
-  .stat{flex:1;min-width:140px}
-  .stat .lbl{color:#a6adc8;font-size:12px}
-  .stat .val{font-size:22px;color:#f9e2af;font-family:monospace}
-  table{width:100%;border-collapse:collapse;font-family:monospace;font-size:14px}
-  th,td{padding:4px 8px;text-align:right;border-bottom:1px solid #313244}
-  th{color:#a6adc8;text-align:center}
-  .dim{color:#6c7086;font-size:12px}
-</style></head><body>
-<p><a href="/">&larr; volver</a></p>
-<h1>Peak timing — {{stats.station_id}} · {{stats.today}}</h1>
-<div class="card">
-  <div class="dim">eff_N = {{'%.1f'|format(stats.eff_n)}} / {{stats.n_members}}
-    · {{stats.residual_hours}}h observadas hoy
-    · ahora = {{'%02d'|format(stats.current_hour)}}:00</div>
-  {% if stats.max_obs is not none %}
-    <div class="dim">Max observado hasta ahora: <b style="color:#f9e2af">{{'%.1f'|format(stats.max_obs)}}°F</b>
-      a las {{'%02d'|format(stats.max_obs_hour)}}:00</div>
-  {% endif %}
-</div>
-<div class="card row">
-  <div class="stat"><div class="lbl">hora modal</div>
-    <div class="val">{{'%02d'|format(stats.modal_hour)}}:00</div></div>
-  <div class="stat"><div class="lbl">p10 – p90</div>
-    <div class="val">{{'%02d'|format(stats.p10)}}:00 – {{'%02d'|format(stats.p90)}}:00</div></div>
-  <div class="stat"><div class="lbl">mediana</div>
-    <div class="val">{{'%02d'|format(stats.p50)}}:00</div></div>
-</div>
-<div class="card">
-  <div class="dim">Distribución horaria del peak (ponderada)</div>
-  {{svg|safe}}
-  <div class="dim">naranja = modal · amarillo = p10–p90 · gris = resto · línea rosa = hora actual</div>
-</div>
-<div class="card row">
-  <div class="stat"><div class="lbl">P(peak ya ocurrió)</div>
-    <div class="val">{{'%.0f'|format(stats.prob_already * 100)}}%</div></div>
-  {% for n, p in stats.prob_next_n.items() %}
-  <div class="stat"><div class="lbl">P(peak en próximas {{n}}h)</div>
-    <div class="val">{{'%.0f'|format(p * 100)}}%</div></div>
-  {% endfor %}
-</div>
-</body></html>"""
-
-
 @app.route("/edge")
 def edge_view():
     # F3.2a — /edge absorbed into /comparison?sort=edge (audit R1 §I1).
@@ -2525,19 +2472,8 @@ def edge_view():
 
 @app.route("/timing")
 def timing_view():
-    if _peak_timing is None:
-        return "peak_timing module unavailable", 500
-    if state is None:
-        return "no station loaded", 500
-    try:
-        stats = _peak_timing.compute(state.station)
-    except Exception as e:
-        return f"error: {e}", 500
-    svg = _timing_hist_svg(
-        stats["hour_hist"], stats["current_hour"],
-        stats["modal_hour"], stats["p10"], stats["p50"], stats["p90"],
-    )
-    return render_template_string(TIMING_TMPL, stats=stats, svg=svg)
+    # F3.2b — /timing folded into /intraday (audit R1 §D2 trap #3).
+    return redirect("/intraday", code=301)
 
 
 def _movement_svg(points: list[dict], label: str, station_tz) -> str:
@@ -2618,46 +2554,85 @@ def _movement_svg(points: list[dict], label: str, station_tz) -> str:
             + "</svg>")
 
 
-MOVEMENT_TMPL = """<!doctype html>
-<html><head><meta charset="utf-8"><title>Movement tracking</title>
+INTRADAY_TMPL = """<!doctype html>
+<html><head><meta charset="utf-8"><title>Intraday — {{station_id}}</title>
 <link rel="stylesheet" href="/static/app.css">
 <style>
   body{background:#11111b;color:#cdd6f4;font-family:system-ui,sans-serif;padding:1rem;max-width:820px;margin:0 auto}
-  h1{color:#f9e2af;margin:0 0 .4rem} h2{color:#cba6f7;margin:.8rem 0 .3rem;font-size:16px}
+  h1{color:#fab387;margin:0 0 .4rem}
+  h2{color:#cba6f7;margin:0 0 .4rem;font-size:16px}
   a{color:#89b4fa}
   .card{background:#1e1e2e;border-radius:8px;padding:1rem;margin:.8rem 0}
+  .row{display:flex;gap:1rem;flex-wrap:wrap}
+  .stat{flex:1;min-width:140px}
+  .stat .lbl{color:#a6adc8;font-size:12px}
+  .stat .val{font-size:22px;color:#f9e2af;font-family:monospace}
   table{width:100%;border-collapse:collapse;font-family:monospace;font-size:13px}
   th,td{padding:4px 8px;text-align:right;border-bottom:1px solid #313244}
   th{color:#a6adc8;text-align:center}
   td.lbl{text-align:left;color:#cdd6f4}
   .pos{color:#a6e3a1} .neg{color:#f38ba8} .dim{color:#6c7086;font-size:12px}
   .active{color:#f9e2af;font-weight:600}
+  .section-title{color:#f5c2e7;margin:1.4rem 0 .4rem;font-size:14px;
+                  text-transform:uppercase;letter-spacing:.08em}
 </style></head><body>
 <p><a href="/">&larr; volver</a></p>
-<h1>Movement tracking — {{station_id}} · {{target_date}}</h1>
+<h1>Intraday — {{station_id}} · {{target_date}}</h1>
+
+<div class="section-title">⏱ Peak timing</div>
+{% if timing %}
 <div class="card">
-  <div class="dim">Series temporales de yes_mid ({{market_name}}) y our_p (modelo) durante el día. Solo estaciones pollagas activamente tienen histórico.</div>
+  <div class="dim">eff_N = {{'%.1f'|format(timing.eff_n)}} / {{timing.n_members}}
+    · {{timing.residual_hours}}h observadas hoy
+    · ahora = {{'%02d'|format(timing.current_hour)}}:00</div>
+  {% if timing.max_obs is not none %}
+    <div class="dim">Max observado hasta ahora: <b style="color:#f9e2af">{{'%.1f'|format(timing.max_obs)}}°F</b>
+      a las {{'%02d'|format(timing.max_obs_hour)}}:00</div>
+  {% endif %}
 </div>
-
-{% if not bins %}
-<div class="card"><p>Sin datos persistidos para esta estación/fecha. Solo la estación default ({{station_id}}) tiene histórico.</p></div>
+<div class="card row">
+  <div class="stat"><div class="lbl">hora modal</div>
+    <div class="val">{{'%02d'|format(timing.modal_hour)}}:00</div></div>
+  <div class="stat"><div class="lbl">p10 – p90</div>
+    <div class="val">{{'%02d'|format(timing.p10)}}:00 – {{'%02d'|format(timing.p90)}}:00</div></div>
+  <div class="stat"><div class="lbl">mediana</div>
+    <div class="val">{{'%02d'|format(timing.p50)}}:00</div></div>
+</div>
+<div class="card">
+  <div class="dim">Distribución horaria del peak (ponderada)</div>
+  {{timing_svg|safe}}
+  <div class="dim">naranja = modal · amarillo = p10–p90 · gris = resto · línea rosa = hora actual</div>
+</div>
+<div class="card row">
+  <div class="stat"><div class="lbl">P(peak ya ocurrió)</div>
+    <div class="val">{{'%.0f'|format(timing.prob_already * 100)}}%</div></div>
+  {% for n, p in timing.prob_next_n.items() %}
+  <div class="stat"><div class="lbl">P(peak en próximas {{n}}h)</div>
+    <div class="val">{{'%.0f'|format(p * 100)}}%</div></div>
+  {% endfor %}
+</div>
 {% else %}
+<div class="card"><p class="dim">peak_timing no disponible.</p></div>
+{% endif %}
 
+<div class="section-title">📉 Movement por bin</div>
+{% if not move_bins %}
+<div class="card"><p class="dim">Sin datos persistidos para esta estación/fecha. Solo la estación default tiene histórico.</p></div>
+{% else %}
 <div class="card">
   <h2>Bin seleccionado</h2>
   <div>
-  {% for b in bins %}
-    <a href="?ticker={{b.ticker}}" class="{% if b.ticker == selected.ticker %}active{% endif %}">{{b.label}}</a>{% if not loop.last %} · {% endif %}
+  {% for b in move_bins %}
+    <a href="?ticker={{b.ticker}}#movement" class="{% if b.ticker == selected.ticker %}active{% endif %}">{{b.label}}</a>{% if not loop.last %} · {% endif %}
   {% endfor %}
   </div>
   {% if selected %}
-    <div style="margin-top:.8rem">{{svg|safe}}</div>
+    <div style="margin-top:.8rem">{{move_svg|safe}}</div>
     <div class="dim"><span style="color:#f5c2e7">■</span> {{market_name}} yes_mid ·
       <span style="color:#a6e3a1">■</span> nuestro our_p ·
       línea rosa punteada = ahora. Eje X = hora local (0–24).</div>
   {% endif %}
 </div>
-
 <div class="card">
   <h2>Movimiento por bin</h2>
   <table>
@@ -2665,9 +2640,9 @@ MOVEMENT_TMPL = """<!doctype html>
       <th>{{market_name}} inicio</th><th>{{market_name}} final</th><th>Δ {{market_name}}</th>
       <th>nosotros inicio</th><th>nosotros final</th><th>Δ nosotros</th>
       <th>n</th></tr>
-  {% for r in summary %}
+  {% for r in move_summary %}
   <tr>
-    <td class="lbl"><a href="?ticker={{r.ticker}}">{{r.label}}</a></td>
+    <td class="lbl"><a href="?ticker={{r.ticker}}#movement">{{r.label}}</a></td>
     <td>{{'%.1f'|format(r.k_first*100)}}%</td>
     <td>{{'%.1f'|format(r.k_last*100)}}%</td>
     <td class="{% if r.k_delta >= 0 %}pos{% else %}neg{% endif %}">
@@ -2682,13 +2657,13 @@ MOVEMENT_TMPL = """<!doctype html>
   </table>
   <p class="dim">Δ {{market_name}} grande con Δ nosotros chico = mercado reaccionando a info nueva que nuestro modelo ya tenía. Δ {{market_name}} ≈ Δ nosotros = ambos actualizando juntos con las obs.</p>
 </div>
-
 {% endif %}
 </body></html>"""
 
 
-@app.route("/movement")
-def movement_view():
+@app.route("/intraday")
+def intraday_view():
+    # F3.2b — fusión /timing + /movement (audit R1 §D2 trap #3).
     if _kalshi is None:
         return "kalshi module unavailable", 500
     if state is None:
@@ -2704,17 +2679,28 @@ def movement_view():
     else:
         target_date = datetime.now(station.tz).date()
 
-    hist = _kalshi.movement_history(station_id, target_date)
-    bins = hist["bins"]
+    timing, timing_svg = None, ""
+    if _peak_timing is not None:
+        try:
+            timing = _peak_timing.compute(station)
+            timing_svg = _timing_hist_svg(
+                timing["hour_hist"], timing["current_hour"],
+                timing["modal_hour"], timing["p10"], timing["p50"], timing["p90"],
+            )
+        except Exception as e:
+            print(f"intraday timing error: {e}", file=sys.stderr)
+            timing = None
 
-    summary = []
-    for b in bins:
+    hist = _kalshi.movement_history(station_id, target_date)
+    move_bins = hist["bins"]
+    move_summary = []
+    for b in move_bins:
         pts = [p for p in b["points"]
                if p["yes_mid"] is not None and p["our_p"] is not None]
         if len(pts) < 1:
             continue
         first, last = pts[0], pts[-1]
-        summary.append({
+        move_summary.append({
             "ticker": b["ticker"], "label": b["label"],
             "k_first": first["yes_mid"], "k_last": last["yes_mid"],
             "k_delta": last["yes_mid"] - first["yes_mid"],
@@ -2722,28 +2708,37 @@ def movement_view():
             "o_delta": last["our_p"] - first["our_p"],
             "n": len(pts),
         })
-    summary.sort(key=lambda r: -abs(r["k_delta"]))
+    move_summary.sort(key=lambda r: -abs(r["k_delta"]))
 
     selected_ticker = request.args.get("ticker")
     selected = None
-    if bins:
+    if move_bins:
         if selected_ticker:
-            selected = next((b for b in bins if b["ticker"] == selected_ticker), None)
+            selected = next((b for b in move_bins if b["ticker"] == selected_ticker), None)
         if selected is None:
-            selected = max(bins, key=lambda b: len(b["points"]))
+            selected = max(move_bins, key=lambda b: len(b["points"]))
 
-    svg = ""
+    move_svg = ""
     if selected:
-        svg = _movement_svg(selected["points"], selected["label"], station.tz)
+        move_svg = _movement_svg(selected["points"], selected["label"], station.tz)
 
     return render_template_string(
-        MOVEMENT_TMPL,
+        INTRADAY_TMPL,
         station_id=station_id,
         target_date=target_date.isoformat(),
-        bins=bins, summary=summary,
-        selected=selected, svg=svg,
+        timing=timing, timing_svg=timing_svg,
+        move_bins=move_bins, move_summary=move_summary,
+        selected=selected, move_svg=move_svg,
         market_name=_market_name(station_id),
     )
+
+
+@app.route("/movement")
+def movement_view():
+    # F3.2b — /movement folded into /intraday (audit R1 §D2 trap #3).
+    qs = request.query_string.decode("utf-8")
+    target = "/intraday" + (f"?{qs}" if qs else "")
+    return redirect(target, code=301)
 
 
 DEFAULT_CROSS = ["KPHX", "KLAX", "KLAS", "KLGA", "KBOS"]
