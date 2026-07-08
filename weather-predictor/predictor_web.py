@@ -480,8 +480,7 @@ HTML = """<!doctype html>
   .stcard { flex: 0 0 auto; scroll-snap-align: start; min-width: 128px;
             background: var(--surface); border: 1px solid var(--surface2);
             border-radius: 12px; padding: .55rem .7rem; margin: 0; display: block; }
-  .stcard button { width: 100%; background: transparent; border: none; color: inherit;
-                    padding: 0; text-align: left; font: inherit; cursor: pointer; }
+  .stcard:hover { border-color: var(--cyan); }
   .stcard-active { border-color: var(--cyan); background: rgba(137,220,235,0.05); }
   .stcard-sid { font-size: .95rem; font-weight: 700; color: var(--cyan);
                 letter-spacing: .02em; }
@@ -529,28 +528,26 @@ HTML = """<!doctype html>
   </div>
   {% if station_strip %}
   <div class="stationstrip">
-    <div class="stationstrip-title">Estaciones · tap para cambiar</div>
+    <div class="stationstrip-title">Estaciones · tap para drill-down</div>
     <div class="stationstrip-scroll">
       {% for c in station_strip %}
-      <form method="post" action="/api/station"
-            class="stcard {% if c.is_active %}stcard-active{% endif %}">
-        <input type="hidden" name="id" value="{{ c.sid }}">
-        <button type="submit">
-          <div class="stcard-sid">{{ c.sid }}</div>
-          {% if c.p50 is not none %}
-          <div class="stcard-max">{{ '%.0f'|format(c.p50) }}°F</div>
-          <div class="stcard-band">±{{ '%.1f'|format(c.band or 0) }}</div>
-          {% else %}
-          <div class="stcard-max">—</div>
-          {% endif %}
-          <div class="stcard-diff {{ c.diff_klass }}">{{ c.diff_label }}</div>
-          {% if c.edge_pp is not none %}
-          <div class="stcard-edge {% if c.edge_pp > 0 %}pos{% elif c.edge_pp < 0 %}neg{% endif %}">
-            {{ '%+.1f'|format(c.edge_pp) }}pp{% if c.modal_lbl %} · {{ c.modal_lbl }}{% endif %}
-          </div>
-          {% endif %}
-        </button>
-      </form>
+      <a href="/station/{{ c.sid }}"
+         class="stcard {% if c.is_active %}stcard-active{% endif %}"
+         style="text-decoration:none;color:inherit">
+        <div class="stcard-sid">{{ c.sid }}</div>
+        {% if c.p50 is not none %}
+        <div class="stcard-max">{{ '%.0f'|format(c.p50) }}°F</div>
+        <div class="stcard-band">±{{ '%.1f'|format(c.band or 0) }}</div>
+        {% else %}
+        <div class="stcard-max">—</div>
+        {% endif %}
+        <div class="stcard-diff {{ c.diff_klass }}">{{ c.diff_label }}</div>
+        {% if c.edge_pp is not none %}
+        <div class="stcard-edge {% if c.edge_pp > 0 %}pos{% elif c.edge_pp < 0 %}neg{% endif %}">
+          {{ '%+.1f'|format(c.edge_pp) }}pp{% if c.modal_lbl %} · {{ c.modal_lbl }}{% endif %}
+        </div>
+        {% endif %}
+      </a>
       {% endfor %}
     </div>
   </div>
@@ -3145,6 +3142,137 @@ def _compute_stations_results() -> list:
 
     results.sort(key=sort_key)
     return results
+
+
+STATION_DRILLDOWN_TMPL = """<!doctype html>
+<html><head><meta charset="utf-8"><title>{{sid}} — drill-down</title>
+<link rel="stylesheet" href="/static/app.css">
+<style>
+  body{background:#11111b;color:#cdd6f4;font-family:system-ui,sans-serif;padding:1rem;max-width:720px;margin:0 auto}
+  h1{color:#fab387;margin:0 0 .2rem;font-size:22px}
+  .sub{color:#a6adc8;font-size:13px;margin-bottom:.8rem}
+  a{color:#89b4fa}
+  .card{background:#1e1e2e;border-radius:8px;padding:1rem;margin:.6rem 0}
+  .row{display:flex;gap:1rem;flex-wrap:wrap}
+  .stat{flex:1;min-width:130px}
+  .stat .lbl{color:#a6adc8;font-size:11px;text-transform:uppercase;letter-spacing:.06em}
+  .stat .val{font-size:22px;color:#f9e2af;font-family:monospace;margin-top:.15rem}
+  .stat .val.pos{color:#a6e3a1} .stat .val.neg{color:#f38ba8}
+  .diff-easy{color:#a6e3a1} .diff-normal{color:#f9e2af}
+  .diff-hard{color:#fab387} .diff-veryhard{color:#f38ba8}
+  .dim{color:#6c7086;font-size:12px}
+  .links a{display:inline-block;padding:.4rem .7rem;background:#313244;border-radius:6px;
+           margin:.15rem;color:#cdd6f4;text-decoration:none;font-size:13px}
+  .links a:hover{background:#585b70}
+  .swap{background:#f5c2e7;color:#11111b;font-weight:600}
+  .warn{color:#f38ba8;font-size:12px}
+</style></head><body>
+<p><a href="/">&larr; volver</a></p>
+<h1>{{sid}} <span style="color:#a6adc8;font-size:14px">— {{name}}</span></h1>
+<div class="sub">
+  {% if is_active %}<span style="color:#a6e3a1;font-weight:600">● activa</span>{% else %}<span class="dim">read-only</span>{% endif %}
+  · cached hace {{cache_age}}s · target {{target_date}}
+</div>
+
+{% if not data %}
+<div class="card"><p class="warn">Sin datos para {{sid}} en cache.
+  {% if error %}Error: {{error}}{% else %}Poll aún no completó una vuelta.{% endif %}</p></div>
+{% else %}
+
+<div class="card row">
+  <div class="stat"><div class="lbl">Max esperado</div>
+    <div class="val">{{'%.1f'|format(data.p50)}}°F</div>
+    {% if data.band is not none %}<div class="dim">±{{'%.1f'|format(data.band)}}°F (p10–p90)</div>{% endif %}
+  </div>
+  <div class="stat"><div class="lbl">Dificultad</div>
+    <div class="val diff-{{data.diff_klass}}">{{data.diff_label}}</div>
+    {% if data.diff_skip %}<div class="warn">recomienda SKIP</div>{% endif %}
+  </div>
+  {% if data.edge_pp is not none %}
+  <div class="stat"><div class="lbl">Edge top</div>
+    <div class="val {% if data.edge_pp>0 %}pos{% elif data.edge_pp<0 %}neg{% endif %}">
+      {{'%+.1f'|format(data.edge_pp)}}pp</div>
+    {% if data.modal_lbl %}<div class="dim">bin {{data.modal_lbl}}</div>{% endif %}
+  </div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <div class="lbl dim" style="margin-bottom:.4rem">Explorar {{sid}}</div>
+  <div class="links">
+    {% if is_active %}
+      <a href="/comparison">bins vs mercado</a>
+      <a href="/comparison?sort=edge">edge ranking</a>
+      <a href="/intraday">intraday (timing + movement)</a>
+      <a href="/analysis">análisis modelo</a>
+    {% else %}
+      <form method="post" action="/api/station" style="display:inline;margin:0">
+        <input type="hidden" name="station" value="{{sid}}">
+        <button type="submit" class="swap" style="border:none;padding:.4rem .7rem;border-radius:6px;
+                cursor:pointer;font-size:13px">↻ activar {{sid}}</button>
+      </form>
+      <a href="/bets?view=history&station={{sid}}">historial Brier</a>
+      <a href="/intraday?station={{sid}}">intraday</a>
+    {% endif %}
+  </div>
+  {% if not is_active %}
+  <div class="dim" style="margin-top:.5rem">
+    Vista read-only. <b>bins vs mercado</b>, <b>edge ranking</b> e <b>intraday</b> muestran la estación activa;
+    para ver detalles completos de {{sid}}, activala arriba.
+  </div>
+  {% endif %}
+</div>
+
+{% endif %}
+</body></html>"""
+
+
+@app.route("/station/<sid>")
+def station_drilldown(sid):
+    """F3.3 — read-only per-station snapshot from _stations_cache.
+    Reads only cached data; does not mutate global state. Cache miss → data=None.
+    """
+    sid = sid.upper()
+    if sid not in SUPPORTED_STATIONS:
+        return f"estación desconocida: {sid}", 404
+    now = datetime.now(timezone.utc)
+    cached = _stations_cache.get("results") or []
+    cached_at = _stations_cache.get("computed_at")
+    cache_age = int((now - cached_at).total_seconds()) if cached_at else -1
+    row = next((r for r in cached if r.get("station") == sid), None)
+
+    data, error, target_date, name = None, None, "—", sid
+    if row:
+        name = row.get("name") or sid
+        error = row.get("error")
+        target = row.get("target")
+        if target is not None:
+            target_date = target.isoformat() if hasattr(target, "isoformat") else str(target)
+        if not error:
+            p50 = row.get("p50_precise") or row.get("p50")
+            p10, p90 = row.get("p10"), row.get("p90")
+            band = (p90 - p10) / 2.0 if p10 is not None and p90 is not None else None
+            diff = row.get("difficulty") or {}
+            edge_pp = row["edge"] * 100.0 if row.get("edge") is not None else None
+            modal_lbl = None
+            if row.get("modal_bin") is not None:
+                mb = row["modal_bin"]
+                modal_lbl = getattr(mb, "label", None) or f"{mb.bin_lo:.0f}-{mb.bin_hi:.0f}"
+            data = {
+                "p50": p50, "band": band,
+                "diff_label": diff.get("label") or "—",
+                "diff_klass": {"fácil": "easy", "normal": "normal",
+                                "difícil": "hard", "muy difícil": "veryhard"}.get(
+                                    diff.get("label") or "", "normal"),
+                "diff_skip": diff.get("skip", False),
+                "edge_pp": edge_pp, "modal_lbl": modal_lbl,
+            }
+    is_active = state is not None and state.station.id == sid
+    return render_template_string(
+        STATION_DRILLDOWN_TMPL,
+        sid=sid, name=name, data=data, error=error,
+        cache_age=cache_age, target_date=target_date, is_active=is_active,
+    )
 
 
 @app.route("/stations")
