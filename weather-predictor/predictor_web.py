@@ -1615,9 +1615,14 @@ COMPARE_TMPL = """<!doctype html>
 <h1>{{market_name}} vs nuestro modelo — {{station}}  {{target_date}} ({{day_label}})</h1>
 <div class="card">
   <div>
-    <a href="?day=0" style="color:{% if day_offset==0 %}#f9e2af{% else %}#89b4fa{% endif %}">hoy</a> ·
-    <a href="?day=1" style="color:{% if day_offset==1 %}#f9e2af{% else %}#89b4fa{% endif %}">mañana</a> ·
-    <a href="?day=2" style="color:{% if day_offset==2 %}#f9e2af{% else %}#89b4fa{% endif %}">pasado</a>
+    <a href="?day=0{% if sort_mode=='edge' %}&sort=edge{% endif %}" style="color:{% if day_offset==0 %}#f9e2af{% else %}#89b4fa{% endif %}">hoy</a> ·
+    <a href="?day=1{% if sort_mode=='edge' %}&sort=edge{% endif %}" style="color:{% if day_offset==1 %}#f9e2af{% else %}#89b4fa{% endif %}">mañana</a> ·
+    <a href="?day=2{% if sort_mode=='edge' %}&sort=edge{% endif %}" style="color:{% if day_offset==2 %}#f9e2af{% else %}#89b4fa{% endif %}">pasado</a>
+  </div>
+  <div style="margin-top:.4rem;font-size:12px">
+    orden:
+    <a href="?day={{day_offset}}" style="color:{% if sort_mode=='bin' %}#f9e2af{% else %}#89b4fa{% endif %}">por bin</a> ·
+    <a href="?day={{day_offset}}&sort=edge" style="color:{% if sort_mode=='edge' %}#f9e2af{% else %}#89b4fa{% endif %}">por edge</a>
   </div>
   <div class="dim" style="margin-top:.4rem">
     {% if day_offset == 0 %}Max observado hasta ahora: <b style="color:#f9e2af">{{max_obs}}</b> · {% endif %}
@@ -1746,8 +1751,47 @@ COMPARE_TMPL = """<!doctype html>
   {% endif %}
 </div>
 {% endif %}
+{% if sort_mode == 'edge' %}
+<div class="card" style="border-left:3px solid #fab387">
+  <h3 style="color:#fab387;margin:0 0 .4rem;font-size:14px">⚡ edges actuales (|edge| ≥ 5pp)</h3>
+  {% if edge_current %}
+    <table>
+    <tr><th style="text-align:left">bin</th><th>{{market_name}} mid</th><th>nuestro</th><th>edge</th><th>acción</th></tr>
+    {% for r in edge_current %}
+    <tr>
+      <td class="lbl">{{r.label}}</td>
+      <td class="num" style="color:#f5c2e7">{{'%.1f'|format(r.yes_mid*100)}}%</td>
+      <td class="num" style="color:#a6e3a1">{{'%.1f'|format(r.our_p*100)}}%</td>
+      <td class="num {% if r.edge>0 %}diff-pos{% else %}diff-neg{% endif %}">{{'%+.1f'|format(r.edge*100)}}pp</td>
+      <td class="num">{% if r.edge>0 %}<span class="pill rec-yes">buy YES</span>{% else %}<span class="pill rec-no">buy NO</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+    </table>
+  {% else %}
+    <p class="dim">Sin edges grandes ahora — nuestro modelo y {{market_name}} están ±5pp.</p>
+  {% endif %}
+</div>
+{% if edge_analysis and edge_analysis.settled_n %}
+<details class="card">
+  <summary style="cursor:pointer;color:#89b4fa;font-size:14px">📊 performance histórica por bucket de edge ({{edge_analysis.settled_n}} filas)</summary>
+  <table style="margin-top:.5rem">
+  <tr><th style="text-align:left">edge</th><th>n</th><th>mean edge</th><th>hit rate</th><th>ROI hip.</th></tr>
+  {% for b in edge_analysis.buckets %}{% if b.n > 0 %}
+  <tr>
+    <td class="lbl">{{'%+.0f'|format(b.low*100)}}pp → {{'%+.0f'|format(b.high*100)}}pp</td>
+    <td class="num">{{b.n}}</td>
+    <td class="num">{{'%+.1f'|format(b.mean_edge*100)}}pp</td>
+    <td class="num">{{'%.1f'|format(b.hit_rate*100)}}%</td>
+    <td class="num {% if b.roi>=0 %}diff-pos{% else %}diff-neg{% endif %}">{{'%+.1f'|format(b.roi*100)}}%</td>
+  </tr>
+  {% endif %}{% endfor %}
+  </table>
+  <p class="dim" style="margin-top:.4rem">ROI: compras YES a yes_mid cuando edge&gt;0, NO a (1-yes_mid) cuando edge&lt;0. Buckets extremos con ROI positivo → modelo le gana a {{market_name}}.</p>
+</details>
+{% endif %}
+{% endif %}
 <div class="card"><table>
-<tr><th style="text-align:left">rango</th>
+<tr><th style="text-align:left">rango{% if sort_mode=='edge' %} <span class="dim">(orden: |edge| desc)</span>{% endif %}</th>
     <th>{{market_name}} (mid)</th><th>nosotros</th>
     <th>diff</th><th style="width:35%">visual</th></tr>
 {% for b in bins %}
@@ -2098,6 +2142,7 @@ def comparison_view():
         day_offset = max(0, min(2, int(request.args.get("day", 0))))
     except ValueError:
         day_offset = 0
+    sort_mode = "edge" if request.args.get("sort") == "edge" else "bin"
 
     dist, target, max_obs_val = _load_day_dist(station, day_offset)
     if target is None:
@@ -2179,6 +2224,25 @@ def comparison_view():
         fetched_age = "—"
 
     recs_safe, recs_edge, recs_low = _split_recs(bins)
+
+    # F3.2a — sort=edge: reorder bins by |diff| desc + surface /edge data.
+    edge_current, edge_analysis = [], None
+    if sort_mode == "edge":
+        def _abs_diff(b):
+            op = b.get("our_p") or 0.0
+            ym = b.get("yes_mid") or 0.0
+            return abs(op - ym)
+        bins = sorted(bins, key=_abs_diff, reverse=True)
+        try:
+            edge_current = _kalshi.current_edges(
+                station.id, target, min_abs_edge=0.05)
+        except Exception:
+            edge_current = []
+        try:
+            edge_analysis = _kalshi.edge_analysis(station.id)
+        except Exception:
+            edge_analysis = None
+
     brief = _station_brief.get(station.id) if _station_brief else None
     last_ask = _get_last_station_ask(station.id) if _ask_station else None
     ask_error = None
@@ -2232,6 +2296,9 @@ def comparison_view():
         ask_enabled=(_ask_station is not None),
         station_streak=station_streak,
         streak_thresh_f=streak_thresh_f,
+        sort_mode=sort_mode,
+        edge_current=edge_current,
+        edge_analysis=edge_analysis,
     )
 
 
@@ -2450,89 +2517,10 @@ TIMING_TMPL = """<!doctype html>
 </body></html>"""
 
 
-EDGE_TMPL = """<!doctype html>
-<html><head><meta charset="utf-8"><title>Edge tracking</title>
-<link rel="stylesheet" href="/static/app.css">
-<style>
-  body{background:#11111b;color:#cdd6f4;font-family:system-ui,sans-serif;padding:1rem;max-width:820px;margin:0 auto}
-  h1{color:#94e2d5;margin:0 0 .4rem} h2{color:#f5c2e7;margin:.6rem 0 .3rem;font-size:16px}
-  a{color:#89b4fa}
-  .card{background:#1e1e2e;border-radius:8px;padding:1rem;margin:.8rem 0}
-  table{width:100%;border-collapse:collapse;font-family:monospace;font-size:13px}
-  th,td{padding:4px 8px;text-align:right;border-bottom:1px solid #313244}
-  th{color:#a6adc8;text-align:center}
-  td.lbl{text-align:left;color:#cdd6f4}
-  .pos{color:#a6e3a1} .neg{color:#f38ba8} .dim{color:#6c7086;font-size:12px}
-</style></head><body>
-<p><a href="/">&larr; volver</a></p>
-<h1>Edge tracking — {{station_id or '—'}}</h1>
-
-<div class="card">
-  <h2>Edges ahora (|edge| ≥ 5%)</h2>
-  {% if current %}
-    <table>
-    <tr><th>bin</th><th>{{market_name}} mid</th><th>nosotros</th><th>edge</th><th>acción</th></tr>
-    {% for r in current %}
-    <tr><td class="lbl">{{r.label}}</td>
-        <td>{{'%.1f'|format(r.yes_mid*100)}}%</td>
-        <td>{{'%.1f'|format(r.our_p*100)}}%</td>
-        <td class="{% if r.edge > 0 %}pos{% else %}neg{% endif %}">
-          {{'%+.1f'|format(r.edge*100)}}pp</td>
-        <td>{% if r.edge > 0 %}buy YES{% else %}buy NO{% endif %}</td></tr>
-    {% endfor %}
-    </table>
-    <p class="dim">"buy YES/NO" es el lado con valor esperado positivo si confías en nuestro modelo. Educativo, no es consejo financiero.</p>
-  {% else %}
-    <p class="dim">Sin edges grandes ahora — nuestro modelo y {{market_name}} están ±5%.</p>
-  {% endif %}
-</div>
-
-<div class="card">
-  <h2>Performance histórica por bucket de edge</h2>
-  {% if analysis.settled_n %}
-    <div class="dim">{{analysis.settled_n}} filas resueltas (bin × snapshot × día).</div>
-    <table>
-    <tr><th>edge</th><th>n</th><th>mean edge</th><th>hit rate</th><th>ROI hipotético</th></tr>
-    {% for b in analysis.buckets %}{% if b.n > 0 %}
-    <tr><td class="lbl">{{'%+.0f'|format(b.low*100)}}pp → {{'%+.0f'|format(b.high*100)}}pp</td>
-        <td>{{b.n}}</td>
-        <td>{{'%+.1f'|format(b.mean_edge*100)}}pp</td>
-        <td>{{'%.1f'|format(b.hit_rate*100)}}%</td>
-        <td class="{% if b.roi >= 0 %}pos{% else %}neg{% endif %}">
-          {{'%+.1f'|format(b.roi*100)}}%</td></tr>
-    {% endif %}{% endfor %}
-    </table>
-    <p class="dim">ROI: compras YES a yes_mid cuando edge &gt; 0, NO a (1-yes_mid) cuando edge &lt; 0. Si nuestro modelo le gana a {{market_name}}, los buckets extremos deberían tener ROI positivo.</p>
-  {% else %}
-    <p class="dim">Aún no hay días resueltos. Vuelve mañana.</p>
-  {% endif %}
-</div>
-</body></html>"""
-
-
 @app.route("/edge")
 def edge_view():
-    if _kalshi is None:
-        return "kalshi module unavailable", 500
-    if state is None:
-        return "no station loaded", 500
-    station_id = state.station.id
-    today = datetime.now(state.station.tz).date()
-    try:
-        current = _kalshi.current_edges(station_id, today, min_abs_edge=0.05)
-    except Exception:
-        current = []
-    try:
-        analysis = _kalshi.edge_analysis(station_id)
-    except Exception:
-        analysis = {"buckets": [], "settled_n": 0, "station_id": station_id}
-    return render_template_string(
-        EDGE_TMPL,
-        station_id=station_id,
-        current=current,
-        analysis=analysis,
-        market_name=_market_name(station_id),
-    )
+    # F3.2a — /edge absorbed into /comparison?sort=edge (audit R1 §I1).
+    return redirect("/comparison?sort=edge", code=301)
 
 
 @app.route("/timing")
