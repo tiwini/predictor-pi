@@ -406,10 +406,31 @@ HTML = """<!doctype html>
   .clock-legend i.peak { background: #f38ba8; }
   .clock-now-text { margin-top: .5rem; color: var(--text); font-size: 13px; }
   .clock-now-text b { color: #fab387; }
+  /* F2b.1 — DECISIÓN HOY pill (top-level active-station rec) */
+  .decision-pill { padding: .75rem 1rem; border-radius: 14px; margin-bottom: 1rem;
+                   border: 1px solid var(--surface2); background: var(--surface); }
+  .decision-label { font-size: .68rem; color: var(--muted); text-transform: uppercase;
+                    letter-spacing: .08em; margin-bottom: .25rem; }
+  .decision-text { font-size: 1.1rem; font-weight: 700; letter-spacing: .02em; }
+  .decision-detail { font-size: .85rem; color: var(--muted); margin-top: .3rem;
+                     font-variant-numeric: tabular-nums; }
+  .decision-bet   { background: rgba(166,227,161,0.08); border-color: #2e4e3a; }
+  .decision-bet   .decision-text { color: var(--green); }
+  .decision-skip  { background: rgba(243,139,168,0.10); border-color: #5e2e3a; }
+  .decision-skip  .decision-text { color: var(--red); }
+  .decision-wait  { background: rgba(249,226,175,0.06); border-color: #5e4a2a; }
+  .decision-wait  .decision-text { color: var(--yellow); }
 </style>
 </head>
 <body>
 <div class="container">
+  {% if decision %}
+  <div class="decision-pill decision-{{ decision.action }}">
+    <div class="decision-label">Decisión hoy · {{ station.id }}</div>
+    <div class="decision-text">{{ decision.text }}</div>
+    {% if decision.detail %}<div class="decision-detail">{{ decision.detail }}</div>{% endif %}
+  </div>
+  {% endif %}
   <div class="header">
     <div>
       <div class="station-name">{{ station.id }} — {{ station.name }}</div>
@@ -781,6 +802,38 @@ HTML = """<!doctype html>
 """
 
 
+def _build_decision_pill(station, market, difficulty,
+                          dist_med, dist_p10, dist_p90):
+    """F2b.1 — DECISIÓN HOY pill (active station).
+    Uses only data already computed in index() — zero extra fetch.
+    """
+    band = (dist_p90 - dist_p10) / 2.0 if dist_p10 is not None and dist_p90 is not None else 0.0
+    band_str = f"{dist_med:.0f}°F ±{band:.1f}"
+
+    if market is None:
+        return {"action": "wait",
+                "text": "SIN MERCADO",
+                "detail": f"{band_str} · sin bins de Kalshi hoy"}
+
+    edge_pp = market["top_edge"] * 100.0
+    bin_lbl = market["top_label"]
+
+    if difficulty and difficulty.get("recommend_skip"):
+        return {"action": "skip",
+                "text": f"SKIP · {difficulty.get('label', 'difícil')}",
+                "detail": f"{band_str} · bin {bin_lbl} · edge {edge_pp:+.1f}pp"}
+
+    if abs(edge_pp) >= 5.0:
+        side = "YES" if edge_pp > 0 else "NO"
+        return {"action": "bet",
+                "text": f"APUESTA · {side} bin {bin_lbl}",
+                "detail": f"{band_str} · edge {edge_pp:+.1f}pp"}
+
+    return {"action": "wait",
+            "text": "MIRAR · edge chico",
+            "detail": f"{band_str} · bin {bin_lbl} · edge {edge_pp:+.1f}pp"}
+
+
 @app.route("/")
 def index():
     if state is None or state.last_snapshot is None:
@@ -1026,6 +1079,9 @@ def index():
     except Exception:
         regime_tag = None
 
+    decision = _build_decision_pill(station, market, difficulty,
+                                    dist_med, dist_p10, dist_p90)
+
     return render_template_string(
         HTML, station=station, snap=snap, dash=dash, hero=hero,
         signals=signals,
@@ -1040,6 +1096,7 @@ def index():
         climate=climate, climate_class=climate_class, climate_word=climate_word,
         market=market, timing=timing, clock=clock, precip=precip,
         difficulty=difficulty, regime_tag=regime_tag,
+        decision=decision,
         market_name=_market_name(station.id),
     )
 
