@@ -224,6 +224,7 @@ HTML = """<!doctype html>
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>{{ station.id }} — Weather</title>
+<link rel="stylesheet" href="/static/app.css">
 <style>
   :root {
     --bg:#0a0e14; --surface:#1e2030; --surface2:#2a2e42;
@@ -1192,6 +1193,7 @@ def _reliability_svg(rep, kalshi_rep=None, market_name: str = "Kalshi") -> str:
 
 CALIB_TMPL = """<!doctype html>
 <html><head><meta charset="utf-8"><title>Reliability</title>
+<link rel="stylesheet" href="/static/app.css">
 <style>
   body{background:#11111b;color:#cdd6f4;font-family:system-ui,sans-serif;padding:1rem;max-width:900px;margin:0 auto}
   h1{color:#f5c2e7;margin:0 0 .4rem} a{color:#89b4fa}
@@ -1283,6 +1285,7 @@ CALIB_TMPL = """<!doctype html>
 
 COMPARE_TMPL = """<!doctype html>
 <html><head><meta charset="utf-8"><title>{{market_name}} vs nosotros</title>
+<link rel="stylesheet" href="/static/app.css">
 <style>
   body{background:#11111b;color:#cdd6f4;font-family:system-ui,sans-serif;padding:1rem;max-width:900px;margin:0 auto}
   h1{color:#f5c2e7;margin:0 0 .4rem} a{color:#89b4fa}
@@ -1478,6 +1481,7 @@ COMPARE_TMPL = """<!doctype html>
 
 LADDER_TMPL = """<!doctype html>
 <html><head><meta charset="utf-8"><title>Decision ladder</title>
+<link rel="stylesheet" href="/static/app.css">
 <style>
   body{background:#11111b;color:#cdd6f4;font-family:system-ui,sans-serif;padding:1rem;max-width:1200px;margin:0 auto}
   h1{color:#f5c2e7;margin:0 0 .4rem} a{color:#89b4fa}
@@ -2097,6 +2101,7 @@ def _timing_hist_svg(hour_hist: dict, current_hour: int,
 
 TIMING_TMPL = """<!doctype html>
 <html><head><meta charset="utf-8"><title>Peak timing</title>
+<link rel="stylesheet" href="/static/app.css">
 <style>
   body{background:#11111b;color:#cdd6f4;font-family:system-ui,sans-serif;padding:1rem;max-width:720px;margin:0 auto}
   h1{color:#fab387;margin:0 0 .4rem} a{color:#89b4fa}
@@ -2148,6 +2153,7 @@ TIMING_TMPL = """<!doctype html>
 
 EDGE_TMPL = """<!doctype html>
 <html><head><meta charset="utf-8"><title>Edge tracking</title>
+<link rel="stylesheet" href="/static/app.css">
 <style>
   body{background:#11111b;color:#cdd6f4;font-family:system-ui,sans-serif;padding:1rem;max-width:820px;margin:0 auto}
   h1{color:#94e2d5;margin:0 0 .4rem} h2{color:#f5c2e7;margin:.6rem 0 .3rem;font-size:16px}
@@ -2327,6 +2333,7 @@ def _movement_svg(points: list[dict], label: str, station_tz) -> str:
 
 MOVEMENT_TMPL = """<!doctype html>
 <html><head><meta charset="utf-8"><title>Movement tracking</title>
+<link rel="stylesheet" href="/static/app.css">
 <style>
   body{background:#11111b;color:#cdd6f4;font-family:system-ui,sans-serif;padding:1rem;max-width:820px;margin:0 auto}
   h1{color:#f9e2af;margin:0 0 .4rem} h2{color:#cba6f7;margin:.8rem 0 .3rem;font-size:16px}
@@ -2607,6 +2614,7 @@ def _cross_one(sid: str, day_offset: int = 0) -> dict:
 
 CROSS_TMPL = """<!doctype html>
 <html><head><meta charset="utf-8"><title>Cross-station</title>
+<link rel="stylesheet" href="/static/app.css">
 <style>
   body{background:#11111b;color:#cdd6f4;font-family:system-ui,sans-serif;padding:1rem;max-width:960px;margin:0 auto}
   h1{color:#cba6f7;margin:0 0 .4rem} a{color:#89b4fa}
@@ -2729,6 +2737,7 @@ Custom: <code>/cross?stations=KPHX,KLAX</code>
 STATIONS_TMPL = """<!doctype html>
 <html><head><meta charset="utf-8"><title>Estaciones</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/static/app.css">
 <style>
   body{background:#11111b;color:#cdd6f4;font-family:system-ui,sans-serif;
        padding:1rem;max-width:1100px;margin:0 auto}
@@ -3223,6 +3232,7 @@ def _record_poll_error(msg: str) -> None:
 
 STATUS_TMPL = """<!doctype html>
 <html><head><meta charset="utf-8"><title>Status</title>
+<link rel="stylesheet" href="/static/app.css">
 <style>
   body{background:#11111b;color:#cdd6f4;font-family:system-ui,sans-serif;padding:1rem;max-width:720px;margin:0 auto}
   h1{color:#94e2d5;margin:0 0 .4rem} h2{color:#cba6f7;margin:.8rem 0 .3rem;font-size:16px}
@@ -3317,6 +3327,7 @@ def status_view():
 
 REWEIGHT_TMPL = """<!doctype html>
 <html><head><meta charset="utf-8"><title>Reweight · {{station}}</title>
+<link rel="stylesheet" href="/static/app.css">
 <style>
   body{background:#11111b;color:#cdd6f4;font-family:system-ui,sans-serif;padding:1rem;max-width:900px;margin:0 auto}
   h1{color:#94e2d5;margin:0 0 .4rem} h2{color:#cba6f7;margin:.8rem 0 .3rem;font-size:16px}
@@ -3440,6 +3451,7 @@ def reweight_view():
 
 HISTORY_TMPL = """<!doctype html>
 <html><head><meta charset="utf-8"><title>Historial diario</title>
+<link rel="stylesheet" href="/static/app.css">
 <style>
   body{background:#11111b;color:#cdd6f4;font-family:system-ui,sans-serif;padding:1rem;max-width:1100px;margin:0 auto}
   h1{color:#94e2d5;margin:0 0 .4rem}
@@ -3603,6 +3615,7 @@ def export_csv(table: str):
 
 EXPORT_TMPL = """<!doctype html>
 <html><head><meta charset="utf-8"><title>Export CSV</title>
+<link rel="stylesheet" href="/static/app.css">
 <style>
   body{background:#11111b;color:#cdd6f4;font-family:system-ui,sans-serif;padding:1rem;max-width:820px;margin:0 auto}
   h1{color:#94e2d5;margin:0 0 .4rem} h2{color:#cba6f7;margin:.8rem 0 .3rem;font-size:16px}
@@ -3672,6 +3685,7 @@ function go(){
 
 PRECIP_TMPL = """<!doctype html>
 <html><head><meta charset="utf-8"><title>Precipitación ensemble</title>
+<link rel="stylesheet" href="/static/app.css">
 <style>
   body{background:#11111b;color:#cdd6f4;font-family:system-ui,sans-serif;padding:1rem;max-width:900px;margin:0 auto}
   h1{color:#89dceb;margin:0 0 .4rem} a{color:#89b4fa}
@@ -3767,6 +3781,7 @@ def export_view():
 
 BETS_TMPL = """<!doctype html>
 <html><head><meta charset="utf-8"><title>Simulador de ganancias</title>
+<link rel="stylesheet" href="/static/app.css">
 <style>
   body{background:#11111b;color:#cdd6f4;font-family:system-ui,sans-serif;padding:1rem;max-width:1200px;margin:0 auto}
   h1{color:#94e2d5;margin:0 0 .4rem} h2{color:#cba6f7;margin:.8rem 0 .3rem;font-size:16px}
@@ -3969,6 +3984,7 @@ def bets_view():
 
 NOTIFY_TMPL = """<!doctype html>
 <html><head><meta charset="utf-8"><title>Push notifications</title>
+<link rel="stylesheet" href="/static/app.css">
 <style>
   body{background:#11111b;color:#cdd6f4;font-family:system-ui,sans-serif;padding:1rem;max-width:720px;margin:0 auto}
   h1{color:#94e2d5;margin:0 0 .4rem} h2{color:#cba6f7;margin:.8rem 0 .3rem;font-size:16px}
@@ -4038,6 +4054,7 @@ def notify_view():
 
 ALERTS_TMPL = """<!doctype html>
 <html><head><meta charset="utf-8"><title>Alertas NWS</title>
+<link rel="stylesheet" href="/static/app.css">
 <style>
   body{background:#11111b;color:#cdd6f4;font-family:system-ui,sans-serif;padding:1rem;max-width:960px;margin:0 auto}
   h1{color:#cba6f7;margin:0 0 .4rem} a{color:#89b4fa}
@@ -4178,6 +4195,7 @@ def history_view():
 
 ABOUT_TMPL = """<!doctype html>
 <html><head><meta charset="utf-8"><title>About — Weather Predictor</title>
+<link rel="stylesheet" href="/static/app.css">
 <style>
   body{background:#11111b;color:#cdd6f4;font-family:system-ui,sans-serif;
        padding:1rem;max-width:820px;margin:0 auto;line-height:1.55}
@@ -4713,6 +4731,7 @@ GRID_TMPL = """<!doctype html><html><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Grid · 20 estaciones</title>
+<link rel="stylesheet" href="/static/app.css">
 <style>
   body{background:#1e1e2e;color:#cdd6f4;font-family:system-ui,-apple-system,sans-serif;
        margin:0;padding:.6rem;max-width:1400px;margin-inline:auto}

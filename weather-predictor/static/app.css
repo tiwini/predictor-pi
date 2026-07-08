@@ -1,0 +1,151 @@
+/* app.css — shared base for predictor_web + dashboard (F1 Fable UI v2 R1)
+ *
+ * Additive strategy: this file is loaded first; inline <style> blocks in each
+ * template override where needed. When a template gets touched in F2/F3, its
+ * inline block can be trimmed against these defaults.
+ *
+ * Palette: Catppuccin Mocha (matches existing color choices across templates).
+ */
+
+:root {
+  --ctp-base: #1e1e2e;
+  --ctp-mantle: #181825;
+  --ctp-crust: #11111b;
+  --ctp-surface0: #313244;
+  --ctp-surface1: #45475a;
+  --ctp-overlay0: #6c7086;
+  --ctp-text: #cdd6f4;
+  --ctp-subtext: #a6adc8;
+
+  --ctp-green: #a6e3a1;
+  --ctp-red: #f38ba8;
+  --ctp-yellow: #f9e2af;
+  --ctp-blue: #89b4fa;
+  --ctp-mauve: #cba6f7;
+  --ctp-pink: #f5c2e7;
+  --ctp-peach: #fab387;
+  --ctp-teal: #94e2d5;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 1rem;
+  background: var(--ctp-crust);
+  color: var(--ctp-text);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+h1, h2, h3, h4 { margin: 0.5rem 0; font-weight: 600; }
+h1 { font-size: 1.5rem; color: var(--ctp-mauve); }
+h2 { font-size: 1.2rem; color: var(--ctp-blue); }
+h3 { font-size: 1rem; color: var(--ctp-text); }
+
+a { color: var(--ctp-blue); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+hr { border: none; border-top: 1px solid var(--ctp-surface0); margin: 1rem 0; }
+
+/* Card — layout container used across all views */
+.card {
+  background: var(--ctp-base);
+  border: 1px solid var(--ctp-surface0);
+  border-radius: 8px;
+  padding: 1rem;
+  margin: 0.75rem 0;
+}
+.card.safe { border-left: 3px solid var(--ctp-green); }
+.card.edge { border-left: 3px solid var(--ctp-peach); }
+.card.low  { border-left: 3px solid var(--ctp-overlay0); }
+
+/* Key-value pairs (most common pattern: label + value stacked) */
+.kv { display: flex; justify-content: space-between; padding: 0.25rem 0; }
+.kv-k, .lbl { color: var(--ctp-subtext); font-size: 0.85rem; }
+.kv .val, .val { color: var(--ctp-text); font-variant-numeric: tabular-nums; }
+
+/* Dimmed text — used for notes, footnotes, disabled state */
+.dim {
+  color: var(--ctp-overlay0);
+  font-size: 0.85rem;
+}
+
+/* KPI blocks (dashboard-style headline numbers) */
+.kpi {
+  display: inline-block;
+  margin-right: 1.5rem;
+}
+.kpi .lbl { display: block; font-size: 0.75rem; text-transform: uppercase; }
+.kpi .val { display: block; font-size: 1.3rem; font-weight: 600; }
+
+/* Tables — used in ladder, comparison, bets, history, etc */
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { padding: 6px 8px; text-align: left; border-bottom: 1px solid var(--ctp-surface0); }
+th { color: var(--ctp-subtext); font-weight: 500; }
+td.num, .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* Buttons */
+button, .btn {
+  background: var(--ctp-surface0);
+  color: var(--ctp-text);
+  border: 1px solid var(--ctp-surface1);
+  padding: 0.4rem 0.8rem;
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: pointer;
+  font-family: inherit;
+}
+button:hover, .btn:hover { background: var(--ctp-surface1); }
+button.primary, .btn.primary { background: var(--ctp-blue); color: var(--ctp-crust); font-weight: 600; }
+
+/* Pill badges */
+.pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--ctp-surface0);
+  color: var(--ctp-text);
+}
+.pill.rec-yes, .pill.positive { background: rgba(166, 227, 161, 0.2); color: var(--ctp-green); }
+.pill.rec-no,  .pill.negative { background: rgba(243, 139, 168, 0.2); color: var(--ctp-red); }
+.pill.info                    { background: rgba(137, 180, 250, 0.2); color: var(--ctp-blue); }
+.pill.warn                    { background: rgba(250, 179, 135, 0.2); color: var(--ctp-peach); }
+
+/* Chip (compact info tag) */
+.chip {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--ctp-surface0);
+  color: var(--ctp-subtext);
+  font-size: 11px;
+  margin-right: 4px;
+}
+
+/* Nav (page top links) */
+nav.top { padding: 0.5rem 0; border-bottom: 1px solid var(--ctp-surface0); margin-bottom: 1rem; }
+nav.top a { margin-right: 0.75rem; }
+
+/* Grid layouts */
+.rec-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 0.75rem;
+}
+.rec-row { padding: 0.4rem 0; border-bottom: 1px dashed var(--ctp-surface0); }
+.rec-row:last-child { border-bottom: none; }
+
+/* Mobile (Tailscale iPhone is primary access) */
+@media (max-width: 480px) {
+  body { padding: 0.5rem; font-size: 13px; }
+  .card { padding: 0.7rem; margin: 0.5rem 0; }
+  .kpi { display: block; margin: 0.5rem 0; }
+  table { font-size: 11px; }
+  th, td { padding: 4px 6px; }
+  h1 { font-size: 1.2rem; }
+  h2 { font-size: 1.05rem; }
+}
