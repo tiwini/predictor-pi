@@ -147,9 +147,9 @@ Para cada threshold (±N alrededor de mediana):
 - `Kelly fraction`: `f*_yes = (p-k)/(1-k)`, `f*_no = (k-p)/k`
 - Pill **YES/NO** señalando lado recomendado
 
-### 6.3 `/edge` y `/movement`
-- **Edge tracking** — contratos con mayor edge actual + análisis histórico (edges por bucket, ROI hipotético).
-- **Movement** — evolución temporal de `yes_mid` Kalshi vs `our_p` para un bin dado.
+### 6.3 Edge y movement (rutas absorbidas)
+- **Edge tracking** — ahora en `/comparison?sort=edge`: contratos con mayor edge actual + análisis histórico (edges por bucket, ROI hipotético).
+- **Movement** — ahora en `/intraday`: evolución temporal de `yes_mid` Kalshi vs `our_p` para un bin dado, junto al peak timing.
 
 ### 6.4 `/bets` — Simulador P&L
 Cuando `|edge| ≥ 5pp`, el sistema "apuesta" $10 hipotéticos en el lado correcto (guard contra precios ≤0.01 o ≥0.99). Al settlearse el día, calcula payoff real. Filtros anti-pérdidas vigentes (desde 2026-05-26):
@@ -163,9 +163,9 @@ Dedupe por `(station, date, ticker)`.
 ### 6.5 Tail-negation preferida
 Con modelo sesgado, **preferir NO [≤X] de cola con edge ≥40pp** sobre point-bets centrales (validado KLGA 2026-05-25: ganó +$7.50). Memoria activa.
 
-### 6.6 `/calibration` + `/history`
+### 6.6 `/calibration` + `/bets?view=history`
 - **Calibration**: reliability diagram dual (nuestro vs Kalshi) + Brier per-bin.
-- **History**: tabla diaria con max observado, Brier nuestro, Brier Kalshi, mejor edge, si fue correcto. Total días ganando al mercado.
+- **History** (tab dentro de `/bets`): tabla diaria con max observado, Brier nuestro, Brier Kalshi, mejor edge, si fue correcto. Total días ganando al mercado.
 
 ### 6.7 Push notifications (ntfy)
 Opt-in vía env `NTFY_TOPIC`. Edge ≥10pp → push al iPad. Settle → push con Briers comparados. El briefing matutino del AI agent también puede empujar a ntfy si está configurado.
@@ -182,7 +182,7 @@ La web `predictor.py` corre en `http://100.83.162.24:8000`. El dashboard agregad
 - **`/cross`** — Las estaciones lado a lado con **ranking** y **pill de recomendación**: "apuesta a STATION SIDE +Xpp" (#1 con edge ≥5pp y dificultad <30) o "⚠ mejor saltar hoy". Selector hoy/mañana/pasado.
 - **`/comparison`** — Barra visual bin-por-bin: yes_mid Kalshi vs nuestra prob **post-calibración** + diff en pp.
 - **`/ladder`** — Por temperatura umbral: nuestro yes/no vs Kalshi, edge en pp, EV%, Kelly, pill YES/NO. Selector ventana ±2/±3/±4/±6/±10/todo.
-- **`/edge`** — Tabla edges disponibles + performance histórica por bucket.
+- **`/comparison?sort=edge`** — Toggle "orden: edge" en `/comparison`: edges actuales + performance histórica por bucket (colapsable).
 
 ### Dashboard agregado `:8080`
 
@@ -192,20 +192,18 @@ La web `predictor.py` corre en `http://100.83.162.24:8000`. El dashboard agregad
 
 ### Para entender el clima
 
-- **`/timing`** — Hora del pico: modal, rango p10-p90, P(ya ocurrió), P(en próximas 1/2/3/6h).
+- **`/intraday`** — Hora del pico (modal, rango p10-p90, P(ya ocurrió), P(en próximas 1/2/3/6h)) + evolución temporal Kalshi vs nuestro pronóstico.
 - **`/precip`** — Probabilidad lluvia/nieve hoy/mañana/pasado.
 
 ### Para ver si el sistema funciona
 
 - **`/reweight`** — Diagnóstico hora por hora del reweight: obs vs ensemble p10/p50/p90, σ aplicado (verde=pico), n miembros matched, flag dentro/fuera p1–p99. Rupturas en rojo.
 - **`/calibration`** — Reliability dual + Brier crudo vs calibrado.
-- **`/history`** — Tabla diaria, Brier nuestro vs Kalshi, mejor edge, hit/miss. Total días ganando.
-- **`/bets`** — Simulador P&L: n bets, win rate, stake, payoff, ROI.
-- **`/movement`** — Evolución temporal Kalshi vs nuestro pronóstico para un bin.
+- **`/bets`** — Simulador P&L: n bets, win rate, stake, payoff, ROI. Tab "history" da tabla diaria + Brier nuestro vs Kalshi.
 
 ### Utilidades
 
-- **`/notify`**, **`/export`** (CSV de 5 tablas), **`/status`** (salud), **`/about`** (este tutorial).
+- **`/status`** (salud), **`/about`** (este tutorial), **`/export`** (CSV de 5 tablas), **`/notify`**. Bookmarks viejos (`/edge`, `/timing`, `/movement`, `/history`) redirigen 301 preservando query string.
 
 ---
 
