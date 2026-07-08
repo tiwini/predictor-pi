@@ -183,10 +183,10 @@ h2, h3, h4 { page-break-after: avoid; }
 <li><code>Kelly fraction</code>: <code>f*_yes = (p-k)/(1-k)</code>, <code>f*_no = (k-p)/k</code></li>
 <li>Pill <strong>YES/NO</strong> señalando lado recomendado</li>
 </ul>
-<h3>6.3 <code>/edge</code> y <code>/movement</code></h3>
+<h3>6.3 Edge y movement (rutas absorbidas)</h3>
 <ul>
-<li><strong>Edge tracking</strong> — contratos con mayor edge actual + análisis histórico (edges por bucket, ROI hipotético).</li>
-<li><strong>Movement</strong> — evolución temporal de <code>yes_mid</code> Kalshi vs <code>our_p</code> para un bin dado.</li>
+<li><strong>Edge tracking</strong> — ahora en <code>/comparison?sort=edge</code>: contratos con mayor edge actual + análisis histórico (edges por bucket, ROI hipotético).</li>
+<li><strong>Movement</strong> — ahora en <code>/intraday</code>: evolución temporal de <code>yes_mid</code> Kalshi vs <code>our_p</code> para un bin dado, junto al peak timing.</li>
 </ul>
 <h3>6.4 <code>/bets</code> — Simulador P&amp;L</h3>
 <p>Cuando <code>|edge| ≥ 5pp</code>, el sistema &quot;apuesta&quot; $10 hipotéticos en el lado correcto (guard contra precios ≤0.01 o ≥0.99). Al settlearse el día, calcula payoff real. Filtros anti-pérdidas vigentes (desde 2026-05-26):</p>
@@ -199,10 +199,10 @@ h2, h3, h4 { page-break-after: avoid; }
 <p>Dedupe por <code>(station, date, ticker)</code>.</p>
 <h3>6.5 Tail-negation preferida</h3>
 <p>Con modelo sesgado, <strong>preferir NO [≤X] de cola con edge ≥40pp</strong> sobre point-bets centrales (validado KLGA 2026-05-25: ganó +$7.50). Memoria activa.</p>
-<h3>6.6 <code>/calibration</code> + <code>/history</code></h3>
+<h3>6.6 <code>/calibration</code> + <code>/bets?view=history</code></h3>
 <ul>
 <li><strong>Calibration</strong>: reliability diagram dual (nuestro vs Kalshi) + Brier per-bin.</li>
-<li><strong>History</strong>: tabla diaria con max observado, Brier nuestro, Brier Kalshi, mejor edge, si fue correcto. Total días ganando al mercado.</li>
+<li><strong>History</strong> (tab dentro de <code>/bets</code>): tabla diaria con max observado, Brier nuestro, Brier Kalshi, mejor edge, si fue correcto. Total días ganando al mercado.</li>
 </ul>
 <h3>6.7 Push notifications (ntfy)</h3>
 <p>Opt-in vía env <code>NTFY_TOPIC</code>. Edge ≥10pp → push al iPad. Settle → push con Briers comparados. El briefing matutino del AI agent también puede empujar a ntfy si está configurado.</p>
@@ -215,7 +215,7 @@ h2, h3, h4 { page-break-after: avoid; }
 <li><strong><code>/cross</code></strong> — Las estaciones lado a lado con <strong>ranking</strong> y <strong>pill de recomendación</strong>: &quot;apuesta a STATION SIDE +Xpp&quot; (#1 con edge ≥5pp y dificultad &lt;30) o &quot;⚠ mejor saltar hoy&quot;. Selector hoy/mañana/pasado.</li>
 <li><strong><code>/comparison</code></strong> — Barra visual bin-por-bin: yes_mid Kalshi vs nuestra prob <strong>post-calibración</strong> + diff en pp.</li>
 <li><strong><code>/ladder</code></strong> — Por temperatura umbral: nuestro yes/no vs Kalshi, edge en pp, EV%, Kelly, pill YES/NO. Selector ventana ±2/±3/±4/±6/±10/todo.</li>
-<li><strong><code>/edge</code></strong> — Tabla edges disponibles + performance histórica por bucket.</li>
+<li><strong><code>/comparison?sort=edge</code></strong> — Toggle &quot;orden: edge&quot; en <code>/comparison</code>: edges actuales + performance histórica por bucket (colapsable).</li>
 </ul>
 <h3>Dashboard agregado <code>:8080</code></h3>
 <ul>
@@ -225,20 +225,18 @@ h2, h3, h4 { page-break-after: avoid; }
 </ul>
 <h3>Para entender el clima</h3>
 <ul>
-<li><strong><code>/timing</code></strong> — Hora del pico: modal, rango p10-p90, P(ya ocurrió), P(en próximas 1/2/3/6h).</li>
+<li><strong><code>/intraday</code></strong> — Hora del pico (modal, rango p10-p90, P(ya ocurrió), P(en próximas 1/2/3/6h)) + evolución temporal Kalshi vs nuestro pronóstico.</li>
 <li><strong><code>/precip</code></strong> — Probabilidad lluvia/nieve hoy/mañana/pasado.</li>
 </ul>
 <h3>Para ver si el sistema funciona</h3>
 <ul>
 <li><strong><code>/reweight</code></strong> — Diagnóstico hora por hora del reweight: obs vs ensemble p10/p50/p90, σ aplicado (verde=pico), n miembros matched, flag dentro/fuera p1–p99. Rupturas en rojo.</li>
 <li><strong><code>/calibration</code></strong> — Reliability dual + Brier crudo vs calibrado.</li>
-<li><strong><code>/history</code></strong> — Tabla diaria, Brier nuestro vs Kalshi, mejor edge, hit/miss. Total días ganando.</li>
-<li><strong><code>/bets</code></strong> — Simulador P&amp;L: n bets, win rate, stake, payoff, ROI.</li>
-<li><strong><code>/movement</code></strong> — Evolución temporal Kalshi vs nuestro pronóstico para un bin.</li>
+<li><strong><code>/bets</code></strong> — Simulador P&amp;L: n bets, win rate, stake, payoff, ROI. Tab &quot;history&quot; da tabla diaria + Brier nuestro vs Kalshi.</li>
 </ul>
 <h3>Utilidades</h3>
 <ul>
-<li><strong><code>/notify</code></strong>, <strong><code>/export</code></strong> (CSV de 5 tablas), <strong><code>/status</code></strong> (salud), <strong><code>/about</code></strong> (este tutorial).</li>
+<li><strong><code>/status</code></strong> (salud), <strong><code>/about</code></strong> (este tutorial), <strong><code>/export</code></strong> (CSV de 5 tablas), <strong><code>/notify</code></strong>. Bookmarks viejos (<code>/edge</code>, <code>/timing</code>, <code>/movement</code>, <code>/history</code>) redirigen 301 preservando query string.</li>
 </ul>
 <hr />
 <h2>8. AI Agent</h2>
