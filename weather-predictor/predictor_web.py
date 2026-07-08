@@ -3230,6 +3230,32 @@ def _record_poll_error(msg: str) -> None:
         POLL_STATS["recent_errors"].pop(0)
 
 
+SYSTEM_TABS = (
+    ("health", "salud",    "/system?tab=health"),
+    ("notify", "push",     "/system?tab=notify"),
+    ("alerts", "alertas",  "/system?tab=alerts"),
+    ("about",  "tutorial", "/system?tab=about"),
+)
+
+
+def _render_system_tabs_html(active: str) -> str:
+    parts = ['<nav class="system-tabs" style="'
+             'display:flex;gap:.4rem;flex-wrap:wrap;'
+             'padding:.4rem 0;margin:0 0 .8rem;'
+             'border-bottom:1px solid #313244;font-size:13px">']
+    parts.append('<a href="/" style="color:#a6adc8;margin-right:.6rem">&larr; inicio</a>')
+    for key, label, href in SYSTEM_TABS:
+        style = ("padding:.25rem .7rem;border-radius:4px;"
+                 "text-decoration:none;")
+        if key == active:
+            style += "background:#313244;color:#cdd6f4;font-weight:600"
+        else:
+            style += "color:#89b4fa"
+        parts.append(f'<a href="{href}" style="{style}">{label}</a>')
+    parts.append('</nav>')
+    return "".join(parts)
+
+
 STATUS_TMPL = """<!doctype html>
 <html><head><meta charset="utf-8"><title>Status</title>
 <link rel="stylesheet" href="/static/app.css">
@@ -3247,7 +3273,7 @@ STATUS_TMPL = """<!doctype html>
   .err{color:#f38ba8;font-family:monospace;font-size:12px;word-break:break-word}
   .dim{color:#6c7086;font-size:12px}
 </style></head><body>
-<p><a href="/">&larr; volver</a></p>
+{{ system_tabs_html|safe }}
 <h1>Status
   <span class="badge {{health_class}}">{{health_label}}</span>
 </h1>
@@ -3293,8 +3319,7 @@ def _fmt_age(dt) -> str:
     return f"hace {s // 86400}d {(s % 86400) // 3600}h"
 
 
-@app.route("/status")
-def status_view():
+def _render_health_page():
     ps = POLL_STATS
     now = datetime.now(timezone.utc)
     uptime_s = int((now - ps["started_at"]).total_seconds())
@@ -3322,6 +3347,7 @@ def status_view():
         poll_sec=_poll_interval_for(state.station) if state else POLL_SEC, cache_ttl=600,
         station=state.station.id if state else "—",
         recent_errors=recent,
+        system_tabs_html=_render_system_tabs_html("health"),
     )
 
 
@@ -3997,7 +4023,7 @@ NOTIFY_TMPL = """<!doctype html>
   .dim{color:#6c7086;font-size:12px}
   ul{line-height:1.7}
 </style></head><body>
-<p><a href="/">&larr; volver</a></p>
+{{ system_tabs_html|safe }}
 <h1>Push notifications
   <span class="badge {{status_class}}">{{status_label}}</span>
 </h1>
@@ -4034,8 +4060,7 @@ NOTIFY_TMPL = """<!doctype html>
 </body></html>"""
 
 
-@app.route("/notify")
-def notify_view():
+def _render_notify_page():
     import notify as _notify
     import uuid
     topic = _notify.TOPIC or "—"
@@ -4049,7 +4074,8 @@ def notify_view():
         NOTIFY_TMPL,
         topic=topic, enabled=enabled, thr=int(EDGE_ALERT_THR * 100),
         status_class=status_class, status_label=status_label,
-        status_msg=status_msg, suggestion=uuid.uuid4().hex[:10])
+        status_msg=status_msg, suggestion=uuid.uuid4().hex[:10],
+        system_tabs_html=_render_system_tabs_html("notify"))
 
 
 ALERTS_TMPL = """<!doctype html>
@@ -4071,7 +4097,7 @@ ALERTS_TMPL = """<!doctype html>
   .ok{color:#a6e3a1}
   .empty{color:#6c7086;font-style:italic;padding:.5rem 0}
 </style></head><body>
-<p><a href="/">&larr; volver</a> · <a href="/notify">configurar push</a></p>
+{{ system_tabs_html|safe }}
 <h1>Alertas NWS activas</h1>
 <p class="dim">Poll al endpoint público <code>api.weather.gov/alerts/active</code>
 (rate-limit 15 min/estación). Filtra eventos irrelevantes para max diario
@@ -4101,8 +4127,7 @@ inmediato = push prioritario.</p>
 </body></html>"""
 
 
-@app.route("/alerts")
-def alerts_view():
+def _render_alerts_page():
     if _weather_alerts is None:
         return "weather_alerts module unavailable", 500
     per_station = {}
@@ -4113,7 +4138,9 @@ def alerts_view():
             per_station[sid] = {"name": st.name, "alerts": alerts, "error": None}
         except Exception as e:
             per_station[sid] = {"name": "—", "alerts": [], "error": str(e)}
-    return render_template_string(ALERTS_TMPL, per_station=per_station)
+    return render_template_string(
+        ALERTS_TMPL, per_station=per_station,
+        system_tabs_html=_render_system_tabs_html("alerts"))
 
 
 @app.route("/notify/test")
@@ -4220,14 +4247,13 @@ ABOUT_TMPL = """<!doctype html>
   strong{color:#f9e2af}
   .meta{color:#6c7086;font-size:12px;margin-top:.2rem}
 </style></head><body>
-<p><a href="/">&larr; volver</a> ·
-   <a href="/tutorial.pdf">descargar PDF</a></p>
+{{ system_tabs_html|safe }}
+<p><a href="/tutorial.pdf">descargar PDF</a></p>
 {{ body|safe }}
 </body></html>"""
 
 
-@app.route("/about")
-def about_view():
+def _render_about_page():
     from pathlib import Path
     md_path = Path(__file__).parent / "tutorial.md"
     if not md_path.exists():
@@ -4238,7 +4264,43 @@ def about_view():
         return "markdown-it-py no instalado", 500
     md = MarkdownIt("commonmark", {"linkify": True, "typographer": True}).enable("table")
     body = md.render(md_path.read_text(encoding="utf-8"))
-    return render_template_string(ABOUT_TMPL, body=body)
+    return render_template_string(
+        ABOUT_TMPL, body=body,
+        system_tabs_html=_render_system_tabs_html("about"))
+
+
+@app.route("/system")
+def system_view():
+    tab = request.args.get("tab", "health")
+    dispatch = {
+        "health": _render_health_page,
+        "notify": _render_notify_page,
+        "alerts": _render_alerts_page,
+        "about":  _render_about_page,
+    }
+    if tab not in dispatch:
+        return redirect("/system?tab=health", code=302)
+    return dispatch[tab]()
+
+
+@app.route("/status")
+def status_view():
+    return redirect("/system?tab=health", code=301)
+
+
+@app.route("/notify")
+def notify_view():
+    return redirect("/system?tab=notify", code=301)
+
+
+@app.route("/alerts")
+def alerts_view():
+    return redirect("/system?tab=alerts", code=301)
+
+
+@app.route("/about")
+def about_view():
+    return redirect("/system?tab=about", code=301)
 
 
 @app.route("/tutorial.pdf")
