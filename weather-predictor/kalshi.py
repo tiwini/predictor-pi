@@ -70,7 +70,11 @@ def _parse_ticker_bin(ticker: str, label: str) -> tuple[float, float] | None:
     if "below" in lbl:
         return (float("-inf"), num - 1)
     if "above" in lbl:
-        return (num, float("inf"))
+        # Kalshi convention: ticker T{N} carries label "N+1° or above" →
+        # the strike is num+1, not num. Docstring above intentionally shows
+        # (num+1, inf); prior code returned (num, inf) which shifted the
+        # hot tail 1°F cold, contaminating settles and Brier.
+        return (num + 1, float("inf"))
     return None
 
 

@@ -116,6 +116,7 @@ def compute_bias(station_id: str, today: Optional[_date] = None,
                 """
                 SELECT threshold FROM prediction_snapshots
                 WHERE station_id = ? AND date = ? AND is_auto = 1
+                  AND (op IS NULL OR op != 'b')
                   AND snapshot_time > ? || 'T08:00' AND threshold IS NOT NULL
                 ORDER BY snapshot_time ASC LIMIT 3
                 """,

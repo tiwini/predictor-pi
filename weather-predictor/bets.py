@@ -276,6 +276,9 @@ def _cleanup_blocked(station_id: str, target_date: date,
             if direction is not None and _direction(side, lo, hi,
                                                    our_pred_f) != direction:
                 continue
+            existing_tags = (existing or "").split(",") if existing else []
+            if tag in existing_tags:
+                continue
             new_by = tag if not existing else f"{existing},{tag}"
             c.execute("UPDATE simulated_bets SET blocked_by=? WHERE id=?",
                       (new_by, bid))
@@ -289,6 +292,8 @@ def _cleanup_blocked(station_id: str, target_date: date,
 def maybe_bet(station_id: str, target_date: date, ticker: str,
               bin_lo: float, bin_hi: float, bin_label: str,
               our_p: float, kalshi_p: float,
+              *,
+              station_local_hour: int,
               edge_thr: float = EDGE_THR, stake: float = STAKE,
               models_spread_f: float | None = None,
               our_pred_f: float | None = None,
@@ -296,8 +301,7 @@ def maybe_bet(station_id: str, target_date: date, ticker: str,
               bias_info: dict | None = None,
               difficulty_score: float | None = None,
               yes_bid: float | None = None,
-              yes_ask: float | None = None,
-              station_local_hour: int | None = None) -> bool:
+              yes_ask: float | None = None) -> bool:
     """Registra una bet hipotética. Returns True si es bet REAL (blocked_by
     NULL); False si es shadow (algún guard disparó) o hard skip.
 
@@ -325,7 +329,7 @@ def maybe_bet(station_id: str, target_date: date, ticker: str,
     # Safe mode D2 (2026-07-07): tighten a 11:00 hasta 2026-07-20.
     _safe = _safe_mode_active(target_date)
     _eff_cutoff = SAFE_MODE_MAX_ENTRY_HOUR_LOCAL if _safe else LOCAL_HOUR_CUTOFF
-    if station_local_hour is not None and station_local_hour >= _eff_cutoff:
+    if station_local_hour >= _eff_cutoff:
         return False
 
     edge = our_p - kalshi_p

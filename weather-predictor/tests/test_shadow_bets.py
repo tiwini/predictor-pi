@@ -55,8 +55,7 @@ def test_edge_below_threshold_is_hard_skip(tmp_path, monkeypatch):
     placed = bets.maybe_bet(
         "KX", date(2025, 1, 15), "T_noise",
         95.0, 96.0, "95-96", our_p=0.50, kalshi_p=0.48,   # 2pp
-        our_pred_f=95.5, bias_info=NEUTRAL_BIAS,
-    )
+        our_pred_f=95.5, bias_info=NEUTRAL_BIAS, station_local_hour=10)
     assert placed is False
     assert _count(db) == 0
 
@@ -67,8 +66,7 @@ def test_degenerate_price_is_hard_skip(tmp_path, monkeypatch):
     placed = bets.maybe_bet(
         "KX", date(2025, 1, 15), "T_degen",
         95.0, 96.0, "95-96", our_p=0.05, kalshi_p=0.995,  # NO price = 0.005
-        our_pred_f=95.5, bias_info=NEUTRAL_BIAS,
-    )
+        our_pred_f=95.5, bias_info=NEUTRAL_BIAS, station_local_hour=10)
     assert placed is False
     assert _count(db) == 0
 
@@ -81,8 +79,7 @@ def test_difficulty_guard_inserts_shadow(tmp_path, monkeypatch):
         "KLAS", date(2025, 1, 15), "T_diff",
         95.0, 96.0, "95-96", our_p=0.60, kalshi_p=0.10,
         our_pred_f=95.5, bias_info=NEUTRAL_BIAS,
-        difficulty_score=1000.0,
-    )
+        difficulty_score=1000.0, station_local_hour=10)
     assert placed is False, "shadow bet: retorno False"
     r = _row(db, "T_diff")
     assert r is not None, "pero se insertó fila"
@@ -97,7 +94,7 @@ def test_real_bet_has_null_blocked_by(tmp_path, monkeypatch):
         95.0, 96.0, "95-96", our_p=0.60, kalshi_p=0.10,
         our_pred_f=95.5, bias_info=NEUTRAL_BIAS,
         difficulty_score=50.0,   # bajo umbral
-    )
+        station_local_hour=10)
     assert placed is True
     r = _row(db, "T_real")
     assert r["blocked_by"] is None
@@ -114,8 +111,7 @@ def test_multi_guard_comma_joins(tmp_path, monkeypatch):
         105.0, 106.0, "105-106",
         our_p=0.10, kalshi_p=0.64,
         our_pred_f=102.9, bias_info=NEUTRAL_BIAS,
-        ext_diff_f=-1.6, difficulty_score=1000.0,
-    )
+        ext_diff_f=-1.6, difficulty_score=1000.0, station_local_hour=10)
     assert placed is False
     r = _row(db, "T_multi")
     tokens = [t.split(":", 1)[0] for t in r["blocked_by"].split(",")]
@@ -131,8 +127,7 @@ def test_cold_bias_guard_inserts_shadow(tmp_path, monkeypatch):
         "KPHX", date(2025, 1, 17), "T_cbias",
         105.0, 106.0, "105-106",
         our_p=0.90, kalshi_p=0.40,     # YES mid, edge +50pp
-        our_pred_f=105.5, bias_info=bias_info,
-    )
+        our_pred_f=105.5, bias_info=bias_info, station_local_hour=10)
     assert placed is False
     r = _row(db, "T_cbias")
     assert "cold_bias" in r["blocked_by"]
@@ -147,8 +142,7 @@ def test_station_dir_min_guard_inserts_shadow(tmp_path, monkeypatch):
         "KPHX", date(2025, 1, 15), "T_sdm",
         108.0, 109.0, "108-109",
         our_p=0.10, kalshi_p=0.20,
-        our_pred_f=105.0, bias_info=NEUTRAL_BIAS,
-    )
+        our_pred_f=105.0, bias_info=NEUTRAL_BIAS, station_local_hour=10)
     assert placed is False
     r = _row(db, "T_sdm")
     assert "station_dir_min" in r["blocked_by"]
@@ -162,12 +156,12 @@ def test_stats_excludes_shadow_by_default(tmp_path, monkeypatch):
     bets.maybe_bet("KX", date(2025, 1, 15), "T_real",
                    95.0, 96.0, "95-96", our_p=0.60, kalshi_p=0.10,
                    our_pred_f=95.5, bias_info=NEUTRAL_BIAS,
-                   difficulty_score=50.0)
+                   difficulty_score=50.0, station_local_hour=10)
     # 1 shadow
     bets.maybe_bet("KX", date(2025, 1, 15), "T_shadow",
                    95.0, 96.0, "95-96", our_p=0.60, kalshi_p=0.10,
                    our_pred_f=95.5, bias_info=NEUTRAL_BIAS,
-                   difficulty_score=1000.0)
+                   difficulty_score=1000.0, station_local_hour=10)
     bets.settle_day("KX", date(2025, 1, 15), 95.5)
     real = bets.stats("KX")
     with_shadow = bets.stats("KX", include_shadow=True)
@@ -182,11 +176,11 @@ def test_historical_roi_excludes_shadow_by_default(tmp_path, monkeypatch):
     bets.maybe_bet("KX", date(2025, 1, 15), "T_real",
                    95.0, 96.0, "95-96", our_p=0.60, kalshi_p=0.10,
                    our_pred_f=95.5, bias_info=NEUTRAL_BIAS,
-                   difficulty_score=50.0)
+                   difficulty_score=50.0, station_local_hour=10)
     bets.maybe_bet("KX", date(2025, 1, 15), "T_shadow",
                    95.0, 96.0, "95-96", our_p=0.60, kalshi_p=0.10,
                    our_pred_f=95.5, bias_info=NEUTRAL_BIAS,
-                   difficulty_score=1000.0)
+                   difficulty_score=1000.0, station_local_hour=10)
     bets.settle_day("KX", date(2025, 1, 15), 95.5)
     real = sig.historical_roi("KX", str(db))
     with_shadow = sig.historical_roi("KX", str(db), include_shadow=True)
@@ -201,7 +195,7 @@ def test_guard_ev_sole_when_single_guard(tmp_path, monkeypatch):
     bets.maybe_bet("KX", date(2025, 1, 15), "T_diff",
                    95.0, 96.0, "95-96", our_p=0.60, kalshi_p=0.10,
                    our_pred_f=95.5, bias_info=NEUTRAL_BIAS,
-                   difficulty_score=1000.0)
+                   difficulty_score=1000.0, station_local_hour=10)
     bets.settle_day("KX", date(2025, 1, 15), 95.5)
     ev = sig.guard_ev("KX", str(db))
     assert "difficulty" in ev
@@ -219,7 +213,7 @@ def test_guard_ev_shared_when_multi_guard(tmp_path, monkeypatch):
                    105.0, 106.0, "105-106",
                    our_p=0.10, kalshi_p=0.64,
                    our_pred_f=102.9, bias_info=NEUTRAL_BIAS,
-                   ext_diff_f=-1.6, difficulty_score=1000.0)
+                   ext_diff_f=-1.6, difficulty_score=1000.0, station_local_hour=10)
     bets.settle_day("KX", date(2025, 1, 15), 100.0)
     ev = sig.guard_ev("KX", str(db))
     assert ev["difficulty"]["sole"]["trades"] == 0
@@ -235,7 +229,7 @@ def test_guard_ev_excludes_retroactive_tags(tmp_path, monkeypatch):
     bets.maybe_bet("KX", date(2025, 1, 17), "T_prior",
                    108.0, 109.0, "108-109",
                    our_p=0.10, kalshi_p=0.50,
-                   our_pred_f=105.0, bias_info=NEUTRAL_BIAS)
+                   our_pred_f=105.0, bias_info=NEUTRAL_BIAS, station_local_hour=10)
     # Siembra racha
     c = sqlite3.connect(db)
     for i in range(3):
@@ -254,7 +248,7 @@ def test_guard_ev_excludes_retroactive_tags(tmp_path, monkeypatch):
     bets.maybe_bet("KX", date(2025, 1, 17), "T_new",
                    108.0, 109.0, "108-109",
                    our_p=0.10, kalshi_p=0.50,
-                   our_pred_f=105.0, bias_info=NEUTRAL_BIAS)
+                   our_pred_f=105.0, bias_info=NEUTRAL_BIAS, station_local_hour=10)
     bets.settle_day("KX", date(2025, 1, 17), 105.0)
     ev = sig.guard_ev("KX", str(db))
     # T_prior tiene solo streak:retroactive → excluido → NO aporta a streak sole
@@ -267,7 +261,7 @@ def test_guard_ev_empty_when_no_shadows(tmp_path, monkeypatch):
     bets.maybe_bet("KX", date(2025, 1, 15), "T_real",
                    95.0, 96.0, "95-96", our_p=0.60, kalshi_p=0.10,
                    our_pred_f=95.5, bias_info=NEUTRAL_BIAS,
-                   difficulty_score=50.0)
+                   difficulty_score=50.0, station_local_hour=10)
     bets.settle_day("KX", date(2025, 1, 15), 95.5)
     ev = sig.guard_ev("KX", str(db))
     assert ev == {}
@@ -338,7 +332,7 @@ def test_guard_ev_embeds_pnl_samples_and_relax_uses_them(tmp_path, monkeypatch):
     bets.maybe_bet("KX", date(2025, 1, 15), "T_diff",
                    95.0, 96.0, "95-96", our_p=0.60, kalshi_p=0.10,
                    our_pred_f=95.5, bias_info=NEUTRAL_BIAS,
-                   difficulty_score=1000.0)
+                   difficulty_score=1000.0, station_local_hour=10)
     bets.settle_day("KX", date(2025, 1, 15), 95.5)
     ev = sig.guard_ev("KX", str(db))
     sole = ev["difficulty"]["sole"]
@@ -361,8 +355,7 @@ def test_streak_marks_prior_bet_as_retroactive_shadow(tmp_path, monkeypatch):
         "KX", date(2025, 1, 17), "T_prior",
         108.0, 109.0, "108-109",
         our_p=0.10, kalshi_p=0.50,       # NO cold, edge -40pp
-        our_pred_f=105.0, bias_info=NEUTRAL_BIAS,
-    )
+        our_pred_f=105.0, bias_info=NEUTRAL_BIAS, station_local_hour=10)
     assert placed_prior is True, "primera bet debe ser real"
     # 2) Sembrar 3 losses cold consecutivos.
     c = sqlite3.connect(db)
@@ -384,8 +377,7 @@ def test_streak_marks_prior_bet_as_retroactive_shadow(tmp_path, monkeypatch):
         "KX", date(2025, 1, 17), "T_new",
         108.0, 109.0, "108-109",
         our_p=0.10, kalshi_p=0.50,
-        our_pred_f=105.0, bias_info=NEUTRAL_BIAS,
-    )
+        our_pred_f=105.0, bias_info=NEUTRAL_BIAS, station_local_hour=10)
     assert placed_new is False
     r_new = _row(db, "T_new")
     assert "streak" in r_new["blocked_by"]
@@ -443,8 +435,7 @@ def test_local_hour_none_no_cutoff(tmp_path, monkeypatch):
     placed = bets.maybe_bet(
         "KLAS", date(2025, 1, 15), "T_notz",
         95.0, 96.0, "95-96", our_p=0.60, kalshi_p=0.10,
-        our_pred_f=95.5, bias_info=NEUTRAL_BIAS,
-    )
+        our_pred_f=95.5, bias_info=NEUTRAL_BIAS, station_local_hour=10)
     assert placed is True
     assert _count(db) == 1
 
@@ -455,8 +446,7 @@ def test_honest_fill_yes_uses_ask(tmp_path, monkeypatch):
         "KLAS", date(2025, 1, 15), "T_yask",
         95.0, 96.0, "95-96", our_p=0.60, kalshi_p=0.10,
         our_pred_f=95.5, bias_info=NEUTRAL_BIAS,
-        yes_bid=0.08, yes_ask=0.13,
-    )
+        yes_bid=0.08, yes_ask=0.13, station_local_hour=10)
     assert placed is True
     r = _row(db, "T_yask")
     assert r["side"] == "yes"
@@ -471,8 +461,7 @@ def test_honest_fill_no_uses_one_minus_bid(tmp_path, monkeypatch):
         "KLAS", date(2025, 1, 15), "T_nbid",
         95.0, 96.0, "95-96", our_p=0.30, kalshi_p=0.75,
         our_pred_f=95.5, bias_info=NEUTRAL_BIAS,
-        yes_bid=0.72, yes_ask=0.78,
-    )
+        yes_bid=0.72, yes_ask=0.78, station_local_hour=10)
     assert placed is True
     r = _row(db, "T_nbid")
     assert r["side"] == "no"
@@ -485,8 +474,7 @@ def test_honest_fill_falls_back_to_mid_when_none(tmp_path, monkeypatch):
     placed = bets.maybe_bet(
         "KLAS", date(2025, 1, 15), "T_fall",
         95.0, 96.0, "95-96", our_p=0.60, kalshi_p=0.10,
-        our_pred_f=95.5, bias_info=NEUTRAL_BIAS,
-    )
+        our_pred_f=95.5, bias_info=NEUTRAL_BIAS, station_local_hour=10)
     assert placed is True
     r = _row(db, "T_fall")
     assert abs(r["entry_price"] - 0.10) < 1e-6

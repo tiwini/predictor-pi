@@ -65,8 +65,7 @@ def test_difficulty_block_parity_both_reject(tmp_path, monkeypatch):
         our_p=0.60, kalshi_p=0.10,          # edge +50pp (bien por encima de todo)
         our_pred_f=95.5,
         bias_info=NEUTRAL_BIAS,
-        difficulty_score=1000.0,
-    )
+        difficulty_score=1000.0, station_local_hour=10)
     assert placed is False, "bets.maybe_bet debe bloquear difficulty>70"
 
     ev = sig.evaluate_bin(
@@ -87,8 +86,7 @@ def test_difficulty_allow_parity_both_accept(tmp_path, monkeypatch):
         our_p=0.60, kalshi_p=0.10,
         our_pred_f=95.5,
         bias_info=NEUTRAL_BIAS,
-        difficulty_score=50.0,
-    )
+        difficulty_score=50.0, station_local_hour=10)
     assert placed is True
 
     ev = sig.evaluate_bin(
@@ -111,8 +109,7 @@ def test_cold_bias_block_parity(tmp_path, monkeypatch):
         105.0, 106.0, "105° to 106°",
         our_p=0.90, kalshi_p=0.40,          # edge +50pp → YES cold/mid
         our_pred_f=105.5,
-        bias_info=bias_info,
-    )
+        bias_info=bias_info, station_local_hour=10)
     assert placed is False
 
     ev = sig.evaluate_bin(
@@ -135,8 +132,7 @@ def test_ext_diff_block_parity_cold(tmp_path, monkeypatch):
         our_p=0.10, kalshi_p=0.64,          # edge -54pp → NO cold
         our_pred_f=102.9,
         bias_info=NEUTRAL_BIAS,
-        ext_diff_f=-1.6,
-    )
+        ext_diff_f=-1.6, station_local_hour=10)
     assert placed is False
 
     ev = sig.evaluate_bin(
@@ -157,8 +153,7 @@ def test_ext_diff_allow_parity_within_threshold(tmp_path, monkeypatch):
         our_p=0.10, kalshi_p=0.64,
         our_pred_f=102.9,
         bias_info=NEUTRAL_BIAS,
-        ext_diff_f=-1.0,
-    )
+        ext_diff_f=-1.0, station_local_hour=10)
     assert placed is True
 
     ev = sig.evaluate_bin(
@@ -193,8 +188,7 @@ def test_streak_block_parity_cold(tmp_path, monkeypatch):
         108.0, 109.0, "108° to 109°",
         our_p=0.10, kalshi_p=0.50,
         our_pred_f=105.0,                    # bin > pred → side=no → cold
-        bias_info=NEUTRAL_BIAS,
-    )
+        bias_info=NEUTRAL_BIAS, station_local_hour=10)
     assert placed is False, "bets debe bloquear por streak"
 
     # agent_signals recibe streak_cold_n calculado por el caller (poller).

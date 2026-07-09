@@ -55,25 +55,37 @@ def fit(samples: list, n_days: int = 0) -> Optional[Calibrator]:
                       station_id=None)
 
 
+MIN_P = 0.03  # piso Laplace, consistente con our_p_for_bin (eff_n=31)
+MAX_P = 0.97
+
+
 def apply(cal: Optional[Calibrator], p: float) -> float:
-    """Linear interp entre centros de bloques; extrapolación clampeada a primera/última y."""
+    """Linear interp entre centros de bloques; extrapolación clampeada a primera/última y.
+
+    Output clamp a [0.03, 0.97]: mismo piso Laplace que our_p_for_bin, evita
+    edges NO/YES fantasma cuando un bloque famélico devuelve 0.012 o 0.988
+    (KMIA/KATL con N_days < 10). Fable audit 2026-07-09.
+    """
     if cal is None or not cal.blocks:
         return p
-    # Center of each block
     centers = [((b.x_min + b.x_max) / 2.0, b.y) for b in cal.blocks]
     if p <= centers[0][0]:
-        return centers[0][1]
-    if p >= centers[-1][0]:
-        return centers[-1][1]
-    for i in range(1, len(centers)):
-        x0, y0 = centers[i - 1]
-        x1, y1 = centers[i]
-        if p <= x1:
-            if x1 == x0:
-                return y1
-            t = (p - x0) / (x1 - x0)
-            return y0 + t * (y1 - y0)
-    return centers[-1][1]
+        out = centers[0][1]
+    elif p >= centers[-1][0]:
+        out = centers[-1][1]
+    else:
+        out = centers[-1][1]
+        for i in range(1, len(centers)):
+            x0, y0 = centers[i - 1]
+            x1, y1 = centers[i]
+            if p <= x1:
+                if x1 == x0:
+                    out = y1
+                else:
+                    t = (p - x0) / (x1 - x0)
+                    out = y0 + t * (y1 - y0)
+                break
+    return max(MIN_P, min(MAX_P, out))
 
 
 def fit_from_db(station_id: Optional[str] = None,

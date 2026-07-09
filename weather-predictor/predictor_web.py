@@ -4914,7 +4914,10 @@ def _check_edge_alerts(snap, station) -> None:
                             our_pred_f=pred_med,
                             ext_diff_f=gate_ext_diff,
                             bias_info=getattr(snap, "bias_info", None),
-                            difficulty_score=_diff_score)
+                            difficulty_score=_diff_score,
+                            yes_bid=r.get("yes_bid"),
+                            yes_ask=r.get("yes_ask"),
+                            station_local_hour=snap.station_local.hour)
         except Exception as e:
             print(f"bet error: {e}", file=sys.stderr)
         if _notify.enabled() and edge_abs >= EDGE_ALERT_THR:

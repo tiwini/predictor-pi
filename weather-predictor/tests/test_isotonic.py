@@ -21,10 +21,12 @@ def test_violators_pooled():
 
 
 def test_apply_returns_block_y_for_input_at_center():
+    # Post-Fable 2026-07-09: apply clamps output to [MIN_P, MAX_P] to match
+    # our_p_for_bin Laplace floor. Block y=0.0 → returns 0.03, y=1.0 → 0.97.
     samples = [(0.2, 0), (0.2, 0), (0.8, 1), (0.8, 1)]
     cal = isotonic.fit(samples)
-    assert isotonic.apply(cal, 0.2) == 0.0
-    assert isotonic.apply(cal, 0.8) == 1.0
+    assert isotonic.apply(cal, 0.2) == isotonic.MIN_P
+    assert isotonic.apply(cal, 0.8) == isotonic.MAX_P
 
 
 def test_apply_interpolates_between_blocks():

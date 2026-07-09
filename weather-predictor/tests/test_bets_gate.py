@@ -36,7 +36,7 @@ def test_gate_blocks_when_models_diverge(tmp_path, monkeypatch):
     # edge = 0.20 (way over 0.05 threshold) — would normally fire
     placed = bets.maybe_bet("KX", date(2026, 5, 7), "KX-MAX-T70",
                             70.0, 71.0, "70°", 0.70, 0.50,
-                            models_spread_f=8.0)  # > 5.4°F threshold
+                            models_spread_f=8.0, station_local_hour=10)  # > 5.4°F threshold
     assert placed is False
 
 
@@ -44,7 +44,7 @@ def test_gate_allows_when_models_agree(tmp_path, monkeypatch):
     _temp_db(tmp_path, monkeypatch)
     placed = bets.maybe_bet("KX", date(2026, 5, 7), "KX-MAX-T70",
                             70.0, 71.0, "70°", 0.70, 0.50,
-                            models_spread_f=2.0)  # within threshold
+                            models_spread_f=2.0, station_local_hour=10)  # within threshold
     assert placed is True
 
 
@@ -53,7 +53,7 @@ def test_gate_passthrough_when_spread_unknown(tmp_path, monkeypatch):
     # spread=None means external_models fetch failed; fall back to old behavior
     placed = bets.maybe_bet("KX", date(2026, 5, 7), "KX-MAX-T70",
                             70.0, 71.0, "70°", 0.70, 0.50,
-                            models_spread_f=None)
+                            models_spread_f=None, station_local_hour=10)
     assert placed is True
 
 
@@ -61,11 +61,11 @@ def test_gate_strict_at_5_4(tmp_path, monkeypatch):
     _temp_db(tmp_path, monkeypatch)
     placed1 = bets.maybe_bet("KX", date(2026, 5, 7), "KX-MAX-T70",
                              70.0, 71.0, "70°", 0.70, 0.50,
-                             models_spread_f=5.4)
+                             models_spread_f=5.4, station_local_hour=10)
     assert placed1 is True  # exactly at the threshold passes
     placed2 = bets.maybe_bet("KX", date(2026, 5, 8), "KX-MAX-T70",
                              70.0, 71.0, "70°", 0.70, 0.50,
-                             models_spread_f=5.41)
+                             models_spread_f=5.41, station_local_hour=10)
     assert placed2 is False  # just above blocks
 
 
@@ -80,7 +80,7 @@ def test_ext_diff_blocks_cold_no_bet_when_ext_runs_hot(tmp_path, monkeypatch):
                             105.0, 106.0, "105° to 106°",
                             0.10, 0.64,                # edge -0.54 → side=no
                             our_pred_f=102.9,
-                            ext_diff_f=-1.6)
+                            ext_diff_f=-1.6, station_local_hour=10)
     assert placed is False
 
 
@@ -92,7 +92,7 @@ def test_ext_diff_blocks_hot_yes_bet_when_ext_runs_cold(tmp_path, monkeypatch):
                             92.0, 93.0, "92° to 93°",
                             0.40, 0.10,                # edge +0.30 → side=yes
                             our_pred_f=90.0,
-                            ext_diff_f=3.0)
+                            ext_diff_f=3.0, station_local_hour=10)
     assert placed is False
 
 
@@ -103,7 +103,7 @@ def test_ext_diff_passes_when_externals_agree(tmp_path, monkeypatch):
                             105.0, 106.0, "105° to 106°",
                             0.10, 0.64,
                             our_pred_f=102.9,
-                            ext_diff_f=-1.0)            # bajo el umbral 1.5
+                            ext_diff_f=-1.0, station_local_hour=10)            # bajo el umbral 1.5
     assert placed is True
 
 
@@ -114,7 +114,7 @@ def test_ext_diff_ignored_for_mid_bins(tmp_path, monkeypatch):
                             70.0, 71.0, "70° to 71°",
                             0.70, 0.50,
                             our_pred_f=70.5,            # pred dentro del bin
-                            ext_diff_f=-3.0)
+                            ext_diff_f=-3.0, station_local_hour=10)
     assert placed is True
 
 
@@ -129,7 +129,7 @@ def test_cold_bias_blocks_yes_on_modal_bin(tmp_path, monkeypatch):
                             0.65, 0.50,                # edge +0.15 → side=yes
                             our_pred_f=105.5,           # pred dentro → mid
                             bias_info={"bias": -1.0, "applied": True,
-                                       "sign_nudge": False, "streak_len": 0})
+                                       "sign_nudge": False, "streak_len": 0}, station_local_hour=10)
     assert placed is False
 
 
@@ -143,7 +143,7 @@ def test_cold_bias_allows_yes_on_hot_direction(tmp_path, monkeypatch):
                             0.40, 0.10,                # edge +0.30 → side=yes
                             our_pred_f=105.0,           # bin > pred → hot
                             bias_info={"bias": -1.0, "applied": True,
-                                       "sign_nudge": False, "streak_len": 0})
+                                       "sign_nudge": False, "streak_len": 0}, station_local_hour=10)
     assert placed is True
 
 
@@ -155,7 +155,7 @@ def test_cold_bias_blocks_yes_on_streak(tmp_path, monkeypatch):
                             0.65, 0.50,
                             our_pred_f=105.5,
                             bias_info={"bias": -0.4, "applied": True,
-                                       "sign_nudge": True, "streak_len": 3})
+                                       "sign_nudge": True, "streak_len": 3}, station_local_hour=10)
     assert placed is False
 
 
@@ -167,7 +167,7 @@ def test_cold_bias_allows_yes_when_no_bias(tmp_path, monkeypatch):
                             0.65, 0.50,
                             our_pred_f=105.5,
                             bias_info={"bias": 0.0, "applied": False,
-                                       "sign_nudge": False, "streak_len": 0})
+                                       "sign_nudge": False, "streak_len": 0}, station_local_hour=10)
     assert placed is True
 
 
@@ -183,7 +183,7 @@ def test_kphx_cold_blocks_below_15pp_edge(tmp_path, monkeypatch):
     placed = bets.maybe_bet("KPHX", date(2026, 6, 25), "KX-MAX-B110.5",
                             110.0, 111.0, "110° to 111°",
                             0.30, 0.40,
-                            our_pred_f=105.0)
+                            our_pred_f=105.0, station_local_hour=10)
     assert placed is False
 
 
@@ -194,7 +194,7 @@ def test_kphx_cold_passes_above_15pp_edge(tmp_path, monkeypatch):
     placed = bets.maybe_bet("KPHX", date(2026, 6, 25), "KX-MAX-B110.5",
                             110.0, 111.0, "110° to 111°",
                             0.20, 0.40,
-                            our_pred_f=105.0)
+                            our_pred_f=105.0, station_local_hour=10)
     assert placed is True
 
 
@@ -207,7 +207,7 @@ def test_kphx_hot_unaffected_by_cold_guard(tmp_path, monkeypatch):
     placed = bets.maybe_bet("KPHX", date(2026, 6, 25), "KX-MAX-B110.5",
                             110.0, 111.0, "110° to 111°",
                             0.60, 0.50,
-                            our_pred_f=105.0)
+                            our_pred_f=105.0, station_local_hour=10)
     assert placed is True
 
 
@@ -219,5 +219,5 @@ def test_other_stations_cold_unaffected(tmp_path, monkeypatch):
     placed = bets.maybe_bet("KLAS", date(2025, 1, 15), "KX-MAX-B110.5",
                             110.0, 111.0, "110° to 111°",
                             0.30, 0.40,
-                            our_pred_f=105.0)
+                            our_pred_f=105.0, station_local_hour=10)
     assert placed is True

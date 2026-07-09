@@ -26,6 +26,7 @@ NTFY_ENV = Path.home() / ".config" / "ntfy.env"
 
 BRIER_RATIO_ALERT_THR = 1.30
 LOOKBACK_DAYS = 7
+ALERT_MIN_N = 3  # requerimos ≥3 días settleados para alertar; Fable audit 2026-07-09
 
 
 def _load_ntfy_topic() -> str:
@@ -140,9 +141,15 @@ def render_markdown(stats: list[dict], week_iso: str) -> str:
             r_str = "—"
         else:
             r_str = f"{r:.2f}×"
-            flag = "🔴" if r > BRIER_RATIO_ALERT_THR else "🟢"
-            if r > BRIER_RATIO_ALERT_THR:
+            over = r > BRIER_RATIO_ALERT_THR
+            low_n = s["n"] < ALERT_MIN_N
+            if over and low_n:
+                flag = "🟡 low-N"
+            elif over:
+                flag = "🔴"
                 alerted.append(s["station_id"])
+            else:
+                flag = "🟢"
         our_s = f"{s['our_brier']:.3f}" if s['our_brier'] is not None else "—"
         k_s = f"{s['kalshi_brier']:.3f}" if s['kalshi_brier'] is not None else "—"
         lines.append(
@@ -169,34 +176,45 @@ def render_markdown(stats: list[dict], week_iso: str) -> str:
     return "\n".join(lines) + "\n"
 
 
-def main() -> None:
+def main(dry_run: bool = False) -> None:
     stats = compute_brier_by_station()
     if not stats:
         print("[brier_watchdog] sin data para lookback — skip", file=sys.stderr)
         return
 
-    week_iso = date.today().strftime("%Y-W%V")
+    # %G-W%V: ISO year to match ISO week; %Y en enero puede desalinear.
+    week_iso = date.today().strftime("%G-W%V")
     md = render_markdown(stats, week_iso)
 
     REVIEWS_DIR.mkdir(parents=True, exist_ok=True)
     outfile = REVIEWS_DIR / f"brier_{week_iso}.md"
-    outfile.write_text(md, encoding="utf-8")
-    persist_weekly(stats, week_iso)
-    print(f"[brier_watchdog] escrito {outfile} + tabla brier_weekly")
+    if dry_run:
+        print(f"[brier_watchdog] --dry-run: rendering only, skip persist/push")
+        print(md)
+    else:
+        outfile.write_text(md, encoding="utf-8")
+        persist_weekly(stats, week_iso)
+        print(f"[brier_watchdog] escrito {outfile} + tabla brier_weekly")
 
     alerted = [s["station_id"] for s in stats
-               if s["ratio"] is not None and s["ratio"] > BRIER_RATIO_ALERT_THR]
+               if s["ratio"] is not None
+               and s["ratio"] > BRIER_RATIO_ALERT_THR
+               and s["n"] >= ALERT_MIN_N]
     if alerted:
         title = f"Brier watchdog: {len(alerted)}/{len(stats)} estaciones over"
         body = (
-            f"Ratio > {BRIER_RATIO_ALERT_THR}: {', '.join(alerted)}\n"
-            f"Ver {outfile}"
+            f"Ratio > {BRIER_RATIO_ALERT_THR} (n≥{ALERT_MIN_N}): "
+            f"{', '.join(alerted)}\nVer {outfile}"
         )
-        _push_ntfy(title, body)
-        print(f"[brier_watchdog] ntfy pushed for {alerted}")
+        if dry_run:
+            print(f"[brier_watchdog] --dry-run: would push ntfy → {title}: {body}")
+        else:
+            _push_ntfy(title, body)
+            print(f"[brier_watchdog] ntfy pushed for {alerted}")
     else:
         print("[brier_watchdog] no alert this week")
 
 
 if __name__ == "__main__":
-    main()
+    dry = "--dry-run" in sys.argv
+    main(dry_run=dry)

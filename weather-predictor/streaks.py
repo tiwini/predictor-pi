@@ -77,6 +77,7 @@ def _snapshot_near(cur: sqlite3.Cursor, station_id: str, d: date,
          WHERE station_id = ?
            AND date = ?
            AND is_auto = 1
+           AND (op IS NULL OR op != 'b')
            AND threshold IS NOT NULL
          ORDER BY ABS(julianday(snapshot_time) - julianday(?)) ASC
          LIMIT 1

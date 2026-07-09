@@ -117,7 +117,8 @@ def test_parse_ticker_bin_low_tail():
 
 
 def test_parse_ticker_bin_high_tail():
-    assert kalshi._parse_ticker_bin("KXHIGHNY-26APR20-T61", "62° or above") == (61.0, float("inf"))
+    # Kalshi convention: ticker T{N} carries label "N+1° or above" → strike is num+1.
+    assert kalshi._parse_ticker_bin("KXHIGHNY-26APR20-T61", "62° or above") == (62.0, float("inf"))
 
 
 def test_parse_ticker_bin_malformed_returns_none():

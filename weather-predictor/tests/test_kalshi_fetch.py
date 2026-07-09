@@ -56,7 +56,7 @@ def test_fetch_bins_parses_b_and_t_markets():
     assert len(bins) == 3
     assert bins[0].bin_lo == float("-inf") and bins[0].bin_hi == 97
     assert bins[1].bin_lo == 100 and bins[1].bin_hi == 101
-    assert bins[2].bin_lo == 105 and bins[2].bin_hi == float("inf")
+    assert bins[2].bin_lo == 106 and bins[2].bin_hi == float("inf")
     assert abs(bins[1].yes_mid - 0.41) < 1e-9
 
 
