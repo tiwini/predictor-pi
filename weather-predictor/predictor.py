@@ -15,7 +15,7 @@ import time
 import csv
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -265,9 +265,15 @@ def fetch_current(station: Station) -> dict:
 def fetch_today_obs(station: Station) -> list:
     """Return today's official METAR observations as list of dicts.
 
-    NWS stations publish ~230+ automated readings/day; many are transient
-    glitches (seen 27°C spikes at midnight vs 25°C daytime). We restrict
-    to observations with a rawMessage (hourly METAR/SPECI), which are QC'd.
+    NWS stations publish ~230+ automated readings/día; many are transient
+    glitches (seen 27°C spikes at midnight vs 25°C daytime). Filter:
+      • lecturas con `rawMessage` (METAR/SPECI oficiales), O
+      • lecturas en minuto :53 o :54 aunque el texto raw no haya propagado.
+        ASOS samplea a :53 (:54 en algunas estaciones); esas son las mismas
+        del METAR oficial, sólo que la API a veces adjunta el texto tarde.
+    Fable decision 2026-07-10 tras incidente KIAH (real 91.9°F a las 14:53
+    sin rawMessage → sistema mostraba 91.0°F). Rechazos se loggean para
+    graduar en ~2 sem a guarda por vecinos temporales (opción C).
 
     Each entry: {'time': datetime, 'temp_f': float|None, 'pressure_inhg': float|None}
     """
@@ -281,19 +287,58 @@ def fetch_today_obs(station: Station) -> list:
         headers={"User-Agent": UA}, timeout=30)
     r.raise_for_status()
     out = []
+    rejected = []  # para telemetría
     for f in r.json().get("features", []):
         p = f["properties"]
-        if not p.get("rawMessage"):
-            continue
+        has_raw = bool(p.get("rawMessage"))
         ts = datetime.fromisoformat(p["timestamp"].replace("Z", "+00:00"))
+        minute = ts.minute
+        is_metar_slot = minute in (53, 54)
+        accepted = has_raw or is_metar_slot
         tv = p["temperature"]["value"]
+        if not accepted:
+            if tv is not None:
+                rejected.append({"time": ts, "temp_f": c_to_f(tv),
+                                 "minute": minute, "has_raw": has_raw})
+            continue
         pv = (p.get("barometricPressure") or {}).get("value")
         out.append({
             "time": ts,
             "temp_f": c_to_f(tv) if tv is not None else None,
             "pressure_inhg": pa_to_inhg(pv) if pv is not None else None,
         })
+    try:
+        _log_obs_rejects(station.id, out, rejected)
+    except Exception:
+        pass
     return out
+
+
+def _log_obs_rejects(station_id: str, accepted: list, rejected: list) -> None:
+    """Persistir lecturas rechazadas para backtestear el umbral de guarda C.
+    Cero-op si no hay rechazos. Idempotente por (station_id, ts) — no duplica
+    entre polls."""
+    if not rejected:
+        return
+    try:
+        import calibration as _cal
+    except Exception:
+        return
+    accepted_ts = sorted(a["time"] for a in accepted if a.get("temp_f") is not None)
+    for r in rejected:
+        rt = r["time"]
+        dist_min = None
+        if accepted_ts:
+            best = min(abs((rt - at).total_seconds()) for at in accepted_ts)
+            dist_min = round(best / 60.0, 1)
+        _cal.record_obs_reject(
+            station_id=station_id,
+            ts=rt,
+            temp_f=r["temp_f"],
+            minute=r["minute"],
+            has_rawmsg=r["has_raw"],
+            dist_to_accepted_min=dist_min,
+        )
 
 
 def pressure_trend_3h(obs_list, current_pressure_inhg):
@@ -417,10 +462,91 @@ def _cached(ttl: int):
     return decorator
 
 
+def fetch_past_precip(station: Station, hours: int = 8) -> list:
+    """Hourly observed+near-real precipitation for the past `hours` (inches).
+    Returns list of (datetime_local, inches). Uses Open-Meteo forecast
+    endpoint (single deterministic, cheaper than ensemble) with past_hours."""
+    r = requests.get("https://api.open-meteo.com/v1/forecast",
+                     params={"latitude": station.lat,
+                             "longitude": station.lon,
+                             "hourly": "precipitation",
+                             "past_hours": hours,
+                             "forecast_hours": 1,
+                             "timezone": station.tz.key,
+                             "precipitation_unit": "inch"},
+                     timeout=20)
+    try:
+        import om_quota
+        om_quota.count_call("past_precip")
+    except Exception:
+        pass
+    r.raise_for_status()
+    h = r.json().get("hourly") or {}
+    times = h.get("time") or []
+    precip = h.get("precipitation") or []
+    out = []
+    for i, ts_str in enumerate(times):
+        ts = datetime.fromisoformat(ts_str).replace(tzinfo=station.tz)
+        v = precip[i] if i < len(precip) else None
+        out.append((ts, float(v) if v is not None else 0.0))
+    return out
+
+
+def precip_windows_from_past(past: list, now_local: datetime) -> dict:
+    """Sum inches over the last 1/2/4/8h ending at now_local.
+    `past` is list of (datetime_local, inches) as returned by fetch_past_precip."""
+    now_ts = now_local.timestamp()
+    windows = {}
+    for wh in (1, 2, 4, 8):
+        cutoff = now_ts - wh * 3600
+        s = sum(v for (ts, v) in past
+                if cutoff <= ts.timestamp() < now_ts)
+        windows[wh] = round(s, 2)
+    return windows
+
+
 fetch_current = _cached(TTL_NWS_OBS)(fetch_current)
 fetch_today_obs = _cached(TTL_NWS_OBS)(fetch_today_obs)
 fetch_precip_ensemble = _cached(TTL_PRECIP_ENSEMBLE)(fetch_precip_ensemble)
 fetch_ensemble = _cached(TTL_ENSEMBLE)(fetch_ensemble)
+fetch_past_precip = _cached(1200)(fetch_past_precip)  # 20 min TTL
+
+
+def compute_min_forecast(station: Station,
+                         target_date: date | None = None) -> dict | None:
+    """F8 fase 0: quantiles del min diario a partir del ensemble ya cacheado.
+
+    Sin bayesian reweight, sin blend externo, sin bias tracker. Es un snapshot
+    crudo para poder backtestear más adelante (¿el ensemble raw predice min
+    con qué skill?). Reusa `fetch_ensemble` que ya vive en cache TTL 60min,
+    así que llamarlo cada 20 min por estación es gratis en red.
+
+    Returns dict con p10/p50/p90/n_members o None si no hay datos suficientes.
+    """
+    times, members = fetch_ensemble(station)
+    if target_date is None:
+        target_date = datetime.now(station.tz).date()
+    # índices del día target en el ensemble
+    idx = []
+    for i, ts_str in enumerate(times):
+        ts = datetime.fromisoformat(ts_str).replace(tzinfo=station.tz)
+        if ts.date() == target_date:
+            idx.append(i)
+    if not idx:
+        return None
+    mins = []
+    for k, temps in members.items():
+        vals = [temps[i] for i in idx if temps[i] is not None]
+        if vals:
+            mins.append(min(vals))
+    if not mins:
+        return None
+    mins.sort()
+    n = len(mins)
+    p10 = mins[max(0, int(0.10 * (n - 1)))]
+    p50 = mins[n // 2]
+    p90 = mins[min(n - 1, int(0.90 * (n - 1)))]
+    return {"p10": p10, "p50": p50, "p90": p90, "n_members": n}
 
 
 def invalidate_fetch_cache(station_id: str | None = None) -> None:

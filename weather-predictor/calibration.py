@@ -92,6 +92,41 @@ def _conn() -> sqlite3.Connection:
             PRIMARY KEY (station_id, date)
         );
 
+        -- Fable 2026-07-10 post-KIAH: telemetría de lecturas rechazadas por
+        -- el filtro rawMessage/`:53` en fetch_today_obs. ~2 semanas para
+        -- distribución sólida de |lectura_5min - accepted|; el percentil
+        -- decide el umbral X°F al graduar a guarda por vecinos (opción C).
+        CREATE TABLE IF NOT EXISTS obs_rejects (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            station_id TEXT NOT NULL,
+            ts TEXT NOT NULL,
+            temp_f REAL,
+            minute INTEGER,
+            has_rawmsg INTEGER,
+            dist_to_accepted_min REAL,
+            ens_p10 REAL,
+            ens_p90 REAL,
+            logged_at TEXT NOT NULL,
+            UNIQUE(station_id, ts)
+        );
+        CREATE INDEX IF NOT EXISTS idx_obs_rej_sid_ts
+            ON obs_rejects(station_id, ts);
+
+        -- F8 fase 0 (2026-07-10): snapshots de forecast de min diario.
+        -- Zero UI, sólo captura. Backtest ~Ago cuando N≥30 días/estación.
+        CREATE TABLE IF NOT EXISTS prediction_min_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            station_id TEXT NOT NULL,
+            date TEXT NOT NULL,
+            ts TEXT NOT NULL,
+            p10 REAL,
+            p50 REAL,
+            p90 REAL,
+            n_members INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_min_snap_sid_date
+            ON prediction_min_snapshots(station_id, date);
+
         -- Señal externa observada por la mañana (primer auto-snapshot del día).
         -- Pareada con day_outcomes.max_obs_f permite backtestear umbrales de
         -- posterior_shift y del gate de bets sobre datos reales.
@@ -133,6 +168,11 @@ def _conn() -> sqlite3.Connection:
                        ("ewma_pre", "REAL"), ("bias_path", "TEXT")]:
         if col not in sig_cols:
             c.execute(f"ALTER TABLE daily_ext_signal ADD COLUMN {col} {ctype}")
+    # F8 fase 0: min diario observado. NWS CLI ya lo trae en el mismo producto
+    # que el max — persistirlo es gratis en red.
+    do_cols = {r[1] for r in c.execute("PRAGMA table_info(day_outcomes)").fetchall()}
+    if "min_obs_f" not in do_cols:
+        c.execute("ALTER TABLE day_outcomes ADD COLUMN min_obs_f REAL")
     return c
 
 
@@ -170,6 +210,56 @@ def record(station_id: str, target_date: date, slot: int, assertion,
     c.close()
 
 
+def record_obs_reject(station_id: str, ts: datetime, temp_f: float | None,
+                      minute: int, has_rawmsg: bool,
+                      dist_to_accepted_min: float | None,
+                      ens_p10: float | None = None,
+                      ens_p90: float | None = None) -> None:
+    """Fable 2026-07-10: log lectura rechazada por el filtro de obs.
+    UNIQUE(station_id, ts) previene duplicados entre polls (INSERT OR IGNORE)."""
+    c = _conn()
+    try:
+        c.execute("""INSERT OR IGNORE INTO obs_rejects
+                     (station_id, ts, temp_f, minute, has_rawmsg,
+                      dist_to_accepted_min, ens_p10, ens_p90, logged_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                  (station_id, ts.isoformat(),
+                   float(temp_f) if temp_f is not None else None,
+                   int(minute), 1 if has_rawmsg else 0,
+                   float(dist_to_accepted_min) if dist_to_accepted_min is not None else None,
+                   float(ens_p10) if ens_p10 is not None else None,
+                   float(ens_p90) if ens_p90 is not None else None,
+                   datetime.utcnow().isoformat()))
+        c.commit()
+    finally:
+        c.close()
+
+
+def record_min_snapshot(station_id: str, target_date: date,
+                        p10: float | None, p50: float | None,
+                        p90: float | None, n_members: int | None,
+                        ts: datetime | None = None) -> None:
+    """F8 fase 0: persistir un snapshot del forecast de min diario.
+
+    Cero validación agresiva — si vienen todos None, insertamos igual como
+    marca temporal (permite ver gaps de captura). Backtest a partir de N≥30
+    filas/estación pareadas con day_outcomes.min_obs_f."""
+    ts_s = (ts or datetime.utcnow()).isoformat()
+    c = _conn()
+    try:
+        c.execute("""INSERT INTO prediction_min_snapshots
+                     (station_id, date, ts, p10, p50, p90, n_members)
+                     VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                  (station_id, target_date.isoformat(), ts_s,
+                   float(p10) if p10 is not None else None,
+                   float(p50) if p50 is not None else None,
+                   float(p90) if p90 is not None else None,
+                   int(n_members) if n_members is not None else None))
+        c.commit()
+    finally:
+        c.close()
+
+
 def _fetch_archive_max(station, target_date: date) -> float | None:
     """Fetch observed daily max from Open-Meteo archive for one date."""
     r = requests.get(ARCHIVE_URL, params={
@@ -197,16 +287,18 @@ def settle_day(station, target_date: date,
     para retro-llenar series de calibración cuando estamos seguros que NWS
     nunca va a publicar (días viejos). Devuelve None si NWS no tiene final.
     """
-    max_f = nws_cli.fetch_max_for(station.id, target_date)
+    max_f, min_f = nws_cli.fetch_max_min_for(station.id, target_date)
     if max_f is None and allow_archive_fallback:
         max_f = _fetch_archive_max(station, target_date)
     if max_f is None:
         return None
     c = _conn()
     c.execute("""INSERT OR REPLACE INTO day_outcomes
-                 VALUES (?, ?, ?, ?)""",
+                 (station_id, date, max_obs_f, settled_at, min_obs_f)
+                 VALUES (?, ?, ?, ?, ?)""",
               (station.id, target_date.isoformat(), float(max_f),
-               datetime.utcnow().isoformat()))
+               datetime.utcnow().isoformat(),
+               float(min_f) if min_f is not None else None))
     # update outcomes on all snapshots for that day
     cur = c.execute("""SELECT id, op, threshold, bin_half
                        FROM prediction_snapshots

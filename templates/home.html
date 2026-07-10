@@ -24,30 +24,46 @@
   </div>
 
   <div class="card">
-    <h2><a href="{{ wx_base }}/">Weather</a> <span class="tag">:8000</span></h2>
+    <h2><a href="{{ wx_base }}/">Weather</a> <span class="tag">:8000</span>
+      <a href="/?refresh=1" class="muted" style="font-size:.7rem;margin-left:.5rem;text-decoration:none"
+         title="Recomputa peak status para las 5 curadas (Open-Meteo × 5). TTL 20 min.">
+        ↻ peak{% if peak_status_age is not none %} {{ peak_status_age }}s{% endif %}
+      </a>
+    </h2>
     {% for sid, name in stations %}
     <div class="row">
       <a href="{{ wx_base }}/?station={{ sid }}">{{ sid }} ({{ name }})</a>
-      <form method="POST" action="/station/observe/{{ sid }}" style="margin:0">
-        <button type="submit" class="btn-small"
-                title="{% if station_modes.get(sid) == 1 %}observación ON · 3 min polling{% else %}activar observación (3 min polling){% endif %}"
-                style="padding:4px 8px; min-height:auto; background:transparent; border:1px solid {% if station_modes.get(sid) == 1 %}var(--accent){% else %}var(--border){% endif %}">
-          {% if station_modes.get(sid) == 1 %}👁{% else %}<span class="muted">○</span>{% endif %}
-        </button>
-      </form>
+      <span style="display:flex;align-items:center;gap:.4rem">
+        {% set pb = peak_status.get(sid) %}
+        {% if pb and pb.badge_text %}
+        <span class="peak-badge peak-{{ pb.badge_kind }}"
+              title="P(pico ya ocurrió) = {{ '%.0f'|format((pb.prob_already or 0)*100) }}%"
+              style="font-size:.68rem;padding:.1rem .4rem;border-radius:5px;font-weight:600;
+                     background:{% if pb.badge_kind == 'post' %}rgba(166,227,161,.15);color:#a6e3a1{% elif pb.badge_kind == 'window' %}rgba(249,226,175,.20);color:#f9e2af{% elif pb.badge_kind == 'pre' %}rgba(137,180,250,.15);color:#89b4fa{% else %}rgba(108,112,134,.15);color:#6c7086{% endif %}">
+          {{ pb.badge_text }}
+        </span>
+        {% endif %}
+        <form method="POST" action="/station/observe/{{ sid }}" style="margin:0">
+          <button type="submit" class="btn-small"
+                  title="{% if station_modes.get(sid) == 1 %}observación ON · 3 min polling{% else %}activar observación (3 min polling){% endif %}"
+                  style="padding:4px 8px; min-height:auto; background:transparent; border:1px solid {% if station_modes.get(sid) == 1 %}var(--accent){% else %}var(--border){% endif %}">
+            {% if station_modes.get(sid) == 1 %}👁{% else %}<span class="muted">○</span>{% endif %}
+          </button>
+        </form>
+      </span>
     </div>
     {% endfor %}
     <div class="links">
       <a href="{{ wx_base }}/ladder">ladder</a>
       <a href="{{ wx_base }}/comparison">comparison</a>
       <a href="{{ wx_base }}/calibration">calibration</a>
-      <a href="{{ wx_base }}/comparison?sort=edge">edge</a>
+      <a href="{{ wx_base }}/comparison?sort=edge">comparison·edge</a>
       <a href="{{ wx_base }}/intraday">intraday</a>
       <a href="{{ wx_base }}/cross">cross</a>
       <a href="{{ wx_base }}/reweight">reweight</a>
       <a href="{{ wx_base }}/precip">precip</a>
       <a href="{{ wx_base }}/bets">bets</a>
-      <a href="{{ wx_base }}/bets?view=history">history</a>
+      <a href="{{ wx_base }}/bets?view=history">bets·history</a>
       <a href="{{ wx_base }}/status">status</a>
       <a href="{{ wx_base }}/about">about</a>
     </div>

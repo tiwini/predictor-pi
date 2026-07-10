@@ -247,10 +247,30 @@ def home():
     host = request.host.split(":")[0]
     btc_base = f"http://{host}:8001"
     wx_base = f"http://{host}:8000"
+    modes = _load_station_modes()
+    stations_sorted = sorted(
+        WEATHER_STATIONS,
+        key=lambda pair: (0 if modes.get(pair[0]) == 1 else 1, pair[0]),
+    )
+    # F4 — peak status (on-demand, cached by weather :8000 con TTL 20 min).
+    # Solo consumimos; el refresh se dispara desde el weather home o vía ?refresh=1.
+    peak_status = {}
+    peak_status_age = None
+    try:
+        import urllib.request as _ur
+        import json as _json
+        force = "?refresh=1" if request.args.get("refresh") == "1" else ""
+        with _ur.urlopen(f"{wx_base}/api/peak-status{force}", timeout=30) as r:
+            d = _json.load(r)
+            peak_status = d.get("stations") or {}
+            peak_status_age = d.get("age_sec")
+    except Exception:
+        pass
     return render_template(
         "home.html", host=host, now=now, btc_base=btc_base, wx_base=wx_base,
-        cryptos=CRYPTO_SYMBOLS, stations=WEATHER_STATIONS,
-        station_modes=_load_station_modes(),
+        cryptos=CRYPTO_SYMBOLS, stations=stations_sorted,
+        station_modes=modes,
+        peak_status=peak_status, peak_status_age=peak_status_age,
     )
 
 

@@ -35,9 +35,10 @@ _MONTHS_ABBR = {m: i for i, m in enumerate(
     ["JAN", "FEB", "MAR", "APR", "MAY", "JUN",
      "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"], start=1)}
 
-# In-process cache de (station_id, date) → max_f. Una vez tenemos un valor
-# final no hace falta refetch.
-_cache: dict[tuple[str, str], float] = {}
+# In-process cache de (station_id, date) → (max_f, min_f).
+# F8 fase 0 2026-07-10: pasamos de float a tupla para persistir min sin
+# duplicar la búsqueda del producto (max y min están en el mismo CLI).
+_cache: dict[tuple[str, str], tuple[Optional[float], Optional[float]]] = {}
 
 
 def _parse_summary_date(text: str) -> Optional[date]:
@@ -55,12 +56,8 @@ def _parse_summary_date(text: str) -> Optional[date]:
         return None
 
 
-def _parse_max(text: str) -> Optional[float]:
-    """Extrae el max diario del bloque TEMPERATURE (F).
-
-    El primer 'MAXIMUM' bajo TEMPERATURE es el max diario observado.
-    Línea típica: '  MAXIMUM        101    459 PM 110    1989  92      9       95'
-    """
+def _parse_temp_extreme(text: str, keyword: str) -> Optional[float]:
+    """Extrae MAXIMUM o MINIMUM del bloque TEMPERATURE (F)."""
     in_block = False
     for ln in text.split("\n"):
         if "TEMPERATURE (F)" in ln:
@@ -68,7 +65,7 @@ def _parse_max(text: str) -> Optional[float]:
             continue
         if not in_block:
             continue
-        m = re.match(r"\s+MAXIMUM\s+(-?\d+)\b", ln)
+        m = re.match(rf"\s+{keyword}\s+(-?\d+)\b", ln)
         if m:
             try:
                 return float(m.group(1))
@@ -80,14 +77,30 @@ def _parse_max(text: str) -> Optional[float]:
     return None
 
 
-def fetch_max_for(station_id: str, target_date: date,
-                  limit: int = 10, timeout: float = 15.0) -> Optional[float]:
-    """Devuelve el max observado en target_date según NWS CLI, o None si no
-    hay report final aún para esa fecha. Cachea hits."""
+def _parse_max(text: str) -> Optional[float]:
+    """Extrae el max diario del bloque TEMPERATURE (F)."""
+    return _parse_temp_extreme(text, "MAXIMUM")
+
+
+def _parse_min(text: str) -> Optional[float]:
+    """Extrae el min diario del bloque TEMPERATURE (F).
+    Aparece justo después de MAXIMUM en el mismo bloque."""
+    return _parse_temp_extreme(text, "MINIMUM")
+
+
+def fetch_max_min_for(
+        station_id: str, target_date: date,
+        limit: int = 10, timeout: float = 15.0
+) -> tuple[Optional[float], Optional[float]]:
+    """Devuelve (max_f, min_f) del NWS CLI para target_date, o (None, None) si
+    no hay report final aún. Un único fetch para ambos extremos.
+
+    F8 fase 0: min viaja en el mismo producto que ya pedimos para max,
+    así que persistirlo es gratis en términos de red."""
     sid = station_id.upper()
     loc = STATION_TO_LOCATION.get(sid)
     if loc is None:
-        return None
+        return (None, None)
     key = (sid, target_date.isoformat())
     if key in _cache:
         return _cache[key]
@@ -98,10 +111,10 @@ def fetch_max_for(station_id: str, target_date: date,
                          params={"type": "CLI", "location": loc, "limit": limit},
                          headers=headers, timeout=timeout)
         if r.status_code != 200:
-            return None
+            return (None, None)
         items = r.json().get("@graph", [])
     except (requests.RequestException, ValueError):
-        return None
+        return (None, None)
 
     # Walk newest-first; el más reciente para target_date es el final
     for item in items:
@@ -120,10 +133,23 @@ def fetch_max_for(station_id: str, target_date: date,
         if d != target_date:
             continue
         mx = _parse_max(text)
+        mn = _parse_min(text)
         if mx is not None:
-            _cache[key] = mx
-            return mx
-    return None
+            _cache[key] = (mx, mn)
+            return (mx, mn)
+    return (None, None)
+
+
+def fetch_max_for(station_id: str, target_date: date,
+                  limit: int = 10, timeout: float = 15.0) -> Optional[float]:
+    """Backward-compat wrapper — solo max."""
+    return fetch_max_min_for(station_id, target_date, limit, timeout)[0]
+
+
+def fetch_min_for(station_id: str, target_date: date,
+                  limit: int = 10, timeout: float = 15.0) -> Optional[float]:
+    """Devuelve el min observado en target_date (mismo CLI, cache compartido)."""
+    return fetch_max_min_for(station_id, target_date, limit, timeout)[1]
 
 
 def clear_cache() -> None:

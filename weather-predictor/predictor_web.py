@@ -445,6 +445,17 @@ HTML = """<!doctype html>
   .streak-sid { color: var(--cyan); font-weight: 600; }
   .streak-days { font-variant-numeric: tabular-nums; color: var(--yellow); font-weight: 600; }
   .streak-empty { color: var(--muted); font-size: .85rem; padding: .3rem 0; }
+  /* F2b.2 compact (M2 2026-07-10) — one-line racha activa */
+  .streak-line { display: flex; flex-wrap: wrap; align-items: baseline;
+                 gap: .35rem; padding: .35rem .7rem; margin-bottom: .55rem;
+                 border-radius: 10px; background: var(--surface);
+                 border: 1px solid var(--surface2); font-size: .82rem; }
+  .streak-line-icon { font-size: .95rem; }
+  .streak-line-item { color: var(--muted); }
+  .streak-line-item b { color: var(--cyan); font-weight: 600; }
+  .streak-line-sep { color: var(--surface2); }
+  .streak-line-more { color: var(--accent); font-size: .72rem;
+                      text-decoration: none; margin-left: auto; }
   /* E.1 — BRIER WATCHDOG (snapshot semanal) */
   .brier-card { padding: .75rem 1rem; border-radius: 14px; margin-bottom: 1rem;
                 border: 1px solid var(--surface2); background: var(--surface); }
@@ -465,6 +476,21 @@ HTML = """<!doctype html>
   .brier-ratio.hot { color: var(--red); font-weight: 600; }
   .brier-ratio.ok { color: var(--green); }
   .brier-meta { font-size: .7rem; color: var(--muted); margin-top: .35rem; }
+  /* E.1 compact (M2 2026-07-10) — worst-ratio one-liner */
+  .brier-line { display: flex; flex-wrap: wrap; align-items: baseline;
+                gap: .4rem; padding: .35rem .7rem; margin-bottom: .55rem;
+                border-radius: 10px; background: var(--surface);
+                border: 1px solid var(--surface2); font-size: .82rem; }
+  .brier-line-icon { font-size: .95rem; }
+  .brier-line-body { color: var(--muted); }
+  .brier-line-body b { color: var(--cyan); font-weight: 600; }
+  .brier-line .brier-ratio { padding: 0 .3rem; border-radius: 4px;
+                             font-variant-numeric: tabular-nums; }
+  .brier-line .brier-ratio.hot { color: var(--red); font-weight: 600;
+                                 background: rgba(243,139,168,0.10); }
+  .brier-line .brier-ratio.ok { color: var(--green);
+                                background: rgba(166,227,161,0.10); }
+  .brier-line-meta { color: var(--muted); font-size: .72rem; }
   /* F2b.3 — QUICK ASKS (canned prompts globales) */
   .quickask { padding: .75rem 1rem; border-radius: 14px; margin-bottom: 1rem;
               border: 1px solid var(--surface2); background: var(--surface); }
@@ -518,83 +544,25 @@ HTML = """<!doctype html>
                  font-variant-numeric: tabular-nums; color: var(--muted); }
   .stcard-edge.pos { color: var(--green); }
   .stcard-edge.neg { color: var(--red); }
+  /* F4 — Peak status badge (5 curadas, on-demand) */
+  .stcard-peak { font-size: .68rem; margin-top: .3rem; padding: .1rem .35rem;
+                 border-radius: 5px; display: inline-block;
+                 font-variant-numeric: tabular-nums; font-weight: 600; }
+  .stcard-peak.peak-pre    { background: rgba(137,180,250,0.15); color: var(--cyan); }
+  .stcard-peak.peak-window { background: rgba(249,226,175,0.20); color: var(--yellow); }
+  .stcard-peak.peak-post   { background: rgba(166,227,161,0.15); color: var(--green); }
+  .stcard-peak.peak-err,
+  .stcard-peak.peak-unknown { background: rgba(108,112,134,0.15); color: var(--muted); }
+  /* M4 — SKIP mode conditional collapse (2026-07-10) */
+  body.decision-skip .signal-pill.hide-on-skip { display: none; }
+  body.decision-skip details.skip-collapse { opacity: .65; }
+  body.decision-skip details.skip-collapse[open] { opacity: 1; }
+  body.decision-skip details.skip-collapse > summary::after { content: " ▸"; color: var(--muted); }
+  body.decision-skip details.skip-collapse[open] > summary::after { content: " ▾"; }
 </style>
 </head>
-<body>
+<body class="{% if decision and decision.action == 'skip' %}decision-skip{% endif %}">
 <div class="container">
-  {% if decision %}
-  <div class="decision-pill decision-{{ decision.action }}">
-    <div class="decision-label">Decisión hoy · {{ station.id }}</div>
-    <div class="decision-text">{{ decision.text }}</div>
-    {% if decision.detail %}<div class="decision-detail">{{ decision.detail }}</div>{% endif %}
-  </div>
-  {% endif %}
-  <div class="streak-card">
-    <div class="streak-title">
-      <span>🔥 Racha activa (global)</span>
-      <a href="/comparison">ver más ↗</a>
-    </div>
-    {% if streak_top3 %}
-      {% for s in streak_top3 %}
-      <div class="streak-row">
-        <span class="streak-w">{{ '%02d'|format(s.window) }}h</span>
-        <span class="streak-sid">{{ s.station_id }}</span>
-        <span class="streak-days">{{ s.streak_days }}d{% if s.streak_days >= 3 %} 🔥{% endif %}</span>
-      </div>
-      {% endfor %}
-    {% else %}
-      <div class="streak-empty">Sin rachas ≥1d en las últimas 14</div>
-    {% endif %}
-  </div>
-  {% if brier_watchdog %}
-  <div class="brier-card">
-    <div class="brier-title">
-      🎯 Brier watchdog · <b>{{ brier_watchdog.week_iso }}</b>
-      · lookback {{ brier_watchdog.lookback_days }}d
-      {% if brier_watchdog.n_alert %}
-        <span class="brier-alert">🔴 {{ brier_watchdog.n_alert }} over</span>
-      {% else %}
-        <span class="brier-ok">🟢 OK</span>
-      {% endif %}
-    </div>
-    {% for s in brier_watchdog.stations[:5] %}
-    <div class="brier-row">
-      <span class="brier-sid">{{ s.sid }}</span>
-      <span style="color:var(--muted);font-size:.78rem">n={{ s.n }} · ours {{ '%.3f'|format(s.our) if s.our else '—' }} vs K {{ '%.3f'|format(s.kalshi) if s.kalshi else '—' }}</span>
-      <span class="brier-ratio {% if s.alerted %}hot{% else %}ok{% endif %}">
-        {% if s.ratio %}{{ '%.2f'|format(s.ratio) }}×{% else %}—{% endif %}
-      </span>
-    </div>
-    {% endfor %}
-    <div class="brier-meta">ratio {{ '<' }}1 = mejor que Kalshi · alert &gt;1.30 · genera lunes 08:00 AST</div>
-  </div>
-  {% endif %}
-  {% if station_strip %}
-  <div class="stationstrip">
-    <div class="stationstrip-title">Estaciones · tap para drill-down</div>
-    <div class="stationstrip-scroll">
-      {% for c in station_strip %}
-      <a href="/station/{{ c.sid }}"
-         class="stcard {% if c.is_active %}stcard-active{% endif %}"
-         style="text-decoration:none;color:inherit">
-        <div class="stcard-sid">{{ c.sid }}</div>
-        {% if c.p50 is not none %}
-        <div class="stcard-max">{{ '%.0f'|format(c.p50) }}°F</div>
-        <div class="stcard-band">±{{ '%.1f'|format(c.band or 0) }}</div>
-        {% else %}
-        <div class="stcard-max">—</div>
-        {% endif %}
-        <div class="stcard-diff {{ c.diff_klass }}">{{ c.diff_label }}</div>
-        {% if c.edge_pp is not none %}
-        <div class="stcard-edge {% if c.edge_pp > 0 %}pos{% elif c.edge_pp < 0 %}neg{% endif %}">
-          {{ '%+.1f'|format(c.edge_pp) }}pp{% if c.modal_lbl %} · {{ c.modal_lbl }}{% endif %}
-        </div>
-        {% endif %}
-      </a>
-      {% endfor %}
-    </div>
-  </div>
-  {% endif %}
   <div class="header">
     <div>
       <div class="station-name">{{ station.id }} — {{ station.name }}</div>
@@ -617,6 +585,75 @@ HTML = """<!doctype html>
       <div class="age">actualizado hace <span id="age">0</span>s</div>
     </div>
   </div>
+  {% if decision %}
+  <div class="decision-pill decision-{{ decision.action }}">
+    <div class="decision-label">Decisión hoy · {{ station.id }}</div>
+    <div class="decision-text">{{ decision.text }}</div>
+    {% if decision.detail %}<div class="decision-detail">{{ decision.detail }}</div>{% endif %}
+  </div>
+  {% endif %}
+  {% if streak_top3 %}
+  <div class="streak-line">
+    <span class="streak-line-icon">🔥</span>
+    {% for s in streak_top3 %}<span class="streak-line-item"><b>{{ s.station_id }}</b> {{ '%02d'|format(s.window) }}h · {{ s.streak_days }}d{% if s.streak_days >= 3 %} 🔥{% endif %}</span>{% if not loop.last %}<span class="streak-line-sep">·</span>{% endif %}{% endfor %}
+    <a class="streak-line-more" href="/comparison">ver más ↗</a>
+  </div>
+  {% endif %}
+  {% if brier_watchdog and brier_watchdog.stations %}
+  {% set worst = brier_watchdog.stations[0] %}
+  <div class="brier-line">
+    <span class="brier-line-icon">🎯</span>
+    <span class="brier-line-body">
+      Brier · <b>{{ worst.sid }}</b>
+      {% if worst.ratio %}<span class="brier-ratio {% if worst.alerted %}hot{% else %}ok{% endif %}">{{ '%.2f'|format(worst.ratio) }}×</span>{% else %}<span class="brier-ratio">—</span>{% endif %}
+      <span class="brier-line-meta">n={{ worst.n }} · {{ brier_watchdog.week_iso }} · lookback {{ brier_watchdog.lookback_days }}d</span>
+    </span>
+    {% if brier_watchdog.n_alert %}
+      <span class="brier-alert">🔴 {{ brier_watchdog.n_alert }} over</span>
+    {% else %}
+      <span class="brier-ok">🟢 OK</span>
+    {% endif %}
+  </div>
+  {% endif %}
+  {% if station_strip %}
+  <div class="stationstrip">
+    <div class="stationstrip-title" style="display:flex;justify-content:space-between;align-items:center">
+      <span>Estaciones · tap para drill-down</span>
+      <form method="POST" action="/api/peak-status/refresh" style="margin:0">
+        <input type="hidden" name="next" value="/">
+        <button type="submit" class="btn-small"
+                title="Recomputa peak status para las 5 curadas (Open-Meteo × 5). TTL 20 min."
+                style="padding:2px 8px;font-size:11px;background:transparent;border:1px solid var(--border);border-radius:4px;color:var(--muted);cursor:pointer">
+          {% if peak_status_age is not none %}↻ peak {{ peak_status_age }}s{% else %}↻ peak{% endif %}
+        </button>
+      </form>
+    </div>
+    <div class="stationstrip-scroll">
+      {% for c in station_strip %}
+      <a href="/station/{{ c.sid }}"
+         class="stcard {% if c.is_active %}stcard-active{% endif %}"
+         style="text-decoration:none;color:inherit">
+        <div class="stcard-sid">{{ c.sid }}</div>
+        {% if c.p50 is not none %}
+        <div class="stcard-max">{{ '%.0f'|format(c.p50) }}°F</div>
+        <div class="stcard-band">±{{ '%.1f'|format(c.band or 0) }}</div>
+        {% else %}
+        <div class="stcard-max">—</div>
+        {% endif %}
+        <div class="stcard-diff {{ c.diff_klass }}">{{ c.diff_label }}</div>
+        {% if c.edge_pp is not none %}
+        <div class="stcard-edge {% if c.edge_pp > 0 %}pos{% elif c.edge_pp < 0 %}neg{% endif %}">
+          {{ '%+.1f'|format(c.edge_pp) }}pp{% if c.modal_lbl %} · {{ c.modal_lbl }}{% endif %}
+        </div>
+        {% endif %}
+        {% if c.peak_badge %}
+        <div class="stcard-peak peak-{{ c.peak_kind }}">{{ c.peak_badge }}</div>
+        {% endif %}
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
 
   <div class="hero">
     <div class="hero-label">Máxima esperada hoy · se ajusta cada poll</div>
@@ -637,7 +674,7 @@ HTML = """<!doctype html>
   <div class="signals">
     {% for s in signals %}
     {% if s.href %}<a href="{{s.href}}" style="text-decoration:none">{% endif %}
-    <span class="signal-pill {{s.kls}}">
+    <span class="signal-pill {{s.kls}}{% if s.hide_on_skip %} hide-on-skip{% endif %}">
       <span class="k">{{s.k}}</span>
       <span class="v">{{s.v}}</span>
     </span>
@@ -674,8 +711,16 @@ HTML = """<!doctype html>
   </div>
 
   {% if market or timing or precip %}
+  {% if decision and decision.action == 'skip' %}
+  <details class="card skip-collapse" style="margin-bottom:1rem;border-left:4px solid {% if market and market.top_alert %}#f38ba8{% else %}#89b4fa{% endif %}">
+    <summary style="cursor:pointer;color:var(--muted);font-size:.85rem;font-weight:600">
+      Mercado / timing / precip · dim en SKIP
+    </summary>
+    <div style="display:flex;flex-wrap:wrap;gap:1.5rem;align-items:flex-start;margin-top:.6rem">
+  {% else %}
   <div class="card" style="margin-bottom:1rem;border-left:4px solid {% if market and market.top_alert %}#f38ba8{% else %}#89b4fa{% endif %}">
     <div style="display:flex;flex-wrap:wrap;gap:1.5rem;align-items:flex-start">
+  {% endif %}
       {% if market %}
       <div style="flex:1;min-width:220px">
         <h3 style="margin:0 0 .3rem">Mercado {{market_name}}</h3>
@@ -713,7 +758,11 @@ HTML = """<!doctype html>
       </div>
       {% endif %}
     </div>
+  {% if decision and decision.action == 'skip' %}
+  </details>
+  {% else %}
   </div>
+  {% endif %}
   {% endif %}
 
   <div class="cards">
@@ -742,6 +791,18 @@ HTML = """<!doctype html>
     </div>
 
     <div class="card">
+      {% if decision and decision.action == 'skip' %}
+      <div class="diff-badge diff-hard">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <strong>Estado del modelo</strong>
+          <span class="diff-label">SKIP recomendado</span>
+        </div>
+        <div class="diff-reasons">
+          {% if difficulty %}{{ difficulty.label }} · {{ '%.0f' % difficulty.score }}/100{% if difficulty.reasons %} · {{ difficulty.reasons|join(' · ') }}{% endif %}{% endif %}
+          {% if regime_tag and regime_tag.tag != 'stable' %}{% if difficulty %} · {% endif %}régimen: {{ regime_tag.tag }} — {{ regime_tag.reason }}{% endif %}
+        </div>
+      </div>
+      {% else %}
       {% if difficulty %}
       <div class="diff-badge diff-{{ difficulty.klass }}">
         <div style="display:flex;justify-content:space-between;align-items:center">
@@ -771,8 +832,14 @@ HTML = """<!doctype html>
         {% endif %}
       </div>
       {% endif %}
+      {% endif %}
       <h3>Hoy</h3>
-      <div class="kv"><span class="kv-k">Max obs</span><span>{{ '%.1f' % snap.today_max_obs }}°F</span></div>
+      <div class="kv"><span class="kv-k">Max obs</span>
+        <span>{{ '%.1f' % snap.today_max_obs }}°F
+          <span class="muted" style="font-size:.8em;margin-left:.4rem"
+                title="Kalshi liquida contra CLI redondeado al entero (half-up)">
+            CLI: {{ (snap.today_max_obs + 0.5)|int }}°F</span>
+        </span></div>
       <div class="kv"><span class="kv-k">Min obs</span><span>{{ '%.1f' % snap.today_min_obs }}°F</span></div>
       <div class="kv"><span class="kv-k">Pico</span>
         <span class="{{ peak_class }}">{{ snap.peak_status }}</span></div>
@@ -797,8 +864,15 @@ HTML = """<!doctype html>
     </div>
   </div>
 
+  {% if decision and decision.action == 'skip' %}
+  <details class="card skip-collapse">
+    <summary style="cursor:pointer;color:var(--muted);font-size:.85rem;font-weight:600">
+      Aserciones · auto modo: {{ auto_mode }} · dim en SKIP
+    </summary>
+  {% else %}
   <div class="card">
     <h3>Aserciones · auto modo: {{ auto_mode }}</h3>
+  {% endif %}
     {% for slot in [1, 2, 3] %}
     {% set a = assertions[slot] %}
     <div class="assertion">
@@ -818,7 +892,11 @@ HTML = """<!doctype html>
       <select name="slot"><option value="1">Slot 1</option><option value="2">Slot 2</option></select>
       <button type="submit" class="danger">Borrar</button>
     </form>
+  {% if decision and decision.action == 'skip' %}
+  </details>
+  {% else %}
   </div>
+  {% endif %}
 
   <div class="card" style="margin-top:1rem">
     <h3>Temperatura hoy · observado + ensemble</h3>
@@ -886,11 +964,7 @@ HTML = """<!doctype html>
   </div>
 
   <div class="card" style="margin-top:1rem">
-    <h3>Cambiar estación</h3>
-    <form method="POST" action="/api/station">
-      <input name="id" placeholder="KJFK, TJSJ, KSFO..." autocapitalize="characters" autocomplete="off">
-      <button type="submit">Cambiar</button>
-    </form>
+    <h3>Refrescar</h3>
     <form method="POST" action="/api/refresh">
       <button type="submit" style="width:100%">Refrescar ahora</button>
     </form>
@@ -999,6 +1073,9 @@ def _build_station_strip(active_sid: str):
     """F2b.4 — 8 station cards horizontal (max, band, difficulty, edge).
     Reads _stations_cache only (populated por _warm_cross_cache cada poll).
     Cold cache → devuelve [] (no bloqueamos home load con fetch).
+
+    F4 — También enriquece cada card con peak_badge desde _peak_status_cache
+    (5 curadas solamente). Si el cache está vacío/expirado, badge queda None.
     """
     now = datetime.now(timezone.utc)
     cached = _stations_cache.get("results")
@@ -1007,6 +1084,10 @@ def _build_station_strip(active_sid: str):
         return []
     if (now - cached_at).total_seconds() > _STATIONS_TTL_SEC * 2:
         return []
+    peak_cached_at = _peak_status_cache.get("computed_at")
+    peak_fresh = (peak_cached_at is not None and
+                  (now - peak_cached_at).total_seconds() < _PEAK_STATUS_TTL_SEC)
+    peak_data = _peak_status_cache.get("data") or {} if peak_fresh else {}
     cards = []
     for r in cached:
         if r.get("error"):
@@ -1021,6 +1102,7 @@ def _build_station_strip(active_sid: str):
         if r.get("modal_bin") is not None:
             mb = r["modal_bin"]
             modal_lbl = getattr(mb, "label", None) or f"{mb.bin_lo:.0f}-{mb.bin_hi:.0f}"
+        pb = peak_data.get(r["station"])
         cards.append({
             "sid": r["station"],
             "name": r.get("name") or r["station"],
@@ -1034,6 +1116,8 @@ def _build_station_strip(active_sid: str):
             "edge_pp": edge_pp,
             "modal_lbl": modal_lbl,
             "is_active": r["station"] == active_sid,
+            "peak_badge": pb.get("badge_text") if pb else None,
+            "peak_kind": pb.get("badge_kind") if pb else None,
         })
     return cards
 
@@ -1380,6 +1464,11 @@ def index():
                                     dist_med, dist_p10, dist_p90)
     streak_top3 = _build_streak_top3()
     station_strip = _build_station_strip(station.id)
+    peak_status_age = None
+    _pca = _peak_status_cache.get("computed_at")
+    if _pca is not None:
+        peak_status_age = int(
+            (datetime.now(timezone.utc) - _pca).total_seconds())
     brier_watchdog = _build_brier_watchdog()
     home_ask_last = _get_last_home_ask() if _ask_global else None
     home_ask_prompts = [{"kind": k, "label": v["label"]}
@@ -1401,6 +1490,7 @@ def index():
         difficulty=difficulty, regime_tag=regime_tag,
         decision=decision, streak_top3=streak_top3,
         station_strip=station_strip,
+        peak_status_age=peak_status_age,
         brier_watchdog=brier_watchdog,
         home_ask_last=home_ask_last, home_ask_prompts=home_ask_prompts,
         market_name=_market_name(station.id),
@@ -1438,6 +1528,38 @@ def api_streak():
         return jsonify(_streaks.to_json(out, top_n=3))
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/peak-status")
+def api_peak_status():
+    """F4 — Peak status por estación curada (KPHX/KLAX/KLAS/KLGA/KBOS).
+    On-demand + TTL 20 min. ?refresh=1 fuerza recompute.
+    Costo: 2 hits Open-Meteo (ensemble+obs) × 5 estaciones por refresh."""
+    now = datetime.now(timezone.utc)
+    force = request.args.get("refresh") == "1"
+    cached_at = _peak_status_cache.get("computed_at")
+    fresh = (cached_at is not None and
+             (now - cached_at).total_seconds() < _PEAK_STATUS_TTL_SEC)
+    if not fresh or force:
+        _refresh_peak_status_cache()
+        cached_at = _peak_status_cache["computed_at"]
+    age = int((now - cached_at).total_seconds()) if cached_at else -1
+    return jsonify({
+        "computed_at": cached_at.isoformat() if cached_at else None,
+        "age_sec": age,
+        "ttl_sec": _PEAK_STATUS_TTL_SEC,
+        "stations": _peak_status_cache["data"],
+    })
+
+
+@app.route("/api/peak-status/refresh", methods=["POST"])
+def api_peak_status_refresh():
+    """Botón manual — recompute y volvés a home."""
+    try:
+        _refresh_peak_status_cache()
+    except Exception:
+        pass
+    return redirect(request.form.get("next", "/"))
 
 
 @app.route("/api/set", methods=["POST"])
@@ -1719,68 +1841,6 @@ COMPARE_TMPL = """<!doctype html>
     {% endif %}
   </div>
 </div>
-{% if brief %}
-<div class="card" style="border-left:3px solid #89b4fa">
-  <div style="color:#89b4fa;font-size:13px;font-weight:600;margin-bottom:.3rem">📍 {{brief[0]}}</div>
-  <div style="font-size:13px;line-height:1.5;color:#cdd6f4">{{brief[1]}}</div>
-</div>
-{% endif %}
-{% if station_streak %}
-<div class="card" style="border-left:3px solid #fab387">
-  <div style="color:#fab387;font-size:13px;font-weight:600;margin-bottom:.4rem">
-    🔥 Racha de precisión {{station}} — |err|≤{{'%.1f'|format(streak_thresh_f)}}°F · <a href="/api/streak" style="color:#89b4fa;font-size:11px">top global ↗</a>
-  </div>
-  <table style="font-size:13px">
-    <tr><th>ventana local</th><th>racha</th><th>últimos días</th></tr>
-    {% for w in station_streak %}
-    <tr>
-      <td class="num">{{'%02d'|format(w.window)}}:00</td>
-      <td class="num">
-        {% if w.days >= 3 %}<b style="color:#a6e3a1">{{w.days}}d 🔥</b>
-        {% elif w.days >= 1 %}<span style="color:#f9e2af">{{w.days}}d</span>
-        {% else %}<span class="dim">—</span>{% endif %}
-      </td>
-      <td class="num" style="font-size:11px">
-        {% for d in w.details %}<span title="pred {{d.pred_f}} obs {{d.obs_f}}">{{d.date[5:]}} Δ{{'%+.1f'|format(d.err_f)}}</span>{% if not loop.last %} · {% endif %}{% endfor %}
-        {% if not w.details %}<span class="dim">—</span>{% endif %}
-      </td>
-    </tr>
-    {% endfor %}
-  </table>
-  <div class="dim" style="font-size:11px;margin-top:.4rem">Snapshot auto más cercano a cada hora ancla (±2h tolerancia). Días sin snapshot saltan; solo error &gt; umbral rompe la racha.</div>
-</div>
-{% endif %}
-{% if ask_enabled and station_prompts %}
-<div class="card" style="border-left:3px solid #f9e2af">
-  <div style="color:#f9e2af;font-size:13px;font-weight:600;margin-bottom:.4rem">🤖 Preguntar AI sobre {{station}}</div>
-  <div style="display:flex;flex-wrap:wrap;gap:6px">
-    {% for k, p in station_prompts.items() %}
-    <form method="POST" action="/ai/station-ask" style="margin:0">
-      <input type="hidden" name="kind" value="{{k}}">
-      <input type="hidden" name="station" value="{{station}}">
-      <button type="submit" style="background:#313244;color:#cdd6f4;border:1px solid #585b70;padding:5px 10px;border-radius:4px;font-size:12px;cursor:pointer">{{p.label}}</button>
-    </form>
-    {% endfor %}
-  </div>
-  {% if ask_error %}
-  <div style="margin-top:.5rem;color:#f38ba8;font-size:12px">⚠ {{ask_error}}</div>
-  {% endif %}
-  {% if last_ask %}
-  <div style="margin-top:.7rem;padding:.6rem;background:#181825;border-radius:4px;border-left:2px solid #f9e2af">
-    <div style="display:flex;justify-content:space-between;align-items:start;gap:.5rem">
-      <div style="color:#f9e2af;font-size:12px;font-weight:600">{{last_ask.label}}</div>
-      <form method="POST" action="/ai/station-ask/clear" style="margin:0">
-        <input type="hidden" name="station" value="{{station}}">
-        <button type="submit" style="background:none;border:none;color:#6c7086;cursor:pointer;font-size:11px">✕</button>
-      </form>
-    </div>
-    <div style="font-size:13px;line-height:1.5;margin-top:.4rem;white-space:pre-wrap">{{last_ask.text}}</div>
-    <div class="dim" style="font-size:10px;margin-top:.4rem">${{'%.4f'|format(last_ask.cost)}} · {{last_ask.ts[:19].replace('T',' ')}}Z</div>
-  </div>
-  {% endif %}
-  <div class="dim" style="font-size:11px;margin-top:.4rem">Cada click hace una call ad-hoc a Claude Haiku (~$0.002, ~3s). Respeta budget y pausa del agente.</div>
-</div>
-{% endif %}
 {% if not bins %}
 <div class="card">
   <p>No hay mercado activo para esta estación/fecha.</p>
@@ -1898,6 +1958,74 @@ COMPARE_TMPL = """<!doctype html>
   Diff positivo = nosotros le damos más probabilidad que el mercado.
   Datos se graban cada poll (~10 min) en market_cache.db.
 </p>
+</div>
+{% endif %}
+{% if station_streak %}
+{% set ns_streak = namespace(has_data=false) %}
+{% for w in station_streak %}{% if w.days > 0 or w.details %}{% set ns_streak.has_data = true %}{% endif %}{% endfor %}
+<div class="card" style="border-left:3px solid #fab387">
+  <div style="color:#fab387;font-size:13px;font-weight:600;margin-bottom:.4rem">
+    🔥 Racha de precisión {{station}} — |err|≤{{'%.1f'|format(streak_thresh_f)}}°F · <a href="/api/streak" style="color:#89b4fa;font-size:11px">top global ↗</a>
+  </div>
+  {% if not ns_streak.has_data %}
+  <div class="dim" style="font-size:12px">Sin racha registrada aún — se llena con snapshots diarios.</div>
+  {% else %}
+  <table style="font-size:13px">
+    <tr><th>ventana local</th><th>racha</th><th>últimos días</th></tr>
+    {% for w in station_streak %}
+    <tr>
+      <td class="num">{{'%02d'|format(w.window)}}:00</td>
+      <td class="num">
+        {% if w.days >= 3 %}<b style="color:#a6e3a1">{{w.days}}d 🔥</b>
+        {% elif w.days >= 1 %}<span style="color:#f9e2af">{{w.days}}d</span>
+        {% else %}<span class="dim">—</span>{% endif %}
+      </td>
+      <td class="num" style="font-size:11px">
+        {% for d in w.details %}<span title="pred {{d.pred_f}} obs {{d.obs_f}}">{{d.date[5:]}} Δ{{'%+.1f'|format(d.err_f)}}</span>{% if not loop.last %} · {% endif %}{% endfor %}
+        {% if not w.details %}<span class="dim">—</span>{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  <div class="dim" style="font-size:11px;margin-top:.4rem">Snapshot auto más cercano a cada hora ancla (±2h tolerancia). Días sin snapshot saltan; solo error &gt; umbral rompe la racha.</div>
+  {% endif %}
+</div>
+{% endif %}
+{% if brief %}
+<details class="card" style="border-left:3px solid #89b4fa">
+  <summary style="cursor:pointer;color:#89b4fa;font-size:13px;font-weight:600">📍 {{brief[0]}}</summary>
+  <div style="font-size:13px;line-height:1.5;color:#cdd6f4;margin-top:.4rem">{{brief[1]}}</div>
+</details>
+{% endif %}
+{% if ask_enabled and station_prompts %}
+<div class="card" style="border-left:3px solid #f9e2af">
+  <div style="color:#f9e2af;font-size:13px;font-weight:600;margin-bottom:.4rem">🤖 Preguntar AI sobre {{station}}</div>
+  <div style="display:flex;flex-wrap:wrap;gap:6px">
+    {% for k, p in station_prompts.items() %}
+    <form method="POST" action="/ai/station-ask" style="margin:0">
+      <input type="hidden" name="kind" value="{{k}}">
+      <input type="hidden" name="station" value="{{station}}">
+      <button type="submit" style="background:#313244;color:#cdd6f4;border:1px solid #585b70;padding:5px 10px;border-radius:4px;font-size:12px;cursor:pointer">{{p.label}}</button>
+    </form>
+    {% endfor %}
+  </div>
+  {% if ask_error %}
+  <div style="margin-top:.5rem;color:#f38ba8;font-size:12px">⚠ {{ask_error}}</div>
+  {% endif %}
+  {% if last_ask %}
+  <div style="margin-top:.7rem;padding:.6rem;background:#181825;border-radius:4px;border-left:2px solid #f9e2af">
+    <div style="display:flex;justify-content:space-between;align-items:start;gap:.5rem">
+      <div style="color:#f9e2af;font-size:12px;font-weight:600">{{last_ask.label}}</div>
+      <form method="POST" action="/ai/station-ask/clear" style="margin:0">
+        <input type="hidden" name="station" value="{{station}}">
+        <button type="submit" style="background:none;border:none;color:#6c7086;cursor:pointer;font-size:11px">✕</button>
+      </form>
+    </div>
+    <div style="font-size:13px;line-height:1.5;margin-top:.4rem;white-space:pre-wrap">{{last_ask.text}}</div>
+    <div class="dim" style="font-size:10px;margin-top:.4rem">${{'%.4f'|format(last_ask.cost)}} · {{last_ask.ts[:19].replace('T',' ')}}Z</div>
+  </div>
+  {% endif %}
+  <div class="dim" style="font-size:11px;margin-top:.4rem">Cada click hace una call ad-hoc a Claude Haiku (~$0.002, ~3s). Respeta budget y pausa del agente.</div>
 </div>
 {% endif %}
 <p class="dim">Refrescar: esta página se recarga manual; el fetch automático ocurre en cada poll del servidor.</p>
@@ -2662,8 +2790,10 @@ INTRADAY_TMPL = """<!doctype html>
 <p><a href="/">&larr; volver</a></p>
 <h1>Intraday — {{station_id}} · {{target_date}}</h1>
 
+{% set post_peak = timing and timing.prob_already is not none and timing.prob_already >= 0.99 %}
+
+{% macro peak_full() %}
 <div class="section-title">⏱ Peak timing</div>
-{% if timing %}
 <div class="card">
   <div class="dim">eff_N = {{'%.1f'|format(timing.eff_n)}} / {{timing.n_members}}
     · {{timing.residual_hours}}h observadas hoy
@@ -2694,10 +2824,19 @@ INTRADAY_TMPL = """<!doctype html>
     <div class="val">{{'%.0f'|format(p * 100)}}%</div></div>
   {% endfor %}
 </div>
-{% else %}
-<div class="card"><p class="dim">peak_timing no disponible.</p></div>
-{% endif %}
+{% endmacro %}
 
+{% macro peak_collapsed() %}
+<details class="card" style="border-left:3px solid #a6e3a1">
+  <summary style="cursor:pointer;color:#a6e3a1;font-size:14px;font-weight:600">
+    ✓ Pico ocurrió{% if timing.max_obs_hour is not none %} · {{'%02d'|format(timing.max_obs_hour)}}:00{% endif %}{% if timing.max_obs is not none %} · max <span style="color:#f9e2af">{{'%.1f'|format(timing.max_obs)}}°F</span>{% endif %}
+    <span class="dim" style="margin-left:.4rem">— resto del día es bajada · abrir para desglose</span>
+  </summary>
+  <div style="margin-top:.6rem">{{ peak_full() }}</div>
+</details>
+{% endmacro %}
+
+{% macro movement_section() %}
 <div class="section-title">📉 Movement por bin</div>
 {% if not move_bins %}
 <div class="card"><p class="dim">Sin datos persistidos para esta estación/fecha. Solo la estación default tiene histórico.</p></div>
@@ -2740,6 +2879,19 @@ INTRADAY_TMPL = """<!doctype html>
   </table>
   <p class="dim">Δ {{market_name}} grande con Δ nosotros chico = mercado reaccionando a info nueva que nuestro modelo ya tenía. Δ {{market_name}} ≈ Δ nosotros = ambos actualizando juntos con las obs.</p>
 </div>
+{% endif %}
+{% endmacro %}
+
+{% if not timing %}
+<div class="section-title">⏱ Peak timing</div>
+<div class="card"><p class="dim">peak_timing no disponible.</p></div>
+{{ movement_section() }}
+{% elif post_peak %}
+{{ movement_section() }}
+{{ peak_collapsed() }}
+{% else %}
+{{ peak_full() }}
+{{ movement_section() }}
 {% endif %}
 </body></html>"""
 
@@ -3208,6 +3360,91 @@ STATIONS_TMPL = """<!doctype html>
 _STATIONS_TTL_SEC = 180
 _stations_cache: dict = {"computed_at": None, "results": None}
 
+# F4 — Peak status badges, scoped a las 5 curadas, on-demand + TTL 20 min.
+_PEAK_STATUS_TTL_SEC = 1200
+_peak_status_cache: dict = {"computed_at": None, "data": {}}
+
+
+def _peak_badge_from_timing(t: dict) -> dict:
+    """Convert peak_timing.compute() output to a compact badge descriptor.
+    Umbral post = 0.9 · umbral ventana = 0.2. Devuelve dict con badge_text
+    (string listo para render) + badge_kind (pre/window/post/unknown)."""
+    if not t:
+        return {"badge_text": "—", "badge_kind": "unknown", "prob_already": None}
+    p = t.get("prob_already") or 0.0
+    cur = t.get("current_hour")
+    if p >= 0.9:
+        moh = t.get("max_obs_hour")
+        max_obs = t.get("max_obs")
+        if moh is not None and cur is not None:
+            diff = max(0, int(cur) - int(moh))
+            text = f"✓ pico -{diff}h"
+        else:
+            text = "✓ pico"
+        return {"badge_text": text, "badge_kind": "post",
+                "prob_already": p, "max_obs": max_obs, "max_obs_hour": moh}
+    if p >= 0.2:
+        return {"badge_text": "● ventana", "badge_kind": "window",
+                "prob_already": p}
+    modal = t.get("modal_hour")
+    if modal is not None and cur is not None:
+        diff = max(0, int(modal) - int(cur))
+        text = f"↑ ~{diff}h" if diff > 0 else "↑ pronto"
+    else:
+        text = "↑ pre"
+    return {"badge_text": text, "badge_kind": "pre",
+            "prob_already": p, "modal_hour": modal}
+
+
+def _refresh_peak_status_cache() -> dict:
+    """Recompute peak_status para las 5 curadas y guardar en cache.
+    Retorna el dict recién computado."""
+    import peak_timing as _pt
+    from predictor import fetch_station as _fs
+    data = {}
+    for sid in DEFAULT_CROSS:
+        try:
+            stn = _fs(sid)
+            t = _pt.compute(stn)
+            data[sid] = _peak_badge_from_timing(t)
+        except Exception as e:
+            data[sid] = {"badge_text": "err", "badge_kind": "err",
+                         "error": str(e)[:80]}
+    _peak_status_cache["computed_at"] = datetime.now(timezone.utc)
+    _peak_status_cache["data"] = data
+    return data
+
+
+_MIN_SNAPSHOT_INTERVAL_SEC = 1200  # 20 min por estación
+_min_snapshot_last_ts: dict = {}   # sid → ts float
+
+
+def _record_min_snapshots_curated() -> None:
+    """F8 fase 0: captura p10/p50/p90 del min diario del ensemble para las 5
+    curadas. Ensemble ya cacheado 60 min, así que costo real = 0 fetches.
+    Rate-limit por estación a 20 min para no inflar la tabla."""
+    from predictor import fetch_station as _fs, compute_min_forecast as _cmf
+    import calibration as _cal
+    import time as _time
+    now = _time.time()
+    for sid in DEFAULT_CROSS:
+        last = _min_snapshot_last_ts.get(sid, 0.0)
+        if now - last < _MIN_SNAPSHOT_INTERVAL_SEC:
+            continue
+        try:
+            stn = _fs(sid)
+            target = datetime.now(stn.tz).date()
+            fc = _cmf(stn, target)
+            if fc is None:
+                continue
+            _cal.record_min_snapshot(
+                sid, target,
+                fc.get("p10"), fc.get("p50"), fc.get("p90"),
+                fc.get("n_members"))
+            _min_snapshot_last_ts[sid] = now
+        except Exception as e:
+            print(f"min snapshot {sid}: {e}", file=sys.stderr)
+
 
 def _compute_stations_results() -> list:
     """Fetch _cross_one para todas las SUPPORTED_STATIONS en paralelo y devuelve
@@ -3283,6 +3520,13 @@ STATION_DRILLDOWN_TMPL = """<!doctype html>
   {% endif %}
 </div>
 
+{% if brief %}
+<details class="card" style="border-left:3px solid #89b4fa">
+  <summary style="cursor:pointer;color:#89b4fa;font-size:13px;font-weight:600">📍 {{brief[0]}}</summary>
+  <div style="font-size:13px;line-height:1.5;color:#cdd6f4;margin-top:.4rem">{{brief[1]}}</div>
+</details>
+{% endif %}
+
 <div class="card">
   <div class="lbl dim" style="margin-bottom:.4rem">Explorar {{sid}}</div>
   <div class="links">
@@ -3354,10 +3598,12 @@ def station_drilldown(sid):
                 "edge_pp": edge_pp, "modal_lbl": modal_lbl,
             }
     is_active = state is not None and state.station.id == sid
+    brief = _station_brief.get(sid) if _station_brief else None
     return render_template_string(
         STATION_DRILLDOWN_TMPL,
         sid=sid, name=name, data=data, error=error,
         cache_age=cache_age, target_date=target_date, is_active=is_active,
+        brief=brief,
     )
 
 
@@ -3537,14 +3783,16 @@ def _build_signals(difficulty, market, external, dash, snap) -> list[dict]:
                "hard": "warn", "veryhard": "alert"}.get(difficulty["klass"], "warn")
         out.append({"k": "dificultad",
                     "v": f"{difficulty['label']} · {difficulty['score']:.0f}",
-                    "kls": kls})
+                    "kls": kls,
+                    "hide_on_skip": True})
     if market and market.get("top_alert"):
         edge_pp = market["top_edge"] * 100
         side = "YES" if edge_pp > 0 else "NO"
         out.append({"k": f"edge {market['top_label']}",
                     "v": f"{edge_pp:+.1f}pp · buy {side}",
                     "kls": "alert" if abs(edge_pp) >= 8 else "warn",
-                    "href": "/comparison"})
+                    "href": "/comparison",
+                    "hide_on_skip": True})
     if external and external.get("median") is not None:
         d = external["ours"] - external["median"]
         if abs(d) >= 2.0:
@@ -4233,6 +4481,18 @@ PRECIP_TMPL = """<!doctype html>
   <b>any</b> = cualquier traza (>0.1mm) · <b>notable</b> ≈ 0.1in (2.5mm) ·
   <b>heavy</b> ≈ 0.4in (10mm). Snow: cm.
 </p>
+{% if past %}
+<div class="card" style="border-left:3px solid #89dceb">
+  <h2 style="margin:.2rem 0;color:#89dceb;font-size:16px">Observada — últimas horas</h2>
+  <div class="kpi"><span class="dim">1h</span><b>{{'%.2f'|format(past[1])}}"</b></div>
+  <div class="kpi"><span class="dim">2h</span><b>{{'%.2f'|format(past[2])}}"</b></div>
+  <div class="kpi"><span class="dim">4h</span><b>{{'%.2f'|format(past[4])}}"</b></div>
+  <div class="kpi"><span class="dim">8h</span><b>{{'%.2f'|format(past[8])}}"</b></div>
+  <div class="dim" style="margin-top:.4rem">
+    Fuente: Open-Meteo forecast (past_hours). Cache 20 min.
+  </div>
+</div>
+{% endif %}
 {% for d in days %}
 <div class="card">
   <h2 style="margin:.2rem 0;color:#cba6f7;font-size:16px">
@@ -4269,9 +4529,16 @@ def precip_view():
     if state is None:
         return redirect("/")
     from predictor import build_precip_summary, PRECIP_ANY, PRECIP_NOTABLE, \
-        PRECIP_HEAVY
+        PRECIP_HEAVY, fetch_past_precip, precip_windows_from_past
     def _pct(x):
         return "—" if x is None else f"{100*x:.0f}%"
+    past = None
+    try:
+        past_raw = fetch_past_precip(state.station, hours=8)
+        past = precip_windows_from_past(
+            past_raw, datetime.now(state.station.tz))
+    except Exception:
+        past = None
     days = []
     for i, lbl in enumerate(["hoy", "mañana", "pasado"]):
         try:
@@ -4296,7 +4563,7 @@ def precip_view():
                 (f">{PRECIP_HEAVY}mm (0.4in)", s["p_heavy_precip"] or 0),
             ],
         })
-    return render_template_string(PRECIP_TMPL, station=state.station.id, days=days)
+    return render_template_string(PRECIP_TMPL, station=state.station.id, days=days, past=past)
 
 
 @app.route("/export")
@@ -5092,6 +5359,14 @@ def _warm_cross_cache():
             list(ex.map(_warm_pw, stations))
     except Exception as e:
         print(f"warm peak_window error: {e}", file=sys.stderr)
+
+    # F8 fase 0: snapshot forecast de min diario para las 5 curadas.
+    # Ensemble ya está cacheado (TTL 60 min), así que costo neto es 0.
+    # Rate-limit a 1 snapshot/estación cada 20 min para no inflar la tabla.
+    try:
+        _record_min_snapshots_curated()
+    except Exception as e:
+        print(f"min snapshot capture error: {e}", file=sys.stderr)
 
     # Pre-warm peak_window una vez al día (cache 24h). 20 fetches al archive,
     # cero costo si ya cacheados.
