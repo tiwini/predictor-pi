@@ -838,7 +838,7 @@ HTML = """<!doctype html>
         <span>{{ '%.1f' % snap.today_max_obs }}°F
           <span class="muted" style="font-size:.8em;margin-left:.4rem"
                 title="Kalshi liquida contra CLI redondeado al entero (half-up)">
-            CLI: {{ (snap.today_max_obs + 0.5)|int }}°F</span>
+            CLI: {{ ((snap.today_max_obs + 0.5)|round(0, 'floor'))|int }}°F</span>
         </span></div>
       <div class="kv"><span class="kv-k">Min obs</span><span>{{ '%.1f' % snap.today_min_obs }}°F</span></div>
       <div class="kv"><span class="kv-k">Pico</span>

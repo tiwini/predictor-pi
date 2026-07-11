@@ -314,6 +314,46 @@ def fetch_today_obs(station: Station) -> list:
     return out
 
 
+def _interp_ref_at(accepted: list, rt: datetime,
+                   window_min: float = 60.0) -> tuple:
+    """Interpolación lineal en `rt` entre los METARs aceptados más cercanos
+    dentro de ±window_min. Fable Round 2 (2026-07-10): la guarda de fase 2
+    debe comparar contra la interpolada, no contra "nearest accepted" — un
+    91.9 a las 14:53 entre 91.0 (13:53) y 91.0 (15:53) tiene delta ~0.9 vs
+    interpolada, no vs vecino: legítimo y chico.
+
+    Returns (interp_temp_f, kind) donde kind ∈ {linear, before, after, none}."""
+    before = None  # (time, temp) — más cercano ANTES de rt
+    after = None   # (time, temp) — más cercano DESPUÉS de rt
+    for a in accepted:
+        at = a.get("time")
+        atemp = a.get("temp_f")
+        if at is None or atemp is None:
+            continue
+        secs = (at - rt).total_seconds()
+        if abs(secs) / 60.0 > window_min:
+            continue
+        if secs < 0:  # accepted es anterior
+            if before is None or (rt - before[0]).total_seconds() > -secs:
+                before = (at, atemp)
+        elif secs > 0:  # accepted es posterior
+            if after is None or (after[0] - rt).total_seconds() > secs:
+                after = (at, atemp)
+    if before and after:
+        b_t, b_temp = before
+        a_t, a_temp = after
+        span = (a_t - b_t).total_seconds()
+        if span > 0:
+            frac = (rt - b_t).total_seconds() / span
+            return (b_temp + frac * (a_temp - b_temp), "linear")
+        return (b_temp, "linear")
+    if before:
+        return (before[1], "before")
+    if after:
+        return (after[1], "after")
+    return (None, "none")
+
+
 def _log_obs_rejects(station_id: str, accepted: list, rejected: list) -> None:
     """Persistir lecturas rechazadas para backtestear el umbral de guarda C.
     Cero-op si no hay rechazos. Idempotente por (station_id, ts) — no duplica
@@ -331,6 +371,9 @@ def _log_obs_rejects(station_id: str, accepted: list, rejected: list) -> None:
         if accepted_ts:
             best = min(abs((rt - at).total_seconds()) for at in accepted_ts)
             dist_min = round(best / 60.0, 1)
+        interp_ref, kind = _interp_ref_at(accepted, rt)
+        delta = (r["temp_f"] - interp_ref) if (interp_ref is not None and
+                                               r["temp_f"] is not None) else None
         _cal.record_obs_reject(
             station_id=station_id,
             ts=rt,
@@ -338,6 +381,9 @@ def _log_obs_rejects(station_id: str, accepted: list, rejected: list) -> None:
             minute=r["minute"],
             has_rawmsg=r["has_raw"],
             dist_to_accepted_min=dist_min,
+            interp_ref_f=interp_ref,
+            delta_vs_interp_f=delta,
+            interp_kind=kind,
         )
 
 

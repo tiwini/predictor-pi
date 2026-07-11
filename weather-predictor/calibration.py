@@ -173,6 +173,17 @@ def _conn() -> sqlite3.Connection:
     do_cols = {r[1] for r in c.execute("PRAGMA table_info(day_outcomes)").fetchall()}
     if "min_obs_f" not in do_cols:
         c.execute("ALTER TABLE day_outcomes ADD COLUMN min_obs_f REAL")
+    # Fable Round 2 (2026-07-10 tras snapshot 4h): la guarda de fase 2
+    # compara vs interpolación lineal entre METARs flanqueantes (no vs
+    # nearest accepted). Delta 5-min ≠ delta 90-min: rampa matinal KPHX
+    # sube +4-6°F en 90 min, un X calibrado sobre 5-min rechazaría rampas
+    # legítimas. Loggeamos vs-interpolada desde ahora — antes eran deltas
+    # 5-min, distribución equivocada para fijar X.
+    or_cols = {r[1] for r in c.execute("PRAGMA table_info(obs_rejects)").fetchall()}
+    for col, ctype in [("interp_ref_f", "REAL"), ("delta_vs_interp_f", "REAL"),
+                       ("interp_kind", "TEXT")]:
+        if col not in or_cols:
+            c.execute(f"ALTER TABLE obs_rejects ADD COLUMN {col} {ctype}")
     return c
 
 
@@ -214,22 +225,34 @@ def record_obs_reject(station_id: str, ts: datetime, temp_f: float | None,
                       minute: int, has_rawmsg: bool,
                       dist_to_accepted_min: float | None,
                       ens_p10: float | None = None,
-                      ens_p90: float | None = None) -> None:
-    """Fable 2026-07-10: log lectura rechazada por el filtro de obs.
-    UNIQUE(station_id, ts) previene duplicados entre polls (INSERT OR IGNORE)."""
+                      ens_p90: float | None = None,
+                      interp_ref_f: float | None = None,
+                      delta_vs_interp_f: float | None = None,
+                      interp_kind: str | None = None) -> None:
+    """Fable 2026-07-10 R1+R2: log lectura rechazada por el filtro.
+    UNIQUE(station_id, ts) previene duplicados entre polls (INSERT OR IGNORE).
+
+    interp_ref_f/delta_vs_interp_f (R2): cantidad correcta para elegir X°F
+    de la guarda de fase 2 — interpolación lineal entre METARs flanqueantes
+    dentro de ±60 min. interp_kind ∈ {linear, before, after, none} marca
+    el caso de solo-un-flanker o sin data suficiente."""
     c = _conn()
     try:
         c.execute("""INSERT OR IGNORE INTO obs_rejects
                      (station_id, ts, temp_f, minute, has_rawmsg,
-                      dist_to_accepted_min, ens_p10, ens_p90, logged_at)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                      dist_to_accepted_min, ens_p10, ens_p90, logged_at,
+                      interp_ref_f, delta_vs_interp_f, interp_kind)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                   (station_id, ts.isoformat(),
                    float(temp_f) if temp_f is not None else None,
                    int(minute), 1 if has_rawmsg else 0,
                    float(dist_to_accepted_min) if dist_to_accepted_min is not None else None,
                    float(ens_p10) if ens_p10 is not None else None,
                    float(ens_p90) if ens_p90 is not None else None,
-                   datetime.utcnow().isoformat()))
+                   datetime.utcnow().isoformat(),
+                   float(interp_ref_f) if interp_ref_f is not None else None,
+                   float(delta_vs_interp_f) if delta_vs_interp_f is not None else None,
+                   interp_kind))
         c.commit()
     finally:
         c.close()
