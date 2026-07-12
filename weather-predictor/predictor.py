@@ -354,6 +354,44 @@ def _interp_ref_at(accepted: list, rt: datetime,
     return (None, "none")
 
 
+def _x_eff(kind: str, delta_t_s: float | None, X: float, R: float) -> float:
+    """Fable R3 (2026-07-12): umbral efectivo de la guarda por vecinos.
+    linear → X (interpolación absorbe rampa). before/after → X + R·Δt_h
+    (única lectura del lado hay que compensar la rampa que la interpolación
+    no puede medir). Prior R=4°F/h a calibrar 07-24 con envolvente superior
+    del pool `before` (N≈40k proyectado)."""
+    if kind == "linear" or delta_t_s is None:
+        return X
+    return X + R * (delta_t_s / 3600.0)
+
+
+def _guard_verdict(temp_f: float, ref_f: float | None, kind: str,
+                    delta_t_s: float | None, X: float, R: float,
+                    direction: str = "up") -> tuple:
+    """Fable R3 (2026-07-12): veredicto de la guarda por vecinos temporales.
+    Returns (verdict, x_eff) con verdict ∈ {accept, reject, no_ref}.
+
+    - kind='none' o ref_f=None → fail-open (accept + flag). Fable R3:
+      "sin referencia no hay juicio posible; las obs ganan cuando el sistema
+      no puede evaluarlas. Rechazar a ciegas es reinventar el filtro
+      rawMessage con otro nombre."
+    - direction ∈ {'up','down','both'} — parametrizado desde día 1 (R2).
+      max_obs usa 'up' (spike hacia arriba). max_current podría usar 'up'
+      o 'both' según decisión de deploy.
+
+    Guarda NO se invoca todavía — helper listo para 07-24 con enforce=False.
+    """
+    if ref_f is None or kind == "none":
+        return ("no_ref", None)
+    x = _x_eff(kind, delta_t_s, X, R)
+    delta = temp_f - ref_f
+    if direction == "up":
+        return ("reject" if delta > x else "accept", x)
+    if direction == "down":
+        return ("reject" if -delta > x else "accept", x)
+    return ("reject" if abs(delta) > x else "accept", x)
+
+
 def _log_obs_rejects(station_id: str, accepted: list, rejected: list) -> None:
     """Persistir lecturas rechazadas para backtestear el umbral de guarda C.
     Cero-op si no hay rechazos. Idempotente por (station_id, ts) — no duplica

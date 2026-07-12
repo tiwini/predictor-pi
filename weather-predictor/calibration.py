@@ -184,6 +184,19 @@ def _conn() -> sqlite3.Connection:
                        ("interp_kind", "TEXT")]:
         if col not in or_cols:
             c.execute(f"ALTER TABLE obs_rejects ADD COLUMN {col} {ctype}")
+    # Fable Round 3 (2026-07-12): columnas de veredicto de guarda fase 2.
+    # Hoy solo se agregan al schema — la guarda se deployea 2026-07-24 con
+    # enforce=False. Fable pidió loggear accepts evaluados también (no solo
+    # rejects) para poder medir tasa de falso rechazo + qué habría rechazado
+    # un X alternativo. Columnas NULL en los rejects nivel-1 (filtro
+    # rawMessage/minuto) que ya se loggean hoy; se poblarán cuando corra
+    # la guarda nivel-2.
+    for col, ctype in [("guard_verdict", "TEXT"),      # accept|reject|no_ref
+                       ("x_eff", "REAL"),               # X + R·Δt para before/after
+                       ("ref_kind", "TEXT"),            # linear|before|after|none
+                       ("ref_delta_t_s", "REAL")]:      # gap al vecino de referencia
+        if col not in or_cols:
+            c.execute(f"ALTER TABLE obs_rejects ADD COLUMN {col} {ctype}")
     return c
 
 
