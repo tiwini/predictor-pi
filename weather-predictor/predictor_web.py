@@ -836,6 +836,11 @@ HTML = """<!doctype html>
       <h3>Hoy</h3>
       <div class="kv"><span class="kv-k">Max obs</span>
         <span>{{ '%.1f' % snap.today_max_obs }}°F
+          {% if snap.today_max_obs_ts %}
+          <span class="muted" style="font-size:.8em;margin-left:.4rem"
+                title="Timestamp del METAR aceptado que produjo el max (UTC)">
+            · {{ snap.today_max_obs_ts.strftime('%H:%MZ') }}</span>
+          {% endif %}
           <span class="muted" style="font-size:.8em;margin-left:.4rem"
                 title="Kalshi liquida contra CLI redondeado al entero (half-up)">
             CLI: {{ ((snap.today_max_obs + 0.5)|round(0, 'floor'))|int }}°F</span>
@@ -1088,6 +1093,13 @@ def _build_station_strip(active_sid: str):
     peak_fresh = (peak_cached_at is not None and
                   (now - peak_cached_at).total_seconds() < _PEAK_STATUS_TTL_SEC)
     peak_data = _peak_status_cache.get("data") or {} if peak_fresh else {}
+    # N8 Fable veredicto R4: strip del home ordena por longitud DESC pura
+    # (este→oeste). Sort estable, sin fila "central". Dashboard :8080 hará el
+    # compose activas-primero; aquí es longitud a secas.
+    from stations import STATION_TO_LON as _LON
+    cached = sorted(cached,
+                    key=lambda r: _LON.get(r.get("station", ""), 0.0),
+                    reverse=True)
     cards = []
     for r in cached:
         if r.get("error"):

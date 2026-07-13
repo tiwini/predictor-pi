@@ -102,6 +102,7 @@ class Snapshot:
     current_obs_time: datetime
     today_min_obs: float
     today_max_obs: float
+    today_max_obs_ts: datetime | None   # UTC ts del METAR aceptado que produjo max_obs
     obs_count: int
     ensemble_daily_maxes: list   # per-member simulated max today
     forecast_next_hours: list    # [(ts_local, median, p10, p90)]
@@ -750,6 +751,16 @@ def build_snapshot(station: Station) -> Snapshot:
     max_obs = max(obs_today) if obs_today else (current["temp_f"] or -999)
     min_obs = min(obs_today) if obs_today else (current["temp_f"] or 999)
 
+    # N4 Fable veredicto R4: ts del METAR aceptado que produjo max_obs (variante
+    # (a), única "observación" honesta; (b) cross-threshold y (c) ingesta son
+    # inferencia). Empate → primer ocurrencia (early lock, más útil).
+    max_obs_ts: datetime | None = None
+    if obs_today:
+        for o in obs_full:
+            if o["temp_f"] is not None and o["temp_f"] == max_obs:
+                max_obs_ts = o["time"]
+                break
+
     # per-member simulated daily max: max(obs_so_far, remaining forecast).
     # Collect member keys + their raw maxes in parallel lists so we can
     # pair weights to members for Bayesian reweighting below.
@@ -1047,6 +1058,7 @@ def build_snapshot(station: Station) -> Snapshot:
         current_obs_time=current["time"],
         today_min_obs=min_obs,
         today_max_obs=max_obs,
+        today_max_obs_ts=max_obs_ts,
         obs_count=len(obs_today),
         ensemble_daily_maxes=daily_maxes,
         forecast_next_hours=forecast,
