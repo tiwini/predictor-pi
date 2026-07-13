@@ -149,6 +149,10 @@ class Snapshot:
     # gate direccional de bets no se autoatenúe.
     ext_shift_f: float = 0.0
     ext_shift_info: dict | None = None
+    # N7 Fable R4: cuánto lleva la temp sin cambio + dirección último cambio
+    # (serie = obs aceptadas, no fetch_current). None si <2 obs o sin cambio.
+    current_temp_stable_min: int | None = None
+    current_temp_last_direction: str | None = None   # 'up' | 'down'
 
 
 # ───────────────────── fetchers ─────────────────────
@@ -761,6 +765,29 @@ def build_snapshot(station: Station) -> Snapshot:
                 max_obs_ts = o["time"]
                 break
 
+    # N7 Fable veredicto R4: duración sin cambio + dirección último cambio.
+    # Serie = obs aceptadas (filtro :53/:54); no fetch_current. Referencia =
+    # último obs aceptado (puede diferir de current_temp_f por segs-mins pero
+    # es la única señal limpia). Sólo señalar si ≥2 obs y hay cambio detectable.
+    stable_min: int | None = None
+    last_dir: str | None = None
+    accepted_desc = sorted(
+        [o for o in obs_full if o["temp_f"] is not None],
+        key=lambda o: o["time"], reverse=True)
+    if len(accepted_desc) >= 2:
+        ref_t = accepted_desc[0]["temp_f"]
+        stable_start = accepted_desc[0]["time"]
+        prev_diff_t: float | None = None
+        for o in accepted_desc[1:]:
+            if abs(o["temp_f"] - ref_t) <= 0.05:
+                stable_start = o["time"]
+            else:
+                prev_diff_t = o["temp_f"]
+                break
+        if prev_diff_t is not None:
+            stable_min = max(0, int((datetime.now(timezone.utc) - stable_start).total_seconds() / 60))
+            last_dir = "up" if ref_t > prev_diff_t else "down"
+
     # per-member simulated daily max: max(obs_so_far, remaining forecast).
     # Collect member keys + their raw maxes in parallel lists so we can
     # pair weights to members for Bayesian reweighting below.
@@ -1086,6 +1113,8 @@ def build_snapshot(station: Station) -> Snapshot:
         bias_info=bias_info,
         ext_shift_f=ext_shift_f,
         ext_shift_info=ext_shift_info,
+        current_temp_stable_min=stable_min,
+        current_temp_last_direction=last_dir,
     )
     # climatology: compare expected max vs historical same-date-of-year
     if _climate_percentile is not None:

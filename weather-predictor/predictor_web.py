@@ -770,6 +770,12 @@ HTML = """<!doctype html>
       <h3>Ahora</h3>
       <div>
         <span class="temp-big">{{ '%.1f' % snap.current_temp_f }}°F</span>
+        {% if snap.current_temp_stable_min is not none and snap.current_temp_stable_min >= 5 %}
+        <span class="muted" style="font-size:.75em;margin-left:.3rem"
+              title="Tiempo sin cambio en la serie de METARs aceptados + dirección del último cambio">
+          [{% if snap.current_temp_stable_min >= 60 %}{{ (snap.current_temp_stable_min // 60) }}h {{ (snap.current_temp_stable_min % 60) }}m{% else %}{{ snap.current_temp_stable_min }}min{% endif %}{% if snap.current_temp_last_direction == 'up' %} ↑{% elif snap.current_temp_last_direction == 'down' %} ↓{% endif %}]
+        </span>
+        {% endif %}
         {% if feels_line %}<span class="feels">{{ feels_line }}</span>{% endif %}
       </div>
       <div class="desc">{{ snap.current_desc }}</div>

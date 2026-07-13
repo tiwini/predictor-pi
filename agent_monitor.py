@@ -196,7 +196,8 @@ def _gather_context() -> dict:
     has_cal_p = "our_p_calibrated" in ks_cols
 
     base_cols = ("s.station, s.ts, s.current_f, s.today_max_obs, "
-                 "s.ens_med, s.ens_p10, s.ens_p90, s.peak_status")
+                 "s.ens_med, s.ens_p10, s.ens_p90, s.peak_status, "
+                 "s.regime_tag, s.regime_reason")
     has_dir_roi = "roi_cold_pct" in ss_cols
     dir_roi_cols = (", s.roi_cold_pct, s.trades_cold, "
                     "s.roi_hot_pct, s.trades_hot, "
@@ -245,6 +246,8 @@ def _gather_context() -> dict:
             "ens_p90": round(r["ens_p90"], 1) if r["ens_p90"] else None,
             "ens_spread": round(spread, 1),
             "peak_status": r["peak_status"],
+            "regime_tag": r["regime_tag"] if "regime_tag" in r.keys() else None,
+            "regime_reason": r["regime_reason"] if "regime_reason" in r.keys() else None,
             "bins": [],
         }
         if has_signals:
@@ -735,11 +738,56 @@ def _build_station_prompt(ctx: dict, station_id: str, question: str,
     sd = ctx.get("station_data")
     if sd:
         lines.append("=== SNAPSHOT ===")
+        cli_bit = ""
+        if sd["today_max_obs"] is not None:
+            cli_bit = f" · CLI proyectado={int(sd['today_max_obs'] + 0.5)}°F"
         lines.append(
-            f"current={sd['current_f']}°F · today_max_obs={sd['today_max_obs']} · "
+            f"current={sd['current_f']}°F · today_max_obs={sd['today_max_obs']}{cli_bit} · "
             f"ens_med={sd['ens_med']}°F · p10-p90={sd['ens_p10']}-{sd['ens_p90']}°F "
             f"(spread {sd['ens_spread']}°F) · peak_status={sd['peak_status']}"
         )
+        # N2 Fable veredicto R4: enriquecer Panorama con régimen + precip + CLI
+        # proyectado. régimen viene de station_snapshots + signals; precip se
+        # calcula live via predictor.build_precip_summary (cache 60min, ~0 costo
+        # segunda llamada). Panorama = user-triggered, latencia extra OK.
+        reg = []
+        if sd.get("regime_tag"):
+            r_bit = sd["regime_tag"]
+            if sd.get("regime_reason"):
+                r_bit += f" ({sd['regime_reason']})"
+            reg.append(f"regime={r_bit}")
+        sig = sd.get("signals") or {}
+        if sig.get("difficulty_label") and sig.get("difficulty_score") is not None:
+            reg.append(f"diff={int(sig['difficulty_score'])}({sig['difficulty_label']})")
+        if sig.get("cold_bias_block"):
+            reg.append("cold_bias_BLOCK")
+        if sig.get("streak_block_hot"):
+            reg.append(f"streak_hot={sig['streak_block_hot']}")
+        if sig.get("streak_block_cold"):
+            reg.append(f"streak_cold={sig['streak_block_cold']}")
+        if sig.get("ext_diff_f") is not None:
+            reg.append(f"ext_diff={sig['ext_diff_f']:+.1f}")
+        if reg:
+            lines.append("RÉGIMEN: " + " · ".join(reg))
+        try:
+            import sys as _sys
+            _sys.path.insert(0, str(PROJECT_DIR / "weather-predictor"))
+            from predictor import (fetch_station as _fs,
+                                    build_precip_summary as _bps)
+            _stn = _fs(station_id)
+            _ps = _bps(_stn, 0)
+            if _ps and _ps.get("n_members"):
+                bits = []
+                if _ps.get("p_any_precip") is not None:
+                    bits.append(f"p_any={_ps['p_any_precip']*100:.0f}%")
+                if _ps.get("p_notable_precip") is not None:
+                    bits.append(f"p_notable={_ps['p_notable_precip']*100:.0f}%")
+                if _ps.get("expected_mm") is not None:
+                    bits.append(f"exp={_ps['expected_mm']:.1f}mm")
+                if bits:
+                    lines.append("PRECIP: " + " · ".join(bits))
+        except Exception as e:
+            lines.append(f"PRECIP: n/a ({type(e).__name__})")
         lines.append("")
         if sd["bins"]:
             lines.append("=== BINS KALSHI (con our_p calibrado) ===")
