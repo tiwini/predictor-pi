@@ -1030,31 +1030,39 @@ HTML = """<!doctype html>
       <a href="/about" style="color:#cba6f7">About / tutorial →</a>
     </div>
   </details>
-  {% if home_ask_prompts %}
+  {% if station_ask_enabled and station_ask_prompts %}
   <div class="quickask">
-    <div class="quickask-title">🤖 Quick asks (global AI)</div>
+    <div class="quickask-title">🤖 Quick asks · {{ station.id }}</div>
     <div class="quickask-grid">
-      {% for p in home_ask_prompts %}
-      <form method="post" action="/api/home-ask">
+      {% for p in station_ask_prompts %}
+      <form method="post" action="/ai/station-ask">
         <input type="hidden" name="kind" value="{{ p.kind }}">
+        <input type="hidden" name="station" value="{{ station.id }}">
+        <input type="hidden" name="return_to" value="/">
         <button type="submit">{{ p.label }}</button>
       </form>
       {% endfor %}
     </div>
-    {% if home_ask_last %}
+    {% if station_ask_error %}
+    <div class="quickask-last" style="color:#f38ba8">
+      Error: {{ station_ask_error }}
+    </div>
+    {% endif %}
+    {% if station_ask_last %}
     <div class="quickask-last">
-      <form method="post" action="/api/home-ask/clear"
+      <form method="post" action="/ai/station-ask/clear"
             style="position:absolute;top:.3rem;right:.1rem;margin:0">
+        <input type="hidden" name="station" value="{{ station.id }}">
+        <input type="hidden" name="return_to" value="/">
         <button type="submit" class="quickask-clear" title="borrar">⊗</button>
       </form>
       <div class="quickask-last-hdr">
-        Última respuesta · <b>{{ home_ask_last.label }}</b>
+        Última respuesta · <b>{{ station_ask_last.label }}</b>
       </div>
-      <div class="quickask-last-txt">{{ home_ask_last.summary }}</div>
+      <div class="quickask-last-txt">{{ station_ask_last.text }}</div>
       <div class="quickask-meta">
-        ${{ '%.4f'|format(home_ask_last.cost) }}
-        · {{ home_ask_last.n_opps }} opps
-        · {{ home_ask_last.ts[11:16] }}Z
+        ${{ '%.4f'|format(station_ask_last.cost) }}
+        · {{ station_ask_last.ts[11:16] }}Z
       </div>
     </div>
     {% endif %}
@@ -1488,9 +1496,11 @@ def index():
         peak_status_age = int(
             (datetime.now(timezone.utc) - _pca).total_seconds())
     brier_watchdog = _build_brier_watchdog()
-    home_ask_last = _get_last_home_ask() if _ask_global else None
-    home_ask_prompts = [{"kind": k, "label": v["label"]}
-                        for k, v in _HOME_PROMPTS.items()]
+    station_ask_last = (_get_last_station_ask(station.id)
+                        if _ask_station else None)
+    station_ask_prompts = [{"kind": k, "label": v["label"]}
+                           for k, v in _STATION_PROMPTS.items()]
+    station_ask_error = request.args.get("ask_err")
     max_obs_ts_local = None
     if snap.today_max_obs_ts is not None:
         max_obs_ts_local = snap.today_max_obs_ts.astimezone(PR_TZ).strftime("%H:%M AST")
@@ -1514,7 +1524,10 @@ def index():
         station_strip=station_strip,
         peak_status_age=peak_status_age,
         brier_watchdog=brier_watchdog,
-        home_ask_last=home_ask_last, home_ask_prompts=home_ask_prompts,
+        station_ask_last=station_ask_last,
+        station_ask_prompts=station_ask_prompts,
+        station_ask_error=station_ask_error,
+        station_ask_enabled=(_ask_station is not None),
         market_name=_market_name(station.id),
     )
 
@@ -2540,21 +2553,30 @@ def ai_station_ask():
         return "agent_monitor no disponible", 500
     kind = request.form.get("kind", "").strip()
     sid = request.form.get("station", "").strip().upper()
+    return_to = request.form.get("return_to", "/comparison").strip() or "/comparison"
+    if return_to not in ("/", "/comparison"):
+        return_to = "/comparison"
     if not kind or not sid:
-        return redirect("/comparison?ask_err=parámetros+faltantes")
+        from urllib.parse import quote
+        sep = "&" if "?" in return_to else "?"
+        return redirect(f"{return_to}{sep}ask_err={quote('parámetros faltantes')}")
     res = _ask_station(kind, sid)
     if not res.get("ok"):
         from urllib.parse import quote
-        return redirect(f"/comparison?ask_err={quote(res.get('error', 'error'))}")
-    return redirect("/comparison")
+        sep = "&" if "?" in return_to else "?"
+        return redirect(f"{return_to}{sep}ask_err={quote(res.get('error', 'error'))}")
+    return redirect(return_to)
 
 
 @app.route("/ai/station-ask/clear", methods=["POST"])
 def ai_station_ask_clear():
     sid = request.form.get("station", "").strip().upper()
+    return_to = request.form.get("return_to", "/comparison").strip() or "/comparison"
+    if return_to not in ("/", "/comparison"):
+        return_to = "/comparison"
     if sid:
         _clear_last_station_ask(sid)
-    return redirect("/comparison")
+    return redirect(return_to)
 
 
 @app.route("/calibration")

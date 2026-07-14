@@ -645,6 +645,26 @@ STATION_PROMPTS = {
             "ensemble, observación parcial si la hay, y consideraciones locales."
         ),
     },
+    "max_next_hour": {
+        "label": "🕐 Máxima próxima hora",
+        "question": (
+            "¿Cuál esperas que sea el máximo observado en LA PRÓXIMA HORA para "
+            "esta estación? Da un rango realista (°F) y menciona: temperatura "
+            "actual (current_f) vs today_max_obs, dirección esperada, y si el "
+            "pico ya pasó según peak_status/prob_rising. Si el día ya está "
+            "settled o el pico ya se confirmó, dilo claro."
+        ),
+    },
+    "already_falling": {
+        "label": "📉 ¿Ya empezó a bajar?",
+        "question": (
+            "¿Esta estación ya empezó a bajar del máximo del día? Compara "
+            "today_max_obs con current_f y la tendencia reciente. Menciona: "
+            "diferencia en °F respecto al max, hora del max_obs vs ahora, "
+            "peak_status y prob_rising. Veredicto claro: 'bajando desde hace "
+            "X min', 'meseta cerca del pico', o 'aún subiendo'."
+        ),
+    },
     "panorama": {
         "label": "🔭 Panorama",
         "question": (
