@@ -515,3 +515,7 @@ bloquear cronograma.
 - Cierre de sesión con uncommitted en la Pi = violación de disciplina
   de convergencia, no "ordenaremos mañana". El test operativo antes de
   irse: `git status -sb` limpio + `git stash list` vacío.
+
+## Post-registro scripts investigación R5-R7 (2026-07-13 ~23:00 UTC)
+
+Movidos 10 scripts one-shot (backfills, brti_comparison_r6, ema_rmse_r6, naive_rmse_r7, venue_probe_r6, verify_basis_edge, basis_timelocal_r5, bootstrap_and_hourly_r5) a `crypto-predictor/investigacion/` con README. Producen la evidencia de constantes pre-registradas (half-life 3d, edge ajustado, baseline naive) — auditor del corte puede correrlos, no citarlos. `residuals_min_id.patch` y `start_all.sh.bak_20260708_195010` borrados (redundantes con contenido ya committeado). Regla (iv): HEAD del corte avanza al SHA de este commit.
