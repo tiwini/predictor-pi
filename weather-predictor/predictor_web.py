@@ -842,10 +842,10 @@ HTML = """<!doctype html>
       <h3>Hoy</h3>
       <div class="kv"><span class="kv-k">Max obs</span>
         <span>{{ '%.1f' % snap.today_max_obs }}°F
-          {% if snap.today_max_obs_ts %}
+          {% if max_obs_ts_local %}
           <span class="muted" style="font-size:.8em;margin-left:.4rem"
-                title="Timestamp del METAR aceptado que produjo el max (UTC)">
-            · {{ snap.today_max_obs_ts.strftime('%H:%MZ') }}</span>
+                title="Timestamp del METAR aceptado que produjo el max (hora local AST)">
+            · {{ max_obs_ts_local }}</span>
           {% endif %}
           <span class="muted" style="font-size:.8em;margin-left:.4rem"
                 title="Kalshi liquida contra CLI redondeado al entero (half-up)">
@@ -1491,9 +1491,13 @@ def index():
     home_ask_last = _get_last_home_ask() if _ask_global else None
     home_ask_prompts = [{"kind": k, "label": v["label"]}
                         for k, v in _HOME_PROMPTS.items()]
+    max_obs_ts_local = None
+    if snap.today_max_obs_ts is not None:
+        max_obs_ts_local = snap.today_max_obs_ts.astimezone(PR_TZ).strftime("%H:%M AST")
 
     return render_template_string(
         HTML, station=station, snap=snap, dash=dash, hero=hero,
+        max_obs_ts_local=max_obs_ts_local,
         signals=signals,
         top_max_bars=top_max_bars, external=external,
         station_options=station_options,

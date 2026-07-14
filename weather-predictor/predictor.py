@@ -40,7 +40,7 @@ from rich.columns import Columns
 
 UA = "weather-predictor/0.1 (educational; contact=local)"
 PR_TZ = ZoneInfo("America/Puerto_Rico")
-POLL_SEC = 600  # 10 min
+POLL_SEC = 300  # 5 min
 
 # Typical daily-peak window (inclusive-exclusive, local hour). Single source
 # of truth en stations.py; aquí solo importamos. Usado para adaptive polling
