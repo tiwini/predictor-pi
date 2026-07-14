@@ -442,3 +442,12 @@ converge la historia sin contaminar origin. Los R11/R12 quedan
 reconocidos en el commit message de `ce9c2a2` ("Fixes Fable R12
 audit") — trazo histórico sobrevive en la narrativa canónica.
 Uncommitted work en Pi (5 M + varios ??) se preserva vía stash.
+
+### (iv) HEAD esperado en el corte
+
+HEAD del corte = `ef6dbaa` (este post-registro), salvo post-registros
+adicionales declarados; cualquier otro delta = investigar. El hash
+`ce9c2a2` referido arriba es el R13 canónico previo a esta
+reconciliación — quedó absorbido por `ef6dbaa` como parent directo en
+origin/main. Si al ejecutar el corte el HEAD difiere de `ef6dbaa` sin
+un post-registro que lo justifique, detener el corte y auditar.
