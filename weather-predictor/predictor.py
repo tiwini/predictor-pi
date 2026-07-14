@@ -273,12 +273,16 @@ def fetch_today_obs(station: Station) -> list:
     NWS stations publish ~230+ automated readings/día; many are transient
     glitches (seen 27°C spikes at midnight vs 25°C daytime). Filter:
       • lecturas con `rawMessage` (METAR/SPECI oficiales), O
-      • lecturas en minuto :53 o :54 aunque el texto raw no haya propagado.
-        ASOS samplea a :53 (:54 en algunas estaciones); esas son las mismas
-        del METAR oficial, sólo que la API a veces adjunta el texto tarde.
+      • lecturas en minuto :51, :53 o :54 aunque el texto raw no haya
+        propagado. ASOS samplea a :53 en muchas estaciones; KPHX y otras
+        publican a :51. Esas son las mismas lecturas del METAR oficial,
+        sólo que la API a veces adjunta el texto tarde o nunca.
     Fable decision 2026-07-10 tras incidente KIAH (real 91.9°F a las 14:53
     sin rawMessage → sistema mostraba 91.0°F). Rechazos se loggean para
     graduar en ~2 sem a guarda por vecinos temporales (opción C).
+    Extensión 2026-07-14: :51 añadido tras observar KPHX congelado en
+    98.1°F (última obs con rawMessage) mientras las obs :51 subsiguientes
+    a 100-103°F sin rawMessage eran rechazadas.
 
     Each entry: {'time': datetime, 'temp_f': float|None, 'pressure_inhg': float|None}
     """
@@ -298,7 +302,7 @@ def fetch_today_obs(station: Station) -> list:
         has_raw = bool(p.get("rawMessage"))
         ts = datetime.fromisoformat(p["timestamp"].replace("Z", "+00:00"))
         minute = ts.minute
-        is_metar_slot = minute in (53, 54)
+        is_metar_slot = minute in (51, 53, 54)
         accepted = has_raw or is_metar_slot
         tv = p["temperature"]["value"]
         if not accepted:
