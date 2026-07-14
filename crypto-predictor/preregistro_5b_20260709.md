@@ -376,3 +376,69 @@ Cualquier ajuste ulterior antes del corte requiere trigger legítimo
 declarado en R11-R12 (fallo de fetcher, bug en código que alimenta el
 scoring, o alerta del ritual sistémico) y se declara como
 post-registro adicional con explicación explícita.
+
+## Post-registro reconciliación divergencia Pi↔origin (2026-07-13 ~21:00 UTC)
+
+**Trigger:** Fable R4 close-out review levantó que el HEAD crypto en
+Pi era `fb2a596` (R12) mientras origin tenía `ce9c2a2` (R13). No era
+typo — R11 (`faec493`) y R12 (`fb2a596`) vivieron sólo en Pi durante
+4 días sin sincronizar con origin. R13 se creó en origin desde
+`f2acbe0` sin ver R11/R12. Weekly monitoring corrió con los
+denominadores del R10 rotos desde 07-09 hasta 07-13 (el trigger
+"no-Kalshi > 5%" nunca disparó porque nadie lo evaluó — el script R12
+en Pi no tenía la aritmética reloj-restringida de R13).
+
+**Auditoría del contenido (07-13 tarde, `git diff fb2a596 ce9c2a2`):**
+- `preregistro_5b_20260709.md`: 0 deleciones, 65 adiciones. El
+  contenido R11+R12 (filters-only, kalshi_book, ritual salud
+  validado, triggers por bucket 30/5/35) se preserva íntegro en la
+  versión R13. La sesión R13 partió del archivo tal como estaba en
+  Pi al escribir R11/R12, no de `f2acbe0`. Sin pérdida documental.
+- `shadow_gate_5b.py`: 38 deleciones, 82 adiciones — refactor puro.
+  Funciones `build_basis_history`, `report`, `report_filters_only`
+  reemplazadas por versiones con `RELOJ_START_ID` awareness.
+  Precedencia 1→4 (líneas 21/220/403), umbrales 30/5/35 (424/427/430),
+  `--filters-only` sin cómputo de edge (funciones separadas 372).
+  Sin regresión semántica.
+- Smoke test 07-13 `--filters-only --verbose` en Pi tras adopción:
+  legacy 1061 rows segregados en línea informativa; ventana reloj
+  N=100 (kalshi_book=5.0% justo en el trigger); N calificantes=95;
+  triggers no evaluados aún (`N reloj < 300`).
+
+**Acción aplicada:** `git checkout ce9c2a2 -- shadow_gate_5b.py
+preregistro_5b_20260709.md` en Pi → commit `2fe3978` "adopt R13
+supersede Pi-local R11/R12" → `sudo systemctl restart
+crypto-predictor` (registrado como restart voluntario, sección (i) más
+abajo) → HTTP 200 tras warm-up.
+
+### (i) Restart voluntario 2026-07-13 ~21:07 UTC — adopción R13
+
+Anotado para que el ritual del lunes (`ExecMainStartTimestamp` más
+reciente que el chequeo anterior sin restart voluntario → investigar)
+no interprete el `sudo systemctl restart crypto-predictor` de las
+21:07 UTC como reinicio invisible. Motivo: cargar el nuevo
+`shadow_gate_5b.py` con `RELOJ_START_ID=1062` (aunque
+`shadow_gate_5b.py` corre por cron, no por systemd — el restart del
+Flask fue conservador para asegurar caches vacíos, no técnicamente
+necesario). PID nueva: sujeta al chequeo del lunes.
+
+### (ii) Regla de disciplina post-incidente
+
+Persistida en memoria del AI 2026-07-13:
+- Estado del repo se reporta desde `git log --graph --oneline -5` +
+  `git status -sb` (que muestra ahead/behind contra origin), nunca
+  desde narrativa de la sesión. Un `--graph` en R12 habría mostrado
+  la divergencia el día que nació.
+- Push a origin es parte del close-out, no un after-thought. Pi es
+  runtime; origin es canonical. Convergencia Pi↔origin queda como
+  operación pendiente en este mismo close-out.
+
+### (iii) Racional para reset Pi→origin/main tras este post-registro
+
+Push desde Pi arrastraría a origin 11 commits (R11/R12 exploratorios
++ 3 doppelgängers weather + 1 doppelgänger tokens + `2fe3978`
+redundante — su contenido = `ce9c2a2`). Reset Pi a `origin/main`
+converge la historia sin contaminar origin. Los R11/R12 quedan
+reconocidos en el commit message de `ce9c2a2` ("Fixes Fable R12
+audit") — trazo histórico sobrevive en la narrativa canónica.
+Uncommitted work en Pi (5 M + varios ??) se preserva vía stash.
