@@ -893,6 +893,8 @@ def ask_station(kind: str, station_id: str) -> dict:
         "label": STATION_PROMPTS[kind]["label"],
         "text": text,
         "cost": cost,
+        "tokens_in": tin,
+        "tokens_out": tout,
     })
     c.execute(
         "INSERT OR REPLACE INTO agent_state (key, value) VALUES (?, ?)",
@@ -1002,6 +1004,8 @@ def ask(kind: str) -> dict:
         "summary": summary,
         "n_opps": len(opps),
         "cost": cost,
+        "tokens_in": tin,
+        "tokens_out": tout,
     })
     c.execute(
         "INSERT OR REPLACE INTO agent_state (key, value) VALUES ('last_home_ask', ?)",
