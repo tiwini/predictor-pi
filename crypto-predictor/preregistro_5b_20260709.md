@@ -451,3 +451,67 @@ adicionales declarados; cualquier otro delta = investigar. El hash
 reconciliación — quedó absorbido por `ef6dbaa` como parent directo en
 origin/main. Si al ejecutar el corte el HEAD difiere de `ef6dbaa` sin
 un post-registro que lo justifique, detener el corte y auditar.
+
+## Post-registro snapshot R6-R8 productivo (2026-07-13 ~22:30 UTC)
+
+**Trigger:** Fable R4 close-out review #4 detectó que
+`crypto-predictor/hourly_call.py`, `predictor_web.py`, `residuals.py`,
+`start_all.sh` + tests corrían en Pi sin commit — modificados desde
+07-06/07-09 con el bloque de features intraday que alimenta el gate.
+"No relacionado" era prosa mía; el diff nombra explícitamente el path
+del scoring del gate.
+
+**Contenido del snapshot (Pi → origin, este post-registro):**
+- **R6 (07-06 aprox.):** BRTI proxy multi-venue en `hourly_call.py`
+  (`_multi_venue_prices`, Coinbase+Bitstamp+Kraken+Gemini secuencial con
+  budget 15s), `statistics.median` de constituyentes, 10 columnas
+  `ALTER TABLE hourly_calls` (bitstamp_price_at_settle,
+  brti_proxy_price, brti_proxy_n_venues, momentum_pct_per_min,
+  ob_imbalance, taker_buy_ratio, funding_rate, fng, vol_regime_ratio,
+  features_max_age_s). `make_call(features=...)` persiste snapshot al
+  disparo del call.
+- **R7-review Fable (07-09):** retry pass reescrito — filtro cambia de
+  `brti IS NULL` a "cualquier venue-col NULL o n_venues<4" (retry pre-fix
+  ignoraba rows con brti poblado pero Coinbase NULL); `COALESCE` protege
+  mediana ya escrita. En `predictor_web.py`: warmup EWMA seed = varianza
+  muestral primeros 30 r² con mínimo 330 klines (5 slow-half-lives); OB
+  imbalance rescalado a [-1, +1] (spec crudo); FNG excluido de
+  `features_max_age_s` (su TTL diario dominaba métrica y la volvía
+  ciega a fetchers muertos).
+- **R8-review Fable (07-09):** throttle module-level
+  `_last_retry_scan_ts` con `_RETRY_SCAN_MIN_INTERVAL_S=300s`
+  (poll_loop corre a POLL_SEC=5 → sin throttle serían ~720
+  refetches/hora/row); `skip=` param en `_multi_venue_prices` para no
+  re-fetchear venues ya poblados en candles históricos deterministas;
+  `_RETRY_UPGRADE_WINDOW_S=900s` y `_RETRY_RESCUE_WINDOW_S=3600s`
+  (dos ventanas separadas de retry); adaptive timeout último venue
+  aprovecha budget sobrante.
+- **`residuals.py`:** `analyze()` acepta `--min-id` para excluir historicals
+  pre-R6 al re-correr el PIT.
+- **`start_all.sh`:** línea `start_crypto` comentada — crypto migró a
+  systemd (`crypto-predictor.service`) el 07-08.
+- **`tests/`:** 34 tests pasan en Pi (`test_hourly_call.py` +
+  `test_vol_regime.py`), incluyendo regresión inmortalizada del bug
+  R7 pre-fix.
+
+**Impacto sobre el corte:** el gate 5B corre sobre `hourly_calls` DB
+poblada por este código desde 07-06 en adelante. El artefacto "hash
+confirmando `ef6dbaa`" ahora sí certifica el código que produjo la
+data — pre-commit el hash certificaba HEAD divergente del working tree
+productivo. Regla (iv) HEAD del corte pasa de `ef6dbaa` al SHA de este
+commit (auto-declarado).
+
+**Untracked Pi sin migrar** (scripts one-shot investigación R5-R7,
+backfills, comparaciones venue): quedan como TODO separado, no
+alimentan `hourly_calls` DB → no afectan corte. Se decide destino
+(commit histórico en branch, discard, o commit main tardío) sin
+bloquear cronograma.
+
+**How to apply:**
+- Antes de decir "no relacionado" sobre archivos M, `git diff --stat`
+  literal + identificar el path por función productiva. La palabra
+  "hourly_call.py" en un `git status` del árbol de scoring **es** el
+  path del gate por definición.
+- Cierre de sesión con uncommitted en la Pi = violación de disciplina
+  de convergencia, no "ordenaremos mañana". El test operativo antes de
+  irse: `git status -sb` limpio + `git stash list` vacío.

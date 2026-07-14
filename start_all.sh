@@ -107,7 +107,7 @@ start_btc_quarter_poller() {
 
 wait_dns api.weather.gov 60
 start_weather_with_retry
-start_crypto
+#start_crypto  # comentado 2026-07-08: crypto migrado a systemd (crypto-predictor.service)
 start_dashboard
 start_analysis_poller
 start_btc_quarter_poller

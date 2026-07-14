@@ -56,14 +56,14 @@ def _norm_cdf(z: float) -> float:
     return 0.5 * (1 + math.erf(z / math.sqrt(2)))
 
 
-def analyze(db_path: str) -> dict:
+def analyze(db_path: str, min_id: int = 0) -> dict:
     with sqlite3.connect(db_path) as c:
         c.row_factory = sqlite3.Row
         rows = c.execute(
             "SELECT id, made_at, target_at, now_price, sigma_h, actual_price "
             "FROM hourly_calls "
-            "WHERE actual_price IS NOT NULL AND sigma_h > 0 "
-            "ORDER BY id"
+            "WHERE actual_price IS NOT NULL AND sigma_h > 0 AND id >= ? "
+            "ORDER BY id", (min_id,)
         ).fetchall()
 
     z_emps = []
@@ -175,5 +175,6 @@ def _print(res: dict) -> None:
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", default="/home/popeye/crypto-predictor/calibration.db")
+    ap.add_argument("--min-id", type=int, default=0)
     args = ap.parse_args()
-    _print(analyze(args.db))
+    _print(analyze(args.db, min_id=args.min_id))

@@ -384,13 +384,79 @@ def _refresh_external_for_btc(now_unix: float) -> None:
                 _external["funding_at"] = now_unix
 
 
+def _snapshot_features_for_call(klines, momentum_pct_per_min,
+                                 now_ts: float) -> dict:
+    """Snapshot de las 7 features al momento del make_call.
+
+    Fable R6/R7 naming (todas crudas):
+      momentum_pct_per_min : %/min slope regresión log-close (fresco, ya en
+                             `momentum` calculado en do_poll_symbol).
+      ob_imbalance         : Binance depth L20, (bid_vol−ask_vol)/(bid+ask) ∈
+                             [−1, +1]. R6 spec: zero-centrado, +1 = todo bid,
+                             −1 = todo ask, 0 = balanceado. El buffer live
+                             `_external["ob_imbalance"]["imbalance"]` sigue en
+                             [0, 1] para la UI (arrow logic); acá traducimos
+                             al persistir.
+      taker_buy_ratio      : aggTrades 5m, buy_vol/(buy+sell) ∈ [0,1].
+      funding_rate         : Binance premiumIndex, fracción nativa por 8h.
+      fng                  : F&G alternative.me, int 0..100.
+      vol_regime_ratio     : σ_fast(10m)/σ_slow(60m) RMS EWMA de r² 1m.
+      features_max_age_s   : max age SÓLO de buffers sub-horarios (OB, taker,
+                             funding). Fable R7-review 2026-07-09: FNG excluido
+                             porque su TTL diario (~3600s) dominaba la métrica
+                             y la volvía ciega a fetchers muertos. Con el fix,
+                             valor esperado en ops sanas = segundos; >120s es
+                             signal accionable de fetcher stall.
+
+    Cualquier fetch fallido → None (persistir NULL sin bloquear el call).
+    """
+    with _external_lock:
+        ext = dict(_external)
+    ob = ext.get("ob_imbalance")
+    ob_imb_01 = ob["imbalance"] if isinstance(ob, dict) else None
+    # R6 spec: persistir en [−1, +1] (signo = lado, magnitud = fuerza).
+    # Fable R7-review 2026-07-09: alinear DB con spec antes de acumular.
+    ob_imb = (ob_imb_01 - 0.5) * 2.0 if ob_imb_01 is not None else None
+    taker = ext.get("taker_flow")
+    taker_br = taker["buy_ratio"] if isinstance(taker, dict) else None
+    funding = ext.get("funding")
+    funding_rate = funding["rate"] if isinstance(funding, dict) else None
+    fng = ext.get("fng")
+    fng_val = fng["value"] if isinstance(fng, dict) else None
+    try:
+        vol_ratio = _vol_regime_ratio_ewma(klines) if klines else None
+    except Exception:
+        vol_ratio = None
+    ages: list[float] = []
+    for key, val in (
+        ("ob_at", ob_imb_01), ("taker_at", taker_br),
+        ("funding_at", funding_rate),
+    ):
+        t_at = ext.get(key, 0.0) or 0.0
+        if val is not None and t_at > 0:
+            ages.append(now_ts - t_at)
+    features_max_age_s = max(ages) if ages else None
+    return {
+        "momentum_pct_per_min": momentum_pct_per_min,
+        "ob_imbalance": ob_imb,
+        "taker_buy_ratio": taker_br,
+        "funding_rate": funding_rate,
+        "fng": fng_val,
+        "vol_regime_ratio": vol_ratio,
+        "features_max_age_s": features_max_age_s,
+    }
+
+
 def do_poll_symbol(symbol: str) -> None:
     try:
         p = _pred.build_prediction(symbol=symbol)
         # Momentum: regresión sobre últimos 10 closes 1m. Re-fetch barato
         # (ya hicimos uno en build_prediction; segundo trae 10 candles).
         try:
-            mk = _pred.fetch_klines(symbol=symbol, interval="1m", limit=360)
+            # limit=500: Fable R8-review 2026-07-09 — vol_regime warm-up
+            # exige 330 klines; 500 da headroom para recortes ocasionales de
+            # Binance sin producir NULLs innecesarios. Parse extra despreciable.
+            mk = _pred.fetch_klines(symbol=symbol, interval="1m", limit=500)
             momentum = _momentum_pct_per_min(mk, lookback=10)
             momentum_multi = {
                 lb: _momentum_pct_per_min(mk, lookback=lb)
@@ -416,14 +482,17 @@ def do_poll_symbol(symbol: str) -> None:
                 kalshi_curve = None
         _cal.record_prediction(p, ladder, kalshi_curve=kalshi_curve)
         if symbol == "BTCUSDT":
-            try:
-                _hcall.make_call(p)
-            except Exception as e:
-                print(f"hourly_call error: {e}", file=sys.stderr)
+            # Refresh externas ANTES del make_call para que las features
+            # persistidas reflejen el snapshot más fresco posible del poll.
             try:
                 _refresh_external_for_btc(time.time())
             except Exception as e:
                 print(f"external refresh error: {e}", file=sys.stderr)
+            try:
+                features = _snapshot_features_for_call(mk, momentum, time.time())
+                _hcall.make_call(p, features=features)
+            except Exception as e:
+                print(f"hourly_call error: {e}", file=sys.stderr)
         with _state_lock:
             _state[symbol] = {
                 "pred": p,
@@ -484,6 +553,86 @@ def _momentum_pct_per_min(klines, lookback: int = 10) -> float | None:
     if den == 0:
         return None
     return (num / den) * 100.0
+
+
+def _vol_regime_ratio_ewma(klines,
+                           fast_hl_min: float = 10.0,
+                           slow_hl_min: float = 60.0,
+                           warmup_n: int = 30,
+                           min_slow_hls: float = 5.0) -> float | None:
+    """σ_fast / σ_slow via EWMA time-aware de retornos² sobre klines 1m.
+
+    Fable R6 spec:
+      - Retornos: r_i = log(close_i / close_{i-1}).
+      - EWMA(r²) time-aware: w = 0.5^(Δt_min / hl_min); state ← state·w + r²·(1-w).
+      - σ = √EWMA(r²) → ratio σ_fast / σ_slow (dial de expansión de vol).
+      - Half-lives: fast=10min, slow=60min sobre retornos 1m.
+      - RMS de retornos (no |r|), consistente con σ_h del modelo (evita
+        dependencia oculta del df).
+      - Persistir ratio crudo; log(ratio) simétrico se deriva downstream.
+
+    Warm-up (Fable R7-review 2026-07-09): con ambos EWMA iniciados en el primer
+    r² el slow queda subcalentado hasta ~4-5 half-lives y el ratio sale sesgado.
+    Fix: (1) exigir ventana ≥ warmup_n + min_slow_hls·slow_hl_min klines 1m —
+    con defaults, 30 + 5·60 = 330; (2) seed ambos EWMA con la varianza muestral
+    de los primeros warmup_n r² (no el primer r² individual). Si no hay
+    historia suficiente → None (regla R6: NULL antes que valor envenenado).
+
+    Semántica: >1 = vol expandiéndose vs baseline lento; ~1 = régimen estable.
+    """
+    import math
+    if not klines:
+        return None
+    min_klines_required = int(warmup_n + min_slow_hls * slow_hl_min)
+    if len(klines) < min_klines_required:
+        return None
+    # Fase 1: extraer los primeros warmup_n retornos válidos para seed.
+    seed_r2: list[float] = []
+    prev_close = None
+    seed_end_idx = 0
+    for idx, k in enumerate(klines):
+        if k.close <= 0:
+            continue
+        if prev_close is None or prev_close <= 0:
+            prev_close = k.close
+            continue
+        r = math.log(k.close / prev_close)
+        seed_r2.append(r * r)
+        prev_close = k.close
+        if len(seed_r2) >= warmup_n:
+            seed_end_idx = idx
+            break
+    if len(seed_r2) < warmup_n:
+        return None
+    seed_var = sum(seed_r2) / len(seed_r2)  # varianza muestral de r² (centrada en 0)
+    ewma_fast = seed_var
+    ewma_slow = seed_var
+    # Fase 2: alimentar el resto de klines con el update time-aware.
+    prev_close = klines[seed_end_idx].close
+    prev_time_ms = klines[seed_end_idx].open_time
+    for k in klines[seed_end_idx + 1:]:
+        if k.close <= 0:
+            continue
+        if prev_close <= 0:
+            prev_close = k.close
+            prev_time_ms = k.open_time
+            continue
+        r = math.log(k.close / prev_close)
+        r2 = r * r
+        dt_min = max(1e-6, (k.open_time - prev_time_ms) / 60000.0)
+        w_fast = 0.5 ** (dt_min / fast_hl_min)
+        w_slow = 0.5 ** (dt_min / slow_hl_min)
+        ewma_fast = w_fast * ewma_fast + (1 - w_fast) * r2
+        ewma_slow = w_slow * ewma_slow + (1 - w_slow) * r2
+        prev_close = k.close
+        prev_time_ms = k.open_time
+    if ewma_slow <= 0:
+        return None
+    sigma_fast = math.sqrt(ewma_fast)
+    sigma_slow = math.sqrt(ewma_slow)
+    if sigma_slow == 0:
+        return None
+    return sigma_fast / sigma_slow
 
 
 def _vol_regime(klines, fast_window: int = 60) -> dict | None:

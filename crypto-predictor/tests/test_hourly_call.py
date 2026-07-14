@@ -97,71 +97,208 @@ def test_settle_win_when_actual_below_call(db):
     assert cur.actual_price == 79_500.0
 
 
+def _reset_retry_gate():
+    """Reset del module-level throttle antes de cada test que ejerce el
+    retry pass, para que la ventana de 5 min no interfiera entre asserts."""
+    hc._last_retry_scan_ts = 0.0
+
+
+def _mvf(cb=None, bs=None, kr=None, gm=None):
+    """Multi-venue fn stub: devuelve los precios pasados como fijos."""
+    def _fn(sym, tgt, per_timeout=5.0, budget_s=15.0, skip=None):
+        out = {"coinbase": cb, "bitstamp": bs, "kraken": kr, "gemini": gm}
+        if skip:
+            for k in skip:
+                out[k] = None
+        return out
+    return _fn
+
+
 def test_settle_persists_proxy_price_when_fn_ok(db):
-    """proxy_price_at_settle se puebla cuando proxy_price_fn devuelve valor."""
+    """proxy_price_at_settle se puebla con Coinbase del multi_venue_fn."""
+    _reset_retry_gate()
     pred = _fake_pred(now_price=80_000.0, sigma_h=0.01)
     hc.make_call(pred, db_path=db)
     hc.settle_due(db_path=db, now=pred.target_at + 1,
                   price_fn=lambda s, t: 79_500.0,
-                  proxy_price_fn=lambda s, t: 79_498.5)
+                  multi_venue_fn=_mvf(cb=79_498.5, bs=79_497.0,
+                                      kr=79_499.0, gm=79_500.5))
     cur = hc.recent(db_path=db)[0]
     assert cur.actual_price == 79_500.0
     assert cur.proxy_price_at_settle == 79_498.5
+    assert cur.bitstamp_price_at_settle == 79_497.0
+    assert cur.brti_proxy_n_venues == 4
 
 
-def test_settle_proxy_none_when_fn_fails_does_not_block_settle(db):
-    """proxy_price_fn que levanta no debe bloquear el settle — queda NULL."""
+def test_settle_proxy_none_when_all_venues_fail_does_not_block_settle(db):
+    """multi_venue_fn que devuelve todo None no debe bloquear el settle."""
+    _reset_retry_gate()
     pred = _fake_pred(now_price=80_000.0, sigma_h=0.01)
     hc.make_call(pred, db_path=db)
-    def _boom(s, t):
-        raise RuntimeError("coinbase down")
     n = hc.settle_due(db_path=db, now=pred.target_at + 1,
                       price_fn=lambda s, t: 79_500.0,
-                      proxy_price_fn=_boom)
+                      multi_venue_fn=_mvf())
     assert n == 1
     cur = hc.recent(db_path=db)[0]
     assert cur.actual_price == 79_500.0
     assert cur.proxy_price_at_settle is None
-
-
-def test_settle_retry_backfills_proxy_when_fn_recovers(db):
-    """Row settleada con proxy NULL (candle no listo) se sana en tick
-    posterior cuando proxy_price_fn recupera. Cubre el caso Coinbase 1m
-    no disponible cuando settle_due dispara pocos segundos post-target."""
-    pred = _fake_pred(now_price=80_000.0, sigma_h=0.01)
-    hc.make_call(pred, db_path=db)
-    def _boom(s, t):
-        raise RuntimeError("candle not ready")
-    hc.settle_due(db_path=db, now=pred.target_at + 1,
-                  price_fn=lambda s, t: 79_500.0, proxy_price_fn=_boom)
-    cur = hc.recent(db_path=db)[0]
-    assert cur.actual_price == 79_500.0
-    assert cur.proxy_price_at_settle is None
-    hc.settle_due(db_path=db, now=pred.target_at + 120,
-                  price_fn=lambda s, t: 79_500.0,
-                  proxy_price_fn=lambda s, t: 79_498.5)
-    cur = hc.recent(db_path=db)[0]
-    assert cur.proxy_price_at_settle == 79_498.5
+    assert cur.brti_proxy_price is None
+    assert cur.brti_proxy_n_venues == 0
 
 
 def test_settle_retry_ignores_old_null_proxy_rows(db):
     """Rows con settled_at > 3600s atrás NO se reintentan (evita hammer
     sobre históricas N=953 pre-instrumentación)."""
+    _reset_retry_gate()
     pred = _fake_pred(now_price=80_000.0, sigma_h=0.01)
     hc.make_call(pred, db_path=db)
-    def _boom(s, t):
-        raise RuntimeError("candle not ready")
     hc.settle_due(db_path=db, now=pred.target_at + 1,
-                  price_fn=lambda s, t: 79_500.0, proxy_price_fn=_boom)
+                  price_fn=lambda s, t: 79_500.0, multi_venue_fn=_mvf())
+    _reset_retry_gate()
     calls = []
-    def _track(s, t):
+    def _track(s, t, per_timeout=5.0, budget_s=15.0, skip=None):
         calls.append(t)
-        return 79_498.5
+        return _mvf(cb=79_498.5)(s, t, skip=skip)
     hc.settle_due(db_path=db, now=pred.target_at + 7200,
-                  price_fn=lambda s, t: 79_500.0, proxy_price_fn=_track)
+                  price_fn=lambda s, t: 79_500.0, multi_venue_fn=_track)
     assert calls == []
     cur = hc.recent(db_path=db)[0]
     assert cur.proxy_price_at_settle is None
+
+
+# ---- Regression tests Fable R8-review 2026-07-09 ----
+
+def test_r7_retry_bug_immortalized_coinbase_rescue_when_brti_populated(db):
+    """R7 bug: row settled con brti poblado pero Coinbase NULL (Coinbase
+    falló en settle window; Bitstamp+Kraken+Gemini rescataron mediana).
+    El retry pre-fix ignoraba estas rows por el filtro `brti IS NULL`.
+    Post-fix (R7-review) las alcanza y rellena Coinbase cuando recupera."""
+    _reset_retry_gate()
+    pred = _fake_pred(now_price=80_000.0, sigma_h=0.01)
+    hc.make_call(pred, db_path=db)
+    # Settle inicial: Coinbase falla, otros 3 responden → brti n=3
+    hc.settle_due(db_path=db, now=pred.target_at + 1,
+                  price_fn=lambda s, t: 79_500.0,
+                  multi_venue_fn=_mvf(cb=None, bs=79_497.0,
+                                      kr=79_499.0, gm=79_500.5))
+    cur = hc.recent(db_path=db)[0]
+    assert cur.proxy_price_at_settle is None
+    assert cur.brti_proxy_price is not None
+    assert cur.brti_proxy_n_venues == 3
+    # 5 min después: Coinbase recupera. Retry rellena proxy_price sin pisar mediana.
+    prev_brti = cur.brti_proxy_price
+    _reset_retry_gate()
+    hc.settle_due(db_path=db, now=pred.target_at + 301,
+                  price_fn=lambda s, t: 79_500.0,
+                  multi_venue_fn=_mvf(cb=79_498.5, bs=79_497.0,
+                                      kr=79_499.0, gm=79_500.5))
+    cur = hc.recent(db_path=db)[0]
+    assert cur.proxy_price_at_settle == 79_498.5
+    # n=3 pero mediana intacta (no upgrade porque combined saved+new = 4 pero
+    # el cur_n=3, cb es nuevo → n_new sí es 4, upgrade dispara).
+    # Actualmente cur_n=3, combined=cb(new)+bs(saved)+kraken(refetch)+gemini(refetch)=4
+    assert cur.brti_proxy_n_venues == 4
+
+
+def test_upgrade_n3_to_n4_recomputes_median(db):
+    """Row con n=3 dentro de la ventana upgrade y venue extra respondiendo
+    → mediana se recalcula desde el conjunto completo (saved+new)."""
+    _reset_retry_gate()
+    pred = _fake_pred(now_price=80_000.0, sigma_h=0.01)
+    hc.make_call(pred, db_path=db)
+    # Settle: Gemini timeout, n=3 con cb+bs+kraken
+    hc.settle_due(db_path=db, now=pred.target_at + 1,
+                  price_fn=lambda s, t: 79_500.0,
+                  multi_venue_fn=_mvf(cb=100.0, bs=200.0, kr=300.0, gm=None))
+    cur = hc.recent(db_path=db)[0]
+    assert cur.brti_proxy_n_venues == 3
+    assert cur.brti_proxy_price == 200.0  # median(100,200,300)
+    # Retry 5 min después: Gemini responde. Mediana recompuesta con 4 venues.
+    _reset_retry_gate()
+    hc.settle_due(db_path=db, now=pred.target_at + 301,
+                  price_fn=lambda s, t: 79_500.0,
+                  multi_venue_fn=_mvf(cb=100.0, bs=200.0, kr=300.0, gm=400.0))
+    cur = hc.recent(db_path=db)[0]
+    assert cur.brti_proxy_n_venues == 4
+    assert cur.brti_proxy_price == 250.0  # median(100,200,300,400)
+
+
+def test_upgrade_no_new_venues_does_not_touch_median(db):
+    """n_new ≤ cur_n: mediana existente intacta (no pisar)."""
+    _reset_retry_gate()
+    pred = _fake_pred(now_price=80_000.0, sigma_h=0.01)
+    hc.make_call(pred, db_path=db)
+    hc.settle_due(db_path=db, now=pred.target_at + 1,
+                  price_fn=lambda s, t: 79_500.0,
+                  multi_venue_fn=_mvf(cb=100.0, bs=200.0, kr=300.0, gm=None))
+    cur = hc.recent(db_path=db)[0]
+    saved_median = cur.brti_proxy_price
+    saved_n = cur.brti_proxy_n_venues
+    # Retry: Kraken tampoco responde esta vez. combined = saved∪new = 3, cur_n=3.
+    _reset_retry_gate()
+    hc.settle_due(db_path=db, now=pred.target_at + 301,
+                  price_fn=lambda s, t: 79_500.0,
+                  multi_venue_fn=_mvf(cb=None, bs=None, kr=None, gm=None))
+    cur = hc.recent(db_path=db)[0]
+    assert cur.brti_proxy_price == saved_median
+    assert cur.brti_proxy_n_venues == saved_n
+
+
+def test_retry_gate_suppresses_consecutive_scans(db):
+    """Módulo-level _last_retry_scan_ts: dos settle_due consecutivos dentro
+    de 5 min NO deben llamar a multi_venue_fn en el retry pass. Fable R8:
+    con POLL_SEC=5, sin gate serían 60 refetches en 5 min por row."""
+    _reset_retry_gate()
+    pred = _fake_pred(now_price=80_000.0, sigma_h=0.01)
+    hc.make_call(pred, db_path=db)
+    hc.settle_due(db_path=db, now=pred.target_at + 1,
+                  price_fn=lambda s, t: 79_500.0,
+                  multi_venue_fn=_mvf(cb=None, bs=79_497.0,
+                                      kr=79_499.0, gm=79_500.5))
+    cur = hc.recent(db_path=db)[0]
+    assert cur.proxy_price_at_settle is None
+    calls = []
+    def _tracked(sym, tgt, per_timeout=5.0, budget_s=15.0, skip=None):
+        calls.append(tgt)
+        return _mvf(cb=79_498.5, bs=79_497.0, kr=79_499.0, gm=79_500.5)(
+            sym, tgt, skip=skip)
+    # Segundo scan 30s después (dentro del gate 300s) — no debe correr retry.
+    hc.settle_due(db_path=db, now=pred.target_at + 31,
+                  price_fn=lambda s, t: 79_500.0, multi_venue_fn=_tracked)
+    assert calls == []  # gate suprimió el retry pass
+    cur = hc.recent(db_path=db)[0]
+    assert cur.proxy_price_at_settle is None
+    # Tercer scan 5 min después — gate expira, retry corre.
+    hc.settle_due(db_path=db, now=pred.target_at + 301,
+                  price_fn=lambda s, t: 79_500.0, multi_venue_fn=_tracked)
+    assert len(calls) == 1
+    cur = hc.recent(db_path=db)[0]
+    assert cur.proxy_price_at_settle == 79_498.5
+
+
+def test_retry_skip_populated_venues_avoids_refetch(db):
+    """El retry pasa `skip=` a multi_venue_fn con los venues ya poblados
+    (Coinbase + Bitstamp cuando persistieron) para no gastar requests
+    deterministas en candles históricos."""
+    _reset_retry_gate()
+    pred = _fake_pred(now_price=80_000.0, sigma_h=0.01)
+    hc.make_call(pred, db_path=db)
+    # Settle: cb+bs OK, kr+gm None → n=2, brti = median(cb,bs)
+    hc.settle_due(db_path=db, now=pred.target_at + 1,
+                  price_fn=lambda s, t: 79_500.0,
+                  multi_venue_fn=_mvf(cb=100.0, bs=200.0))
+    seen_skips = []
+    def _tracker(sym, tgt, per_timeout=5.0, budget_s=15.0, skip=None):
+        seen_skips.append(set(skip or ()))
+        return _mvf(cb=None, bs=None, kr=300.0, gm=400.0)(
+            sym, tgt, skip=skip)
+    _reset_retry_gate()
+    hc.settle_due(db_path=db, now=pred.target_at + 301,
+                  price_fn=lambda s, t: 79_500.0, multi_venue_fn=_tracker)
+    assert seen_skips == [{"coinbase", "bitstamp"}]
+    cur = hc.recent(db_path=db)[0]
+    assert cur.brti_proxy_n_venues == 4  # 2 saved + 2 fetched
+    assert cur.brti_proxy_price == 250.0  # median(100, 200, 300, 400)
 
 
 def test_settle_persists_z_standardized_log_return(db):
