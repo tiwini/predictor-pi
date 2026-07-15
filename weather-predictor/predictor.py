@@ -107,7 +107,12 @@ class Snapshot:
     ensemble_daily_maxes: list   # per-member simulated max today
     forecast_next_hours: list    # [(ts_local, median, p10, p90)]
     prob_rising: float           # P(max aún sube por encima del observado)
-    peak_status: str             # "subiendo" | "posible alza" | "pico probable" | "pico confirmado"
+    peak_status: str             # "↗ subiendo" | "▬ meseta" | "🔒 pico confirmado"
+    # Fable #5 (2026-07-15): candidate = clasificación cruda por poll; peak_status
+    # = confirmada con histéresis 2 ciclos (aplicada en do_poll usando prev
+    # snapshot). Ver predictor_web.do_poll para la lógica de flip.
+    peak_state_candidate: str = ""
+    peak_window_open: bool = False
     # extended METAR fields (may be None if unavailable)
     dewpoint_f: float | None = None
     humidity_pct: float | None = None
@@ -1097,14 +1102,34 @@ def build_snapshot(station: Station) -> Snapshot:
     except Exception:
         ext_shift_info = None
 
-    if prob_rising >= 0.50:
-        peak_status = "📈 subiendo"
-    elif prob_rising >= 0.10:
-        peak_status = "posible alza"
-    elif prob_rising >= 0.01:
-        peak_status = "🔒 pico probable"
+    # Fable #5 (2026-07-15): peak state 3-way con ventana + tendencia + ensemble.
+    # Anchor a max_obs (QC'd), no a current (5-min feed puede tener redondeo).
+    # ↗ subiendo: default, sigue habiendo espacio de subida
+    # ▬ meseta: current cerca del max y ventana abierta ("estamos en el pico")
+    # 🔒 confirmado: ventana cerrada o (baja del max Y sin señal de subida)
+    peak_lo_h, peak_hi_h = PEAK_HOURS.get(station.id, (12, 16))
+    peak_window_open = peak_lo_h <= now_local.hour < peak_hi_h
+    curr_t = current.get("temp_f")
+    ref_max = max_obs if max_obs > -900 else None
+    near_max = (curr_t is not None and ref_max is not None
+                and abs(curr_t - ref_max) <= 0.5)
+    below_max = (curr_t is not None and ref_max is not None
+                 and curr_t < ref_max - 0.5)
+    # rising_signal: ensemble aún da headroom O la última tendencia observada
+    # apunta arriba (N7 field). last_dir puede ser None con <2 obs.
+    rising_signal = (prob_rising >= 0.10) or (last_dir == "up")
+    if not peak_window_open:
+        peak_state_candidate = "🔒 pico confirmado"
+    elif below_max and not rising_signal:
+        peak_state_candidate = "🔒 pico confirmado"
+    elif near_max:
+        peak_state_candidate = "▬ meseta"
     else:
-        peak_status = "🔒 pico confirmado"
+        peak_state_candidate = "↗ subiendo"
+    # peak_status = candidate por defecto (primer poll o sin prev). do_poll
+    # aplica histéresis: sólo confirmar el flip cuando 2 candidates consecutivos
+    # coinciden — evita parpadeo por una lectura ruidosa.
+    peak_status = peak_state_candidate
 
     # next 6h forecast distribution
     forecast = []
@@ -1152,6 +1177,8 @@ def build_snapshot(station: Station) -> Snapshot:
         forecast_next_hours=forecast,
         prob_rising=prob_rising,
         peak_status=peak_status,
+        peak_state_candidate=peak_state_candidate,
+        peak_window_open=peak_window_open,
         dewpoint_f=current.get("dewpoint_f"),
         humidity_pct=current.get("humidity_pct"),
         heat_index_f=current.get("heat_index_f"),
@@ -1315,9 +1342,9 @@ def render(snap: Snapshot, station: Station, assertions: dict,
     cur.add_row("Temp actual", f"{snap.current_temp_f:.1f}°F  [dim]({snap.current_desc})[/]")
     cur.add_row("Última obs", f"{snap.current_obs_time.astimezone(station.tz).strftime('%H:%M')}  "
                               f"[dim]({obs_age:.0f} min atrás)[/]")
-    if "confirmado" in snap.peak_status or "probable" in snap.peak_status:
+    if "confirmado" in snap.peak_status:
         peak_style = "bold green"
-    elif "alza" in snap.peak_status:
+    elif "meseta" in snap.peak_status:
         peak_style = "yellow"
     else:
         peak_style = "cyan"

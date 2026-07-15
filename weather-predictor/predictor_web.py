@@ -1347,8 +1347,8 @@ def index():
                             "status": status, "class": cls,
                             "mv_str": mv_str, "mv_class": mv_class}
 
-    peak_class = ("peak-green" if "confirmado" in snap.peak_status or "probable" in snap.peak_status
-                  else "peak-yellow" if "alza" in snap.peak_status
+    peak_class = ("peak-green" if "confirmado" in snap.peak_status
+                  else "peak-yellow" if "meseta" in snap.peak_status
                   else "peak-cyan")
 
     pr_time = snap.station_local.astimezone(PR_TZ).strftime("%H:%M")
@@ -5411,6 +5411,14 @@ def do_poll():
         if state.last_snapshot is not None:
             prev_dist = sorted(state.last_snapshot.ensemble_daily_maxes)
             state.prev_dist_med = prev_dist[len(prev_dist) // 2]
+            # Fable #5 histéresis 2-ciclos: sólo cambiar peak_status si el nuevo
+            # candidate coincide con el del poll anterior. Evita parpadeo por
+            # una lectura ruidosa (5-min feed rounding). El candidate ya viene
+            # calculado en build_snapshot; peak_status es el confirmado.
+            prev_cand = getattr(state.last_snapshot, "peak_state_candidate", "")
+            prev_confirmed = state.last_snapshot.peak_status
+            if snap.peak_state_candidate != prev_cand and prev_confirmed:
+                snap.peak_status = prev_confirmed
         state.last_snapshot = snap
         refresh_auto(state, snap)
         for slot in (1, 2, 3):

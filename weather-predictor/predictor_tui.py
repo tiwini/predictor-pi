@@ -194,8 +194,8 @@ class WeatherApp(App):
                   f" [dim]({obs_age:.0f}m)[/]")
         t.add_row("Hoy obs",
                   f"min {snap.today_min_obs:.1f}°F / max {snap.today_max_obs:.1f}°F")
-        style = ("bold green" if "confirmado" in snap.peak_status or "probable" in snap.peak_status
-                 else "yellow" if "alza" in snap.peak_status
+        style = ("bold green" if "confirmado" in snap.peak_status
+                 else "yellow" if "meseta" in snap.peak_status
                  else "cyan")
         t.add_row("Pico",
                   Text.from_markup(f"[{style}]{snap.peak_status}[/] "
