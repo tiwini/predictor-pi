@@ -971,6 +971,12 @@ HTML = """<!doctype html>
     </div>
     {% endfor %}
     <div class="topmax-hint">Probabilidad por entero (redondeo al más cercano) sobre el ensemble actual.</div>
+    {% if dist_divergence_note %}
+    <div class="muted" style="font-size:.75em;margin-top:.4rem;color:var(--red)"
+         title="Divergencia entre la mediana del ensemble (dist_med) y el bin modal del histograma. Ambos deberían venir del mismo `dist`. Si difieren ≥3°F hay un consumidor leyendo una distribución pre/post-bias/shift diferente.">
+      {{ dist_divergence_note }}
+    </div>
+    {% endif %}
   </div>
   {% endif %}
 
@@ -1517,6 +1523,26 @@ def index():
     external = _build_external_view(station, dist_med)
     station_options = _supported_stations()
 
+    # Fable #E (2026-07-15): assert coherencia ens_med vs bins visibles.
+    # Bug KLAS 2026-06-26: card mostró ens_med=106.9°F pero la distribución
+    # de bins concentraba 83% en ≤100°F (0% en ≥103°F). Sólo puede pasar
+    # si dos consumidores leyeron distintas copias del `dist` (pre vs post
+    # bias/shift). Este check catchea el patrón: comparamos el bin modal
+    # del histograma (mismo `dist` que dist_med) vs dist_med. Divergencia
+    # ≥3°F → log + tag UI para diagnóstico.
+    dist_divergence_note = None
+    if top_max_bars:
+        modal_deg = next((b["deg"] for b in top_max_bars if b["is_modal"]), None)
+        if modal_deg is not None and abs(modal_deg - dist_med) >= 3.0:
+            _delta = modal_deg - dist_med
+            print(f"[WARN dist-divergence] station={station.id} "
+                  f"ens_med={dist_med:.2f}°F modal_deg={modal_deg}°F "
+                  f"delta={_delta:+.1f}°F p10={dist_p10:.1f} p90={dist_p90:.1f} "
+                  f"n={len(dist)}", flush=True)
+            dist_divergence_note = (
+                f"⚠ ens_med {dist_med:.1f}°F vs modal {modal_deg}°F "
+                f"({_delta:+.1f}°F) — revisar dist pre/post-shift")
+
     difficulty = None
     if _difficulty is not None:
         d = _difficulty.compute(
@@ -1608,6 +1634,7 @@ def index():
         asos_6h_display=asos_6h_display,
         settle_hint_f=settle_hint_f,
         current_over_max_note=current_over_max_note,
+        dist_divergence_note=dist_divergence_note,
         signals=signals,
         top_max_bars=top_max_bars, external=external,
         station_options=station_options,
