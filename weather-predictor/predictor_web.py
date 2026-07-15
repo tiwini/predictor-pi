@@ -981,10 +981,55 @@ HTML = """<!doctype html>
 
   <div class="card" style="margin-top:1rem">
     <h3>Refrescar</h3>
-    <form method="POST" action="/api/refresh">
-      <button type="submit" style="width:100%">Refrescar ahora</button>
+    <form method="POST" action="/api/refresh" id="refresh-form">
+      <button type="submit" style="width:100%" id="refresh-btn">Refrescar ahora</button>
     </form>
+    <div id="refresh-msg" style="font-size:.8em;color:#89b4fa;margin-top:.4rem;display:none"></div>
   </div>
+  <script>
+  (function(){
+    var form = document.getElementById('refresh-form');
+    var btn = document.getElementById('refresh-btn');
+    var msg = document.getElementById('refresh-msg');
+    if (!form) return;
+    var pollTimer = null;
+    var pollStart = 0;
+    var MAX_POLL_MS = 45000;
+    function stopPoll(){ if(pollTimer){ clearInterval(pollTimer); pollTimer=null; } }
+    function poll(){
+      fetch('/api/refresh-status', {cache: 'no-store'})
+        .then(function(r){ return r.json(); })
+        .then(function(d){
+          if (!d.busy) { stopPoll(); window.location.reload(); return; }
+          if (Date.now() - pollStart > MAX_POLL_MS) {
+            stopPoll();
+            btn.disabled = false;
+            btn.textContent = 'Refrescar ahora';
+            msg.textContent = '⚠ timeout — recarga manual';
+          }
+        })
+        .catch(function(){ /* silently retry next tick */ });
+    }
+    form.addEventListener('submit', function(ev){
+      ev.preventDefault();
+      btn.disabled = true;
+      btn.textContent = 'Refrescando…';
+      msg.style.display = 'block';
+      msg.textContent = 'Consultando NWS + rebuild snapshot (~5-30s)…';
+      pollStart = Date.now();
+      fetch('/api/refresh', {method:'POST', headers:{'X-Requested-With':'fetch'}})
+        .then(function(){
+          pollTimer = setInterval(poll, 2000);
+          setTimeout(poll, 1000);
+        })
+        .catch(function(){
+          btn.disabled = false;
+          btn.textContent = 'Refrescar ahora';
+          msg.textContent = '⚠ error de red';
+        });
+    });
+  })();
+  </script>
 
   {% if clock %}
   <div class="clock-wrap">
@@ -1660,10 +1705,36 @@ def api_station():
     return redirect("/")
 
 
+_refresh_started_ts: datetime | None = None
+_refresh_lock = threading.Lock()
+
+
 @app.route("/api/refresh", methods=["POST"])
 def api_refresh():
+    global _refresh_started_ts
+    with _refresh_lock:
+        _refresh_started_ts = datetime.now(timezone.utc)
     threading.Thread(target=do_poll, daemon=True).start()
+    if request.headers.get("X-Requested-With") == "fetch":
+        return jsonify({"started_at": _refresh_started_ts.isoformat()})
     return redirect("/")
+
+
+@app.route("/api/refresh-status")
+def api_refresh_status():
+    """Busy si un refresh fue disparado y el snapshot aún no se reconstruyó
+    después de ese ts. UI hace polling para saber cuándo recargar."""
+    global _refresh_started_ts
+    started = _refresh_started_ts
+    snap_ts = None
+    if state is not None and state.last_snapshot is not None:
+        snap_ts = state.last_snapshot.fetched_at
+    busy = bool(started and (snap_ts is None or snap_ts < started))
+    return jsonify({
+        "busy": busy,
+        "started_at": started.isoformat() if started else None,
+        "snapshot_ts": snap_ts.isoformat() if snap_ts else None,
+    })
 
 
 @app.route("/api/home-ask", methods=["POST"])
