@@ -848,8 +848,13 @@ HTML = """<!doctype html>
             · {{ max_obs_ts_local }}</span>
           {% endif %}
           <span class="muted" style="font-size:.8em;margin-left:.4rem"
-                title="Kalshi liquida contra CLI redondeado al entero (half-up)">
-            CLI: {{ ((snap.today_max_obs + 0.5)|round(0, 'floor'))|int }}°F</span>
+                title="Kalshi liquida contra CLI redondeado al entero (half-up); usa el max del feed 5-min o del grupo ASOS 6h si supera al feed">
+            CLI: {{ ((settle_hint_f + 0.5)|round(0, 'floor'))|int }}°F</span>
+          {% if asos_6h_display %}
+          <div class="muted" style="font-size:.8em;margin-top:.2rem"
+                title="Grupo `1sTTT` del METAR remarks — max 6h computado por ASOS a partir del feed 1-minute (misma fuente que NWS CLI settle). Supera nuestro max del feed 5-min: captura un spike <5min.">
+            · ASOS 1-min: {{ asos_6h_display }}</div>
+          {% endif %}
         </span></div>
       <div class="kv"><span class="kv-k">Min obs</span><span>{{ '%.1f' % snap.today_min_obs }}°F</span></div>
       <div class="kv"><span class="kv-k">Pico</span>
@@ -1505,9 +1510,26 @@ def index():
     if snap.today_max_obs_ts is not None:
         max_obs_ts_local = snap.today_max_obs_ts.astimezone(PR_TZ).strftime("%H:%M AST")
 
+    # ASOS 6h-max override: cuando el grupo `1sTTT` del METAR excede el max_obs
+    # del feed 5-min por >0.5°F, exponemos ese valor + timestamp para que el
+    # usuario vea el gap (Kalshi settle contra CLI usa la misma fuente).
+    asos_6h_display = None
+    settle_hint_f = snap.today_max_obs
+    if (snap.today_max_asos_6h is not None
+            and snap.today_max_obs is not None
+            and snap.today_max_asos_6h > snap.today_max_obs + 0.5):
+        settle_hint_f = snap.today_max_asos_6h
+        asos_ts = ""
+        if snap.today_max_asos_6h_ts is not None:
+            asos_ts = " · " + snap.today_max_asos_6h_ts.astimezone(
+                PR_TZ).strftime("%H:%M AST")
+        asos_6h_display = f"{snap.today_max_asos_6h:.1f}°F{asos_ts}"
+
     return render_template_string(
         HTML, station=station, snap=snap, dash=dash, hero=hero,
         max_obs_ts_local=max_obs_ts_local,
+        asos_6h_display=asos_6h_display,
+        settle_hint_f=settle_hint_f,
         signals=signals,
         top_max_bars=top_max_bars, external=external,
         station_options=station_options,

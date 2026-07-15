@@ -153,6 +153,12 @@ class Snapshot:
     # (serie = obs aceptadas, no fetch_current). None si <2 obs o sin cambio.
     current_temp_stable_min: int | None = None
     current_temp_last_direction: str | None = None   # 'up' | 'down'
+    # Fix 2026-07-15 (Kalshi KPHX 106 vs CLI 107 gap): max derivado del grupo
+    # remarks `1sTTT` del METAR (6h max ASOS 1-min upstream) intersectando la
+    # jornada local. Misma fuente que NWS CLI settle. None si aún no hay ningún
+    # METAR :51Z de hoy con el grupo, o si es < today_max_obs (no aporta).
+    today_max_asos_6h: float | None = None
+    today_max_asos_6h_ts: datetime | None = None
 
 
 # ───────────────────── fetchers ─────────────────────
@@ -171,6 +177,31 @@ def pa_to_inhg(pa):
 
 def m_to_mi(m):
     return None if m is None else m * 0.000621371
+
+
+_METAR_6H_MAX_RE = re.compile(r'\b1([01])(\d{3})\b')
+
+
+def parse_metar_6h_max_c(raw: str) -> float | None:
+    """Extract 6-hour max temperature (°C) from METAR remarks group `1sTTT`.
+
+    ASOS stations emit this group at :51Z of 05/11/17/23 UTC (the "synoptic"
+    METARs). Format: 5 chars = `1` + sign_bit (0=+, 1=-) + tenths of °C (3 digits).
+    Ejemplo: `10417` → +41.7°C. Es computado a partir del feed 1-minute — la
+    misma fuente que alimenta el NWS Climatological Report (CLI) que usa
+    Kalshi para settle. Nuestro feed `/observations` sólo da 5-min, y perdimos
+    picos <5min en KPHX 2026-07-14 (obs=106.0°F pero CLI=107.0°F).
+
+    Returns °C float or None si el raw no contiene el grupo.
+    """
+    if not raw:
+        return None
+    m = _METAR_6H_MAX_RE.search(raw)
+    if not m:
+        return None
+    sign = -1 if m.group(1) == "1" else 1
+    tenths = int(m.group(2))
+    return sign * tenths / 10.0
 
 
 CARDINALS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
@@ -315,6 +346,7 @@ def fetch_today_obs(station: Station) -> list:
             "time": ts,
             "temp_f": c_to_f(tv) if tv is not None else None,
             "pressure_inhg": pa_to_inhg(pv) if pv is not None else None,
+            "raw": p.get("rawMessage") or "",
         })
     try:
         _log_obs_rejects(station.id, out, rejected)
@@ -769,6 +801,31 @@ def build_snapshot(station: Station) -> Snapshot:
                 max_obs_ts = o["time"]
                 break
 
+    # Fix 2026-07-15: ASOS 6h-max group del METAR remarks. Iteramos todos los
+    # obs cuyo raw traiga el grupo `1sTTT` (típicamente :51Z de 05/11/17/23 UTC)
+    # y cuya *ventana 6h* intersecte hoy en station.tz. Ventana = (ts_metar-6h,
+    # ts_metar]. Nos quedamos con el max °F.
+    today_start_utc = datetime.combine(today, datetime.min.time(),
+                                       station.tz).astimezone(timezone.utc)
+    today_end_utc = datetime.combine(today, datetime.max.time(),
+                                     station.tz).astimezone(timezone.utc)
+    asos_6h_f: float | None = None
+    asos_6h_ts: datetime | None = None
+    for o in obs_full:
+        raw = o.get("raw") or ""
+        max_c = parse_metar_6h_max_c(raw)
+        if max_c is None:
+            continue
+        ts_metar = o["time"]
+        window_start = ts_metar - timedelta(hours=6)
+        # ventana intersecta hoy si ts_metar > today_start y window_start < today_end
+        if ts_metar <= today_start_utc or window_start >= today_end_utc:
+            continue
+        temp_f = c_to_f(max_c)
+        if asos_6h_f is None or temp_f > asos_6h_f:
+            asos_6h_f = temp_f
+            asos_6h_ts = ts_metar
+
     # N7 Fable veredicto R4: duración sin cambio + dirección último cambio.
     # Serie = obs aceptadas (filtro :53/:54); no fetch_current. Referencia =
     # último obs aceptado (puede diferir de current_temp_f por segs-mins pero
@@ -1119,6 +1176,8 @@ def build_snapshot(station: Station) -> Snapshot:
         ext_shift_info=ext_shift_info,
         current_temp_stable_min=stable_min,
         current_temp_last_direction=last_dir,
+        today_max_asos_6h=asos_6h_f,
+        today_max_asos_6h_ts=asos_6h_ts,
     )
     # climatology: compare expected max vs historical same-date-of-year
     if _climate_percentile is not None:
