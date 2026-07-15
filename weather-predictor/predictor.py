@@ -206,7 +206,13 @@ def parse_metar_6h_max_c(raw: str) -> float | None:
         return None
     sign = -1 if m.group(1) == "1" else 1
     tenths = int(m.group(2))
-    return sign * tenths / 10.0
+    val = sign * tenths / 10.0
+    # Guard rango físico (Fable #2 2026-07-15): -40°C a +55°C cubre el peor
+    # extremo terrestre observado con margen. Fuera de esto es sensor bug o
+    # mis-parse (grupo 1xxxx que coincide con otro remark). Descartar.
+    if val < -40.0 or val > 55.0:
+        return None
+    return val
 
 
 CARDINALS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
@@ -827,6 +833,20 @@ def build_snapshot(station: Station) -> Snapshot:
         if ts_metar <= today_start_utc or window_start >= today_end_utc:
             continue
         temp_f = c_to_f(max_c)
+        # Guard consistencia (Fable #2 2026-07-15): el 6h ASOS max debe ser ≥
+        # al max del feed 5-min en esa misma ventana (por definición, ambos
+        # miden el mismo período — el 6h agrega con más resolución). Si el
+        # 6h reporta menos, algo está roto (mis-parse, sensor swap, o el
+        # remark refleja otra ventana). Descartar la lectura sospechosa con
+        # tolerancia de 0.2°F para redondeo tenths °C ↔ °F.
+        feed_max_in_window = max(
+            (fo["temp_f"] for fo in obs_full
+             if fo["temp_f"] is not None
+             and window_start < fo["time"] <= ts_metar),
+            default=None)
+        if (feed_max_in_window is not None
+                and temp_f < feed_max_in_window - 0.2):
+            continue
         if asos_6h_f is None or temp_f > asos_6h_f:
             asos_6h_f = temp_f
             asos_6h_ts = ts_metar

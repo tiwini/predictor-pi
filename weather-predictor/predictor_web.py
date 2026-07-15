@@ -1590,11 +1590,17 @@ def index():
             and snap.today_max_obs is not None
             and snap.today_max_asos_6h > snap.today_max_obs + 0.5):
         settle_hint_f = snap.today_max_asos_6h
-        asos_ts = ""
+        # Fable #2 2026-07-15: declarar ventana 6h explícita en display.
+        # El grupo mide max en [ts-6h, ts]; sin el rango, "12:51 AST" se
+        # confunde con "peak fue a las 12:51" cuando es realmente el cierre
+        # del bucket.
+        window_str = ""
         if snap.today_max_asos_6h_ts is not None:
-            asos_ts = " · " + snap.today_max_asos_6h_ts.astimezone(
-                PR_TZ).strftime("%H:%M AST")
-        asos_6h_display = f"{snap.today_max_asos_6h:.1f}°F{asos_ts}"
+            win_end = snap.today_max_asos_6h_ts.astimezone(PR_TZ)
+            win_start = win_end - timedelta(hours=6)
+            window_str = (f" · ventana {win_start.strftime('%H:%M')}"
+                          f"–{win_end.strftime('%H:%M AST')}")
+        asos_6h_display = f"{snap.today_max_asos_6h:.1f}°F{window_str}"
 
     return render_template_string(
         HTML, station=station, snap=snap, dash=dash, hero=hero,
