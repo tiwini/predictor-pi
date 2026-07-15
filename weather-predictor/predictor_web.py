@@ -778,6 +778,12 @@ HTML = """<!doctype html>
         {% endif %}
         {% if feels_line %}<span class="feels">{{ feels_line }}</span>{% endif %}
       </div>
+      {% if current_over_max_note %}
+      <div class="muted" style="font-size:.75em;margin-top:.15rem"
+           title="El feed 5-min de NWS reporta la lectura instantánea con redondeo a °C entero (~±0.5°F). Kalshi settle usa NWS CLI que se computa del feed 1-min (ASOS), no el 5-min. Ver max obs / ASOS 1-min / CLI proyectado en la card Hoy.">
+        {{ current_over_max_note }}
+      </div>
+      {% endif %}
       <div class="desc">{{ snap.current_desc }}</div>
       {% if snap.humidity_pct is not none %}
       <div class="kv"><span class="kv-k">Humedad</span>
@@ -1555,6 +1561,26 @@ def index():
     if snap.today_max_obs_ts is not None:
         max_obs_ts_local = snap.today_max_obs_ts.astimezone(PR_TZ).strftime("%H:%M AST")
 
+    # Fable #4 (2026-07-15): context-clamp — cuando current > max_obs, el gap
+    # suele ser ruido de redondeo del feed 5-min (34°C rounded = 93.2°F vs
+    # METAR real 33.9°C = 93.0°F). NO tocamos fetch_current (gated a 07-24);
+    # solo anotamos el contexto para que el usuario no lea "actual > max obs"
+    # como un nuevo peak. Delta >1°F sugiere un METAR :51 pendiente (gap
+    # legítimo, no redondeo).
+    current_over_max_note = None
+    if (snap.current_temp_f is not None
+            and snap.today_max_obs is not None
+            and snap.today_max_obs > -900):
+        _delta = snap.current_temp_f - snap.today_max_obs
+        if 0.05 < _delta <= 1.0:
+            current_over_max_note = (
+                f"vs max obs {snap.today_max_obs:.1f}°F · "
+                f"+{_delta:.1f}°F (redondeo feed 5-min)")
+        elif _delta > 1.0:
+            current_over_max_note = (
+                f"⚠ vs max obs {snap.today_max_obs:.1f}°F · "
+                f"+{_delta:.1f}°F (METAR :51 pendiente?)")
+
     # ASOS 6h-max override: cuando el grupo `1sTTT` del METAR excede el max_obs
     # del feed 5-min por >0.5°F, exponemos ese valor + timestamp para que el
     # usuario vea el gap (Kalshi settle contra CLI usa la misma fuente).
@@ -1575,6 +1601,7 @@ def index():
         max_obs_ts_local=max_obs_ts_local,
         asos_6h_display=asos_6h_display,
         settle_hint_f=settle_hint_f,
+        current_over_max_note=current_over_max_note,
         signals=signals,
         top_max_bars=top_max_bars, external=external,
         station_options=station_options,
