@@ -730,7 +730,8 @@ CONTEXTO QUE RECIBES:
 REGLAS:
 - Spread p90-p10 >5°F = modelo incierto, sé prudente
 - today_max_obs ≈ ens_med con spread=0 → día settled, no recomendar
-- KLGA settle es Central Park (KNYC) — LGA suele ser 1-3°F más caliente
+- KLGA es alias interno: obs y forecast ya son Central Park (KNYC). NO restar
+  ni sumar diferencias vs LGA airport — el snapshot completo es Central Park
 - Si el brief menciona patrón (capa marina, lake breeze, monsoon) y aplica al
   día actual (mes, viento implícito por spread), inclúyelo en la razón.
 """
@@ -748,7 +749,19 @@ def _gather_station_ctx(station_id: str) -> dict:
 
 def _build_station_prompt(ctx: dict, station_id: str, question: str,
                           brief: tuple[str, str] | None) -> str:
-    lines = [f"ESTACIÓN: {station_id}",
+    # KLGA es un alias interno: todas nuestras obs vienen de KNYC (Central Park)
+    # y el forecast lat/lon apunta también a Central Park (STATION_OVERRIDES).
+    # El AI NO debe tratar KLGA (LaGuardia airport) y Central Park como lugares
+    # distintos — todos los números que ve YA son Central Park.
+    if station_id == "KLGA":
+        station_header = ("KLGA (alias interno) → Central Park / NYC (KNYC). "
+                          "TODOS los números abajo (obs + ensemble) son ya "
+                          "Central Park. NO comparar contra LGA airport ni "
+                          "sumar/restar diferencias — es el mismo lugar para "
+                          "efectos de pronóstico y settle Kalshi.")
+    else:
+        station_header = station_id
+    lines = [f"ESTACIÓN: {station_header}",
              f"TIMESTAMP UTC: {ctx['timestamp_utc']}", ""]
     if brief:
         lines.append(f"=== CONTEXTO LOCAL FIJO ===")
