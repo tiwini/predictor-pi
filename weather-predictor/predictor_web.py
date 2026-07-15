@@ -851,9 +851,9 @@ HTML = """<!doctype html>
                 title="Kalshi liquida contra CLI redondeado al entero (half-up); usa el max del feed 5-min o del grupo ASOS 6h si supera al feed">
             CLI: {{ ((settle_hint_f + 0.5)|round(0, 'floor'))|int }}°F</span>
           {% if asos_6h_display %}
-          <div class="muted" style="font-size:.8em;margin-top:.2rem"
+          <span class="muted" style="font-size:.8em;margin-top:.2rem;display:block"
                 title="Grupo `1sTTT` del METAR remarks — max 6h computado por ASOS a partir del feed 1-minute (misma fuente que NWS CLI settle). Supera nuestro max del feed 5-min: captura un spike <5min.">
-            · ASOS 1-min: {{ asos_6h_display }}</div>
+            · ASOS 1-min: {{ asos_6h_display }}</span>
           {% endif %}
         </span></div>
       <div class="kv"><span class="kv-k">Min obs</span><span>{{ '%.1f' % snap.today_min_obs }}°F</span></div>
