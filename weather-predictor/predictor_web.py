@@ -3772,6 +3772,9 @@ STATIONS_TABLE_TMPL = """<!doctype html>
   </table>
 
   <div class="footnote">
+    <b>Max</b>: efectiva = max(max_obs QC, current, ASOS 6h). Marcador
+    <span class="muted">*</span> = fuente current (feed 5-min sin filtro rawMessage),
+    <span class="muted">†</span> = ASOS 6h remarks group (feed 1-min, misma fuente que NWS CLI settle Kalshi).
     <b>Peak</b>: 🔒 confirmado / ▬ meseta / ↗ subiendo (histéresis 2 ciclos).
     <b>Dir</b>: dirección del último cambio detectado en la serie de METAR aceptados.
     <b>Nuestra max</b>: mediana del ensemble GFS post-bayes/bias/isotónica; se re-computa cada poll.
@@ -3850,12 +3853,30 @@ function render() {
     const rainPct = rain !== null ? `${Math.round(rain)}%` : '—';
     const nextIn = r.precip_next_12h_in;
     const rainAmt = nextIn !== null && nextIn > 0.001 ? ` <span class="muted">·${nextIn.toFixed(2)}"</span>` : '';
+    // Max efectiva = max(today_max_obs, current_temp_f, today_max_asos_6h).
+    // Marcador indica fuente cuando NO viene del max_obs QC'd:
+    //   * = current del feed 5-min (sin QC, gated 07-24)
+    //   † = ASOS 6h group (feed 1-min, misma fuente que NWS CLI settle)
+    let maxEff = r.today_max_obs;
+    let maxSrc = 'obs';
+    let maxTs = r.today_max_obs_ts;
+    if (r.current_temp_f !== null && (maxEff === null || r.current_temp_f > maxEff)) {
+      maxEff = r.current_temp_f; maxSrc = 'cur'; maxTs = r.current_obs_time;
+    }
+    if (r.today_max_asos_6h !== null && (maxEff === null || r.today_max_asos_6h > maxEff)) {
+      maxEff = r.today_max_asos_6h; maxSrc = 'asos'; maxTs = r.today_max_asos_6h_ts;
+    }
+    const srcMark = maxSrc === 'cur'
+      ? ' <span class="muted" title="Max efectiva viene del feed 5-min (current > max obs QC). fetch_current no aplica el filtro rawMessage/minuto; gated a 07-24.">*</span>'
+      : maxSrc === 'asos'
+        ? ' <span class="muted" title="Max efectiva viene del grupo 1sTTT del METAR remarks (feed 1-min, misma fuente que NWS CLI settle Kalshi).">†</span>'
+        : '';
     tr.innerHTML = `
       <td class="sid">${r.station}</td>
       <td class="num">${fmt(r.current_temp_f)}°F</td>
       <td class="time">${fmtTime(r.current_obs_time)}</td>
-      <td class="num">${fmt(r.today_max_obs)}°F</td>
-      <td class="time">${fmtTime(r.today_max_obs_ts)}</td>
+      <td class="num">${fmt(maxEff)}°F${srcMark}</td>
+      <td class="time">${fmtTime(maxTs)}</td>
       <td class="${peakClass(r.peak_status)}">${r.peak_status || '—'}</td>
       <td class="num">${probRise}</td>
       <td class="${dirCls}">${dirSym}${stable}</td>
