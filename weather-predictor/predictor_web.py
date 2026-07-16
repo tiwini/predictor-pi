@@ -18,7 +18,7 @@ from predictor import (
     Assertion, State,
     fetch_station, build_snapshot, refresh_auto, eval_assertion,
     find_informative_bin, most_likely_max, movement_cents, parse_expr, log_snapshot,
-    record_kalshi, invalidate_obs_cache,
+    record_kalshi, invalidate_obs_cache, fetch_precip_context_12h,
 )
 try:
     import calibration as _calibration
@@ -1076,6 +1076,7 @@ HTML = """<!doctype html>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
                 gap:.35rem;font-size:13px;margin-top:.3rem">
       <a href="/comparison" style="color:#f5c2e7">{{market_name}} vs nuestro modelo →</a>
+      <a href="/table" style="color:#89dceb">Tabla curadas (live) →</a>
       <a href="/ladder" style="color:#a6e3a1">Threshold ladder →</a>
       <a href="/calibration" style="color:#89b4fa">Reliability diagram →</a>
       <a href="/intraday" style="color:#fab387">Intraday (peak timing + movement) →</a>
@@ -3610,6 +3611,307 @@ def _refresh_peak_status_cache() -> dict:
     _peak_status_cache["computed_at"] = datetime.now(timezone.utc)
     _peak_status_cache["data"] = data
     return data
+
+
+# ─── Tabla filtrable 5 estaciones (2026-07-16) ───
+_STATIONS_TABLE_TTL_SEC = 300
+_stations_table_cache: dict = {"computed_at": None, "rows": None}
+
+
+def _compute_stations_table_row(sid: str) -> dict:
+    """Snapshot fresco + precip 12h context para una estación curada.
+    Retorna dict con todos los campos que la tabla /table necesita."""
+    try:
+        station = fetch_station(sid)
+        snap = build_snapshot(station)
+    except Exception as e:
+        return {"station": sid, "error": f"snapshot: {e}"[:120]}
+
+    try:
+        precip = fetch_precip_context_12h(station)
+    except Exception:
+        precip = {"past_12h_in": None, "next_12h_in": None,
+                  "prob_next_12h": None}
+
+    dist = sorted(snap.ensemble_daily_maxes) if snap.ensemble_daily_maxes else []
+    dist_med = dist[len(dist) // 2] if dist else None
+
+    def _iso(ts):
+        return ts.isoformat() if ts is not None else None
+
+    return {
+        "station": sid,
+        "name": station.name,
+        "current_temp_f": snap.current_temp_f,
+        "current_obs_time": _iso(snap.current_obs_time),
+        "today_max_obs": snap.today_max_obs if snap.today_max_obs > -900 else None,
+        "today_max_obs_ts": _iso(snap.today_max_obs_ts),
+        "today_max_asos_6h": snap.today_max_asos_6h,
+        "today_max_asos_6h_ts": _iso(snap.today_max_asos_6h_ts),
+        "peak_status": snap.peak_status,
+        "peak_window_open": snap.peak_window_open,
+        "prob_rising": snap.prob_rising,
+        "last_direction": snap.current_temp_last_direction,
+        "stable_min": snap.current_temp_stable_min,
+        "our_max_pred": dist_med,
+        "snapshot_ts": _iso(snap.fetched_at),
+        "precip_past_12h_in": precip.get("past_12h_in"),
+        "precip_next_12h_in": precip.get("next_12h_in"),
+        "precip_prob_next_12h": precip.get("prob_next_12h"),
+    }
+
+
+def _refresh_stations_table_cache() -> list:
+    stations = list(DEFAULT_CROSS)
+    with ThreadPoolExecutor(max_workers=len(stations)) as ex:
+        rows = list(ex.map(_compute_stations_table_row, stations))
+    _stations_table_cache["computed_at"] = datetime.now(timezone.utc)
+    _stations_table_cache["rows"] = rows
+    return rows
+
+
+@app.route("/api/stations-table")
+def api_stations_table():
+    force = request.args.get("force") == "1"
+    cached_at = _stations_table_cache.get("computed_at")
+    if (force or cached_at is None
+            or (datetime.now(timezone.utc) - cached_at).total_seconds()
+                >= _STATIONS_TABLE_TTL_SEC):
+        _refresh_stations_table_cache()
+        cached_at = _stations_table_cache["computed_at"]
+    return jsonify({
+        "computed_at": cached_at.isoformat(),
+        "rows": _stations_table_cache.get("rows") or [],
+        "ttl_sec": _STATIONS_TABLE_TTL_SEC,
+    })
+
+
+STATIONS_TABLE_TMPL = """<!doctype html>
+<html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tabla estaciones curadas</title>
+<style>
+  :root{--bg:#0a0e14;--surface:#1e2030;--surface2:#2a2e42;
+        --text:#cdd6f4;--muted:#a6adc8;--accent:#89b4fa;
+        --yellow:#f9e2af;--green:#a6e3a1;--red:#f38ba8;--cyan:#89dceb;}
+  body{background:var(--bg);color:var(--text);
+       font-family:-apple-system,system-ui,sans-serif;margin:0;padding:1rem;}
+  .container{max-width:1200px;margin:0 auto;}
+  h1{color:var(--cyan);margin:0 0 .5rem;font-size:1.3rem;}
+  .sub{color:var(--muted);font-size:.85rem;margin-bottom:1rem;}
+  a{color:var(--accent);text-decoration:none;}
+  .toolbar{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;
+           margin-bottom:.8rem;}
+  input[type=text]{background:var(--surface);color:var(--text);
+                   border:1px solid var(--surface2);padding:.4rem .6rem;
+                   border-radius:6px;font-size:.9rem;min-width:180px;}
+  button{background:var(--surface);color:var(--text);border:1px solid var(--surface2);
+         padding:.4rem .8rem;border-radius:6px;cursor:pointer;font-size:.85rem;}
+  button:hover{background:var(--surface2);}
+  button.primary{background:var(--accent);color:var(--bg);border-color:var(--accent);
+                 font-weight:600;}
+  table{width:100%;border-collapse:collapse;font-size:.85rem;
+        font-family:'SF Mono',Menlo,monospace;background:var(--surface);
+        border-radius:8px;overflow:hidden;}
+  th{background:var(--surface2);color:var(--muted);padding:.6rem .5rem;
+     text-align:left;font-weight:600;font-size:.75rem;
+     text-transform:uppercase;letter-spacing:.05em;cursor:pointer;
+     user-select:none;white-space:nowrap;}
+  th:hover{background:#353853;}
+  th .arrow{opacity:.4;margin-left:.2rem;}
+  th.sorted .arrow{opacity:1;color:var(--accent);}
+  td{padding:.55rem .5rem;border-top:1px solid var(--surface2);
+     white-space:nowrap;}
+  td.num{text-align:right;}
+  td.sid{color:var(--cyan);font-weight:600;}
+  td.time{color:var(--muted);font-size:.78rem;}
+  .peak-confirmado{color:var(--green);}
+  .peak-meseta{color:var(--yellow);}
+  .peak-subiendo{color:var(--cyan);}
+  .dir-up{color:var(--green);}
+  .dir-down{color:var(--red);}
+  .rain-hi{color:var(--accent);font-weight:600;}
+  .rain-mid{color:var(--yellow);}
+  .rain-lo{color:var(--muted);}
+  .muted{color:var(--muted);}
+  .err{color:var(--red);font-style:italic;}
+  .cache-info{color:var(--muted);font-size:.75rem;margin-left:auto;}
+  .hidden{display:none;}
+  .footnote{color:var(--muted);font-size:.75rem;margin-top:.8rem;
+            line-height:1.5;}
+</style></head><body>
+<div class="container">
+  <p><a href="/">← volver</a></p>
+  <h1>Tabla estaciones curadas</h1>
+  <div class="sub">5 estaciones (KPHX/KLAX/KLAS/KLGA/KBOS). Snapshot fresco cached {{ ttl_sec }}s. Click en cabecera para ordenar; usa el filtro para acotar por texto.</div>
+
+  <div class="toolbar">
+    <input type="text" id="filter" placeholder="Filtrar (KPHX, meseta, up...)" autofocus>
+    <button id="refresh-btn">↻ Refresh</button>
+    <span class="cache-info" id="cache-info">…</span>
+  </div>
+
+  <table id="tbl">
+    <thead>
+      <tr>
+        <th data-key="station">Est <span class="arrow">↕</span></th>
+        <th data-key="current_temp_f" class="num">Ahora <span class="arrow">↕</span></th>
+        <th data-key="current_obs_time">Hora obs <span class="arrow">↕</span></th>
+        <th data-key="today_max_obs" class="num">Max <span class="arrow">↕</span></th>
+        <th data-key="today_max_obs_ts">Hora max <span class="arrow">↕</span></th>
+        <th data-key="peak_status">Peak <span class="arrow">↕</span></th>
+        <th data-key="prob_rising" class="num">P(sube) <span class="arrow">↕</span></th>
+        <th data-key="last_direction">Dir <span class="arrow">↕</span></th>
+        <th data-key="our_max_pred" class="num">Nuestra max <span class="arrow">↕</span></th>
+        <th data-key="snapshot_ts">Actualizada <span class="arrow">↕</span></th>
+        <th data-key="precip_prob_next_12h" class="num">P(lluv 12h) <span class="arrow">↕</span></th>
+        <th data-key="precip_past_12h_in" class="num">Lluv pasadas 12h <span class="arrow">↕</span></th>
+      </tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+
+  <div class="footnote">
+    <b>Peak</b>: 🔒 confirmado / ▬ meseta / ↗ subiendo (histéresis 2 ciclos).
+    <b>Dir</b>: dirección del último cambio detectado en la serie de METAR aceptados.
+    <b>Nuestra max</b>: mediana del ensemble GFS post-bayes/bias/isotónica; se re-computa cada poll.
+    <b>P(lluv 12h)</b>: max prob horaria próximas 12h (Open-Meteo forecast).
+    <b>Lluv pasadas 12h</b>: acumulado observado inches (Open-Meteo hourly).
+  </div>
+</div>
+
+<script>
+let allRows = [];
+let sortKey = null;
+let sortDir = 1;
+
+function fmt(v, dec=1) {
+  if (v === null || v === undefined) return '—';
+  return Number(v).toFixed(dec);
+}
+function fmtTime(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  const hh = String(d.getHours()).padStart(2,'0');
+  const mm = String(d.getMinutes()).padStart(2,'0');
+  return `${hh}:${mm}`;
+}
+function fmtAge(iso) {
+  if (!iso) return '—';
+  const t = new Date(iso).getTime();
+  const secs = Math.max(0, Math.round((Date.now() - t) / 1000));
+  if (secs < 60) return `${secs}s`;
+  if (secs < 3600) return `${Math.floor(secs/60)}m`;
+  return `${Math.floor(secs/3600)}h${Math.floor((secs%3600)/60)}m`;
+}
+function peakClass(s) {
+  if (!s) return '';
+  if (s.includes('confirmado')) return 'peak-confirmado';
+  if (s.includes('meseta')) return 'peak-meseta';
+  if (s.includes('subiendo')) return 'peak-subiendo';
+  return '';
+}
+function rainCls(pct) {
+  if (pct === null || pct === undefined) return 'rain-lo';
+  if (pct >= 60) return 'rain-hi';
+  if (pct >= 30) return 'rain-mid';
+  return 'rain-lo';
+}
+function render() {
+  const q = document.getElementById('filter').value.toLowerCase();
+  let rows = allRows.filter(r => {
+    const blob = JSON.stringify(r).toLowerCase();
+    return !q || blob.includes(q);
+  });
+  if (sortKey) {
+    rows.sort((a,b) => {
+      let x = a[sortKey], y = b[sortKey];
+      if (x === null || x === undefined) x = sortDir === 1 ? Infinity : -Infinity;
+      if (y === null || y === undefined) y = sortDir === 1 ? Infinity : -Infinity;
+      if (typeof x === 'string') return sortDir * x.localeCompare(y);
+      return sortDir * (x - y);
+    });
+  }
+  const tbody = document.getElementById('tbody');
+  tbody.innerHTML = '';
+  for (const r of rows) {
+    const tr = document.createElement('tr');
+    if (r.error) {
+      tr.innerHTML = `<td class="sid">${r.station}</td><td colspan="11" class="err">${r.error}</td>`;
+      tbody.appendChild(tr);
+      continue;
+    }
+    const dir = r.last_direction || '—';
+    const dirCls = dir === 'up' ? 'dir-up' : dir === 'down' ? 'dir-down' : 'muted';
+    const dirSym = dir === 'up' ? '↑' : dir === 'down' ? '↓' : '—';
+    const stable = r.stable_min ? ` <span class="muted">(${r.stable_min}m)</span>` : '';
+    const probRise = r.prob_rising !== null ? `${Math.round(r.prob_rising*100)}%` : '—';
+    const rain = r.precip_prob_next_12h;
+    const rainPct = rain !== null ? `${Math.round(rain)}%` : '—';
+    const nextIn = r.precip_next_12h_in;
+    const rainAmt = nextIn !== null && nextIn > 0.001 ? ` <span class="muted">·${nextIn.toFixed(2)}"</span>` : '';
+    tr.innerHTML = `
+      <td class="sid">${r.station}</td>
+      <td class="num">${fmt(r.current_temp_f)}°F</td>
+      <td class="time">${fmtTime(r.current_obs_time)}</td>
+      <td class="num">${fmt(r.today_max_obs)}°F</td>
+      <td class="time">${fmtTime(r.today_max_obs_ts)}</td>
+      <td class="${peakClass(r.peak_status)}">${r.peak_status || '—'}</td>
+      <td class="num">${probRise}</td>
+      <td class="${dirCls}">${dirSym}${stable}</td>
+      <td class="num">${fmt(r.our_max_pred)}°F</td>
+      <td class="time">${fmtAge(r.snapshot_ts)} ago</td>
+      <td class="num ${rainCls(rain)}">${rainPct}${rainAmt}</td>
+      <td class="num">${fmt(r.precip_past_12h_in, 2)}"</td>
+    `;
+    tbody.appendChild(tr);
+  }
+}
+function updateSortIndicators() {
+  document.querySelectorAll('#tbl th').forEach(th => {
+    th.classList.remove('sorted');
+    const arrow = th.querySelector('.arrow');
+    if (arrow) arrow.textContent = '↕';
+  });
+  if (sortKey) {
+    const th = document.querySelector(`#tbl th[data-key="${sortKey}"]`);
+    if (th) {
+      th.classList.add('sorted');
+      th.querySelector('.arrow').textContent = sortDir === 1 ? '↑' : '↓';
+    }
+  }
+}
+async function load(force=false) {
+  const info = document.getElementById('cache-info');
+  info.textContent = 'cargando…';
+  const url = force ? '/api/stations-table?force=1' : '/api/stations-table';
+  const r = await fetch(url);
+  const data = await r.json();
+  allRows = data.rows || [];
+  const age = fmtAge(data.computed_at);
+  info.textContent = `cache ${age} · TTL ${data.ttl_sec}s`;
+  render();
+}
+document.querySelectorAll('#tbl th').forEach(th => {
+  th.addEventListener('click', () => {
+    const key = th.dataset.key;
+    if (sortKey === key) sortDir = -sortDir;
+    else { sortKey = key; sortDir = 1; }
+    updateSortIndicators();
+    render();
+  });
+});
+document.getElementById('filter').addEventListener('input', render);
+document.getElementById('refresh-btn').addEventListener('click', () => load(true));
+load();
+</script>
+</body></html>"""
+
+
+@app.route("/table")
+def stations_table_view():
+    return render_template_string(STATIONS_TABLE_TMPL,
+                                  ttl_sec=_STATIONS_TABLE_TTL_SEC)
 
 
 _MIN_SNAPSHOT_INTERVAL_SEC = 1200  # 20 min por estación

@@ -628,6 +628,55 @@ def fetch_past_precip(station: Station, hours: int = 8) -> list:
     return out
 
 
+def fetch_precip_context_12h(station: Station) -> dict:
+    """One-shot Open-Meteo call para precip past-12h + next-12h.
+
+    Devuelve dict con:
+      - `past_12h_in`: inches acumulados en las últimas 12h (observado/near-real)
+      - `prob_next_12h`: max hourly precip_probability próximas 12h (0-100)
+      - `next_12h_in`: inches acumulados esperados próximas 12h (deterministic)
+    None fields si el endpoint no responde el campo.
+    """
+    r = requests.get("https://api.open-meteo.com/v1/forecast",
+                     params={"latitude": station.lat,
+                             "longitude": station.lon,
+                             "hourly": "precipitation,precipitation_probability",
+                             "past_hours": 12,
+                             "forecast_hours": 12,
+                             "timezone": station.tz.key,
+                             "precipitation_unit": "inch"},
+                     timeout=20)
+    try:
+        import om_quota
+        om_quota.count_call("precip_ctx_12h")
+    except Exception:
+        pass
+    r.raise_for_status()
+    h = r.json().get("hourly") or {}
+    times = h.get("time") or []
+    precip = h.get("precipitation") or []
+    prob = h.get("precipitation_probability") or []
+    now_local = datetime.now(station.tz)
+    past_sum = 0.0
+    next_sum = 0.0
+    max_prob_next = None
+    for i, ts_str in enumerate(times):
+        ts = datetime.fromisoformat(ts_str).replace(tzinfo=station.tz)
+        v = precip[i] if i < len(precip) else None
+        p = prob[i] if i < len(prob) else None
+        v = float(v) if v is not None else 0.0
+        if ts < now_local:
+            past_sum += v
+        else:
+            next_sum += v
+            if p is not None:
+                if max_prob_next is None or p > max_prob_next:
+                    max_prob_next = float(p)
+    return {"past_12h_in": round(past_sum, 3),
+            "next_12h_in": round(next_sum, 3),
+            "prob_next_12h": max_prob_next}
+
+
 def precip_windows_from_past(past: list, now_local: datetime) -> dict:
     """Sum inches over the last 1/2/4/8h ending at now_local.
     `past` is list of (datetime_local, inches) as returned by fetch_past_precip."""
