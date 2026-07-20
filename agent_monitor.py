@@ -198,6 +198,12 @@ def _gather_context() -> dict:
     base_cols = ("s.station, s.ts, s.current_f, s.today_max_obs, "
                  "s.ens_med, s.ens_p10, s.ens_p90, s.peak_status, "
                  "s.regime_tag, s.regime_reason")
+    has_conv = "convective_ambient" in ss_cols
+    if has_conv:
+        base_cols += ", s.convective_ambient"
+    has_narrative = "narrative_line" in ss_cols
+    if has_narrative:
+        base_cols += ", s.narrative_line"
     has_dir_roi = "roi_cold_pct" in ss_cols
     dir_roi_cols = (", s.roi_cold_pct, s.trades_cold, "
                     "s.roi_hot_pct, s.trades_hot, "
@@ -248,6 +254,12 @@ def _gather_context() -> dict:
             "peak_status": r["peak_status"],
             "regime_tag": r["regime_tag"] if "regime_tag" in r.keys() else None,
             "regime_reason": r["regime_reason"] if "regime_reason" in r.keys() else None,
+            "convective_ambient": bool(r["convective_ambient"]) if (
+                "convective_ambient" in r.keys() and r["convective_ambient"] is not None
+            ) else False,
+            "narrative_line": r["narrative_line"] if (
+                "narrative_line" in r.keys() and r["narrative_line"]
+            ) else None,
             "bins": [],
         }
         if has_signals:
@@ -432,11 +444,16 @@ def _build_user_prompt(ctx: dict) -> str:
                 age_tag = f" [STALE snap {age:.0f}min]"
             elif age >= 10:
                 age_tag = f" [snap {age:.0f}min]"
+        conv_tag = " [CONVECTIVE]" if s.get("convective_ambient") else ""
         lines.append(
-            f"{label}{age_tag}: current={s['current_f']}°F, today_max_obs={s['today_max_obs']}, "
+            f"{label}{age_tag}{conv_tag}: current={s['current_f']}°F, today_max_obs={s['today_max_obs']}, "
             f"ens_med={s['ens_med']}, ens_p10-p90={s['ens_p10']}-{s['ens_p90']} "
             f"(spread {s['ens_spread']}°F), peak={s['peak_status']}"
         )
+        # B7: línea narrable computada — sustituye la extrapolación default
+        # ("meseta → seguirá subiendo") por el estado firmado con datos.
+        if s.get("narrative_line"):
+            lines.append(f"  ESTADO: {s['narrative_line']}")
         sig = s.get("signals") or {}
         if sig:
             parts = []
@@ -774,11 +791,15 @@ def _build_station_prompt(ctx: dict, station_id: str, question: str,
         cli_bit = ""
         if sd["today_max_obs"] is not None:
             cli_bit = f" · CLI proyectado={int(sd['today_max_obs'] + 0.5)}°F"
+        conv_bit = " · CONVECTIVE (TS/CB en METAR — no confirmar peak, temp puede rebotar)" if sd.get("convective_ambient") else ""
         lines.append(
             f"current={sd['current_f']}°F · today_max_obs={sd['today_max_obs']}{cli_bit} · "
             f"ens_med={sd['ens_med']}°F · p10-p90={sd['ens_p10']}-{sd['ens_p90']}°F "
-            f"(spread {sd['ens_spread']}°F) · peak_status={sd['peak_status']}"
+            f"(spread {sd['ens_spread']}°F) · peak_status={sd['peak_status']}{conv_bit}"
         )
+        # B7: línea narrable como estado firmado con datos.
+        if sd.get("narrative_line"):
+            lines.append(f"ESTADO: {sd['narrative_line']}")
         # N2 Fable veredicto R4: enriquecer Panorama con régimen + precip + CLI
         # proyectado. régimen viene de station_snapshots + signals; precip se
         # calcula live via predictor.build_precip_summary (cache 60min, ~0 costo

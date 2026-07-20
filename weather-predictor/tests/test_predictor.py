@@ -65,3 +65,34 @@ def test_invalidate_obs_cache_is_targeted():
     assert ("fetch_ensemble", "KPHX") in predictor._FETCH_CACHE
     # Other stations untouched.
     assert ("fetch_current", "KLAX") in predictor._FETCH_CACHE
+
+
+# L2 Fable 2026-07-20: convective_ambient parser (TS/CB/TSRA/TCU/GR/VCTS)
+def test_parse_convective_flags_ts():
+    raw = "KMIA 191953Z 12010KT 6SM TSRA SCT035CB BKN060 27/24 A2988 RMK AO2 TSB19 SLP116 T02720239"
+    assert predictor.parse_convective_flags(raw) is True
+
+def test_parse_convective_flags_vcts():
+    raw = "KMIA 191553Z 15008KT 10SM VCTS SCT045 30/22 A2990"
+    assert predictor.parse_convective_flags(raw) is True
+
+def test_parse_convective_flags_cb():
+    raw = "KMIA 191553Z 15008KT 10SM SCT045CB 30/22 A2990"
+    assert predictor.parse_convective_flags(raw) is True
+
+def test_parse_convective_flags_tcu():
+    raw = "KMIA 191553Z 15008KT 10SM SCT045TCU 30/22 A2990"
+    assert predictor.parse_convective_flags(raw) is True
+
+def test_parse_convective_flags_clear():
+    raw = "KPHX 191553Z 00000KT 10SM CLR 42/05 A2988"
+    assert predictor.parse_convective_flags(raw) is False
+
+def test_parse_convective_flags_empty():
+    assert predictor.parse_convective_flags("") is False
+    assert predictor.parse_convective_flags(None) is False
+
+def test_parse_convective_flags_scattered_no_convection():
+    # SCT045 sin CB/TCU no debe disparar
+    raw = "KLAX 191553Z 24006KT 10SM SCT045 22/15 A2998"
+    assert predictor.parse_convective_flags(raw) is False

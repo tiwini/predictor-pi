@@ -164,6 +164,16 @@ class Snapshot:
     # METAR :51Z de hoy con el grupo, o si es < today_max_obs (no aporta).
     today_max_asos_6h: float | None = None
     today_max_asos_6h_ts: datetime | None = None
+    # L2 Fable 2026-07-20: TS/CB/TSRA/TCU/GR/VCTS en el METAR raw del current
+    # observation. Bandera para consumidores: contexto AI (advertir) + estado
+    # #5 (lectura convectiva NO confirma 🔒 ni rompe meseta — la temp puede
+    # bajar por outflow y rebotar tras pasar la celda; ver KMIA 2026-07-19).
+    convective_ambient: bool = False
+    # B7 Fable 2026-07-20: línea narrable computada una vez, consumida por
+    # UI + Haiku + asistente. Formato: "{icon} {estado} {temp}°F · {stable}min ·
+    # ventana {abierta Xh|cerrada} · ens_p50 {±X.X} sobre current [· CONVECTIVE]".
+    # Doctrina "compute once, narrate en todas las superficies".
+    narrative_line: str = ""
 
 
 # ───────────────────── fetchers ─────────────────────
@@ -213,6 +223,26 @@ def parse_metar_6h_max_c(raw: str) -> float | None:
     if val < -40.0 or val > 55.0:
         return None
     return val
+
+
+# TS/TSRA/VCTS/GR: word-boundary (grupos wx independientes en METAR).
+# CB/TCU: sufijo de cloud group tipo SCT045CB — matchear como sufijo antes de
+# espacio o EOL, sin exigir \b a la izquierda.
+_CONVECTIVE_TS_RE = re.compile(r"\b(?:\+|-)?(?:VC)?(?:TS(?:RA|GR|SN|PL)?|GR|VCTS)\b")
+_CONVECTIVE_CB_TCU_RE = re.compile(r"(?:CB|TCU)(?=\s|$)")
+
+
+def parse_convective_flags(raw: str) -> bool:
+    """True si el METAR raw indica convección activa/cercana.
+
+    Match: TS, TSRA, TSGR, TSSN, TSPL, VCTS, GR (grupos wx); CB/TCU (sufijos
+    de cloud group tipo SCT045CB). L2 Fable 2026-07-20: la lectura convectiva
+    no debe confirmar 🔒 ni romper meseta — outflow/downdraft baja temp
+    momentáneamente. Ver f1_radar_design memoria.
+    """
+    if not raw:
+        return False
+    return bool(_CONVECTIVE_TS_RE.search(raw)) or bool(_CONVECTIVE_CB_TCU_RE.search(raw))
 
 
 CARDINALS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
@@ -295,6 +325,7 @@ def fetch_current(station: Station) -> dict:
     return {
         "temp_f": c_to_f(val("temperature")),
         "desc": p.get("textDescription") or "",
+        "raw": p.get("rawMessage") or "",
         "time": ts,
         "dewpoint_f": c_to_f(val("dewpoint")),
         "humidity_pct": val("relativeHumidity"),
@@ -1187,11 +1218,19 @@ def build_snapshot(station: Station) -> Snapshot:
     # rising_signal: ensemble aún da headroom O la última tendencia observada
     # apunta arriba (N7 field). last_dir puede ser None con <2 obs.
     rising_signal = (prob_rising >= 0.10) or (last_dir == "up")
+    # L2 Fable 2026-07-20: convective_ambient bloquea confirmar 🔒 dentro de la
+    # ventana (outflow/downdraft baja temp momentánea; puede rebotar). Fuera de
+    # ventana el confirmado se mantiene (ya no hay más peak físico posible).
+    convective_ambient = parse_convective_flags(current.get("raw") or "")
     if not peak_window_open:
         peak_state_candidate = "🔒 pico confirmado"
-    elif below_max and not rising_signal:
+    elif below_max and not rising_signal and not convective_ambient:
         peak_state_candidate = "🔒 pico confirmado"
     elif near_max:
+        peak_state_candidate = "▬ meseta"
+    elif convective_ambient and below_max:
+        # Baja pero con convección → tratar como meseta (no confirmar). Regla
+        # KMIA 2026-07-19: TS SPECI 12:19 bajó temp de 91→88°F, rebotó a 90°F.
         peak_state_candidate = "▬ meseta"
     else:
         peak_state_candidate = "↗ subiendo"
@@ -1199,6 +1238,38 @@ def build_snapshot(station: Station) -> Snapshot:
     # aplica histéresis: sólo confirmar el flip cuando 2 candidates consecutivos
     # coinciden — evita parpadeo por una lectura ruidosa.
     peak_status = peak_state_candidate
+
+    # B7 Fable 2026-07-20: línea narrable — compute once, consume everywhere.
+    # Doctrina N2/C: sin línea computada, humanos y LLMs extrapolan default
+    # ("meseta → seguirá subiendo"). Con línea presente el output honesto se
+    # vuelve el default. Formato compacto pinneable a card + prompt + chat.
+    _parts = [peak_status]
+    if curr_t is not None:
+        _parts.append(f"{curr_t:.0f}°F")
+    if stable_min is not None:
+        if stable_min >= 60:
+            _parts.append(f"{stable_min // 60}h{stable_min % 60:02d}m estable")
+        else:
+            _parts.append(f"{stable_min}min estable")
+    if peak_window_open:
+        # Horas hasta cierre de ventana peak local.
+        _mins_left = (peak_hi_h - now_local.hour) * 60 - now_local.minute
+        if _mins_left >= 60:
+            _parts.append(f"ventana {_mins_left / 60:.1f}h")
+        elif _mins_left > 0:
+            _parts.append(f"ventana {_mins_left}min")
+        else:
+            _parts.append("ventana cierra ya")
+    else:
+        _parts.append("ventana cerrada")
+    if daily_maxes and curr_t is not None:
+        _sorted_dm = sorted(daily_maxes)
+        _p50 = _sorted_dm[len(_sorted_dm) // 2]
+        _diff = _p50 - curr_t
+        _parts.append(f"ens_p50 {_diff:+.1f} sobre current")
+    if convective_ambient:
+        _parts.append("CONVECTIVE")
+    narrative_line = " · ".join(_parts)
 
     # next 6h forecast distribution
     forecast = []
@@ -1274,6 +1345,8 @@ def build_snapshot(station: Station) -> Snapshot:
         current_temp_last_direction=last_dir,
         today_max_asos_6h=asos_6h_f,
         today_max_asos_6h_ts=asos_6h_ts,
+        convective_ambient=convective_ambient,
+        narrative_line=narrative_line,
     )
     # climatology: compare expected max vs historical same-date-of-year
     if _climate_percentile is not None:

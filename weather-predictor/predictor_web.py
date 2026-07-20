@@ -865,6 +865,10 @@ HTML = """<!doctype html>
       <div class="kv"><span class="kv-k">Min obs</span><span>{{ '%.1f' % snap.today_min_obs }}°F</span></div>
       <div class="kv"><span class="kv-k">Pico</span>
         <span class="{{ peak_class }}">{{ snap.peak_status }}</span></div>
+      {% if snap.narrative_line %}
+      <div class="kv" style="align-items:flex-start"><span class="kv-k">Estado</span>
+        <span style="font-family:monospace;font-size:.9em">{{ snap.narrative_line }}</span></div>
+      {% endif %}
       <div class="kv"><span class="kv-k">P(sube más)</span>
         <span>{{ '%.0f' % (snap.prob_rising * 100) }}%</span></div>
       <h3 style="margin-top:1rem">Distribución Max (ensemble 31m)</h3>
@@ -5802,6 +5806,15 @@ def do_poll():
             prev_confirmed = state.last_snapshot.peak_status
             if snap.peak_state_candidate != prev_cand and prev_confirmed:
                 snap.peak_status = prev_confirmed
+                # B7: la línea narrable arranca su parte de estado con el
+                # peak_status computado por build_snapshot. Si histéresis lo
+                # revierte, el prefijo también. narrative_line siempre empieza
+                # con el candidate; sustituir sólo esa cabeza.
+                if snap.narrative_line.startswith(snap.peak_state_candidate):
+                    snap.narrative_line = (
+                        prev_confirmed
+                        + snap.narrative_line[len(snap.peak_state_candidate):]
+                    )
         state.last_snapshot = snap
         refresh_auto(state, snap)
         for slot in (1, 2, 3):

@@ -89,7 +89,9 @@ def _conn() -> sqlite3.Connection:
                      ("pressure_trend_3h", "REAL"),
                      ("dewpoint_f", "REAL"),
                      ("humidity_pct", "REAL"),
-                     ("today_min_obs", "REAL")]:
+                     ("today_min_obs", "REAL"),
+                     ("convective_ambient", "INTEGER"),
+                     ("narrative_line", "TEXT")]:
         if col not in existing:
             c.execute(f"ALTER TABLE station_snapshots ADD COLUMN {col} {typ}")
     # Codex Round 5 (2026-06-29): señales para que agent_monitor las lea sin
@@ -284,7 +286,7 @@ def poll_one(station_id: str, c: sqlite3.Connection) -> None:
          ens_maxes_json, peak_status, regime_tag, regime_reason,
          wind_mph, wind_dir_deg, wind_dir_card, wind_gust_mph, wind_chill_f,
          pressure_inhg, pressure_trend_3h, dewpoint_f, humidity_pct,
-         today_min_obs,
+         today_min_obs, convective_ambient, narrative_line,
          pred_calibrated_f, bias_f, bias_applied, bias_path,
          ext_med_f, ext_spread_f, ext_diff_f,
          difficulty_score, difficulty_label, difficulty_reasons_json,
@@ -293,7 +295,7 @@ def poll_one(station_id: str, c: sqlite3.Connection) -> None:
          roi_cold_pct, trades_cold, roi_hot_pct, trades_hot,
          roi_mid_pct, trades_mid,
          brier_us_7d, brier_kalshi_7d, signal_error)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (ts, station_id, snap.current_temp_f, snap.today_max_obs,
@@ -303,7 +305,8 @@ def poll_one(station_id: str, c: sqlite3.Connection) -> None:
          snap.wind_gust_mph, snap.wind_chill_f,
          snap.pressure_inhg, snap.pressure_trend_3h,
          snap.dewpoint_f, snap.humidity_pct,
-         snap.today_min_obs,
+         snap.today_min_obs, 1 if snap.convective_ambient else 0,
+         snap.narrative_line or None,
          sig["pred_calibrated_f"], sig["bias_f"], sig["bias_applied"], sig["bias_path"],
          sig["ext_med_f"], sig["ext_spread_f"], sig["ext_diff_f"],
          sig["difficulty_score"], sig["difficulty_label"], sig["difficulty_reasons_json"],
