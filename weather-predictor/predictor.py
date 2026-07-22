@@ -16,6 +16,7 @@ import csv
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
+from enum import Enum
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -93,6 +94,27 @@ class Assertion:
     history: list = field(default_factory=list)  # [(ts, prob)]
 
 
+class PeakState(str, Enum):
+    """Estado del pico diario. Bug #2 Fable 2026-07-21: enum reemplaza strings
+    para evitar colapso PRE/POST-ventana en substring matches frágiles."""
+    PRE_WINDOW = "pre_window"    # antes de PEAK_HOURS[lo]
+    RISING = "rising"            # ventana abierta, headroom en ensemble
+    PLATEAU = "plateau"          # ventana abierta, near_max
+    CONFIRMED = "confirmed"      # ventana cerrada o pos-max sin señal alza
+
+
+_PEAK_STATE_DISPLAY = {
+    PeakState.PRE_WINDOW: "↗ pre-ventana",
+    PeakState.RISING: "↗ subiendo",
+    PeakState.PLATEAU: "▬ meseta",
+    PeakState.CONFIRMED: "🔒 pico confirmado",
+}
+
+
+def peak_state_display(state: PeakState) -> str:
+    return _PEAK_STATE_DISPLAY[state]
+
+
 @dataclass
 class Snapshot:
     fetched_at: datetime
@@ -107,11 +129,11 @@ class Snapshot:
     ensemble_daily_maxes: list   # per-member simulated max today
     forecast_next_hours: list    # [(ts_local, median, p10, p90)]
     prob_rising: float           # P(max aún sube por encima del observado)
-    peak_status: str             # "↗ subiendo" | "▬ meseta" | "🔒 pico confirmado"
-    # Fable #5 (2026-07-15): candidate = clasificación cruda por poll; peak_status
-    # = confirmada con histéresis 2 ciclos (aplicada en do_poll usando prev
-    # snapshot). Ver predictor_web.do_poll para la lógica de flip.
-    peak_state_candidate: str = ""
+    peak_status: str             # display string derivada de peak_state (compat CLI/CSV)
+    # Bug #2 Fable 2026-07-21: peak_state es la fuente de verdad enum;
+    # peak_status = peak_state_display(peak_state) para retrocompat.
+    peak_state: PeakState = PeakState.PRE_WINDOW
+    peak_state_candidate: PeakState = PeakState.PRE_WINDOW
     peak_window_open: bool = False
     # extended METAR fields (may be None if unavailable)
     dewpoint_f: float | None = None
@@ -1222,22 +1244,28 @@ def build_snapshot(station: Station) -> Snapshot:
     # ventana (outflow/downdraft baja temp momentánea; puede rebotar). Fuera de
     # ventana el confirmado se mantiene (ya no hay más peak físico posible).
     convective_ambient = parse_convective_flags(current.get("raw") or "")
+    # Bug #2 Fable 2026-07-21: distinguir PRE-ventana de POST-ventana. Antes
+    # ambos colapsaban a CONFIRMED, pintando peak-green desde el amanecer.
     if not peak_window_open:
-        peak_state_candidate = "🔒 pico confirmado"
+        if now_local.hour < peak_lo_h:
+            peak_state_candidate = PeakState.PRE_WINDOW
+        else:
+            peak_state_candidate = PeakState.CONFIRMED
     elif below_max and not rising_signal and not convective_ambient:
-        peak_state_candidate = "🔒 pico confirmado"
+        peak_state_candidate = PeakState.CONFIRMED
     elif near_max:
-        peak_state_candidate = "▬ meseta"
+        peak_state_candidate = PeakState.PLATEAU
     elif convective_ambient and below_max:
         # Baja pero con convección → tratar como meseta (no confirmar). Regla
         # KMIA 2026-07-19: TS SPECI 12:19 bajó temp de 91→88°F, rebotó a 90°F.
-        peak_state_candidate = "▬ meseta"
+        peak_state_candidate = PeakState.PLATEAU
     else:
-        peak_state_candidate = "↗ subiendo"
-    # peak_status = candidate por defecto (primer poll o sin prev). do_poll
-    # aplica histéresis: sólo confirmar el flip cuando 2 candidates consecutivos
-    # coinciden — evita parpadeo por una lectura ruidosa.
-    peak_status = peak_state_candidate
+        peak_state_candidate = PeakState.RISING
+    # peak_state = candidate por defecto (primer poll o sin prev). do_poll
+    # aplica histéresis SÓLO a transiciones hacia PLATEAU/CONFIRMED. PRE_WINDOW
+    # y RISING son deterministas (reloj/distribución fresh) — sin histéresis.
+    peak_state = peak_state_candidate
+    peak_status = peak_state_display(peak_state)
 
     # B7 Fable 2026-07-20: línea narrable — compute once, consume everywhere.
     # Doctrina N2/C: sin línea computada, humanos y LLMs extrapolan default
@@ -1317,6 +1345,7 @@ def build_snapshot(station: Station) -> Snapshot:
         forecast_next_hours=forecast,
         prob_rising=prob_rising,
         peak_status=peak_status,
+        peak_state=peak_state,
         peak_state_candidate=peak_state_candidate,
         peak_window_open=peak_window_open,
         dewpoint_f=current.get("dewpoint_f"),
@@ -1484,11 +1513,13 @@ def render(snap: Snapshot, station: Station, assertions: dict,
     cur.add_row("Temp actual", f"{snap.current_temp_f:.1f}°F  [dim]({snap.current_desc})[/]")
     cur.add_row("Última obs", f"{snap.current_obs_time.astimezone(station.tz).strftime('%H:%M')}  "
                               f"[dim]({obs_age:.0f} min atrás)[/]")
-    if "confirmado" in snap.peak_status:
+    if snap.peak_state == PeakState.CONFIRMED:
         peak_style = "bold green"
-    elif "meseta" in snap.peak_status:
+    elif snap.peak_state == PeakState.PLATEAU:
         peak_style = "yellow"
-    else:
+    elif snap.peak_state == PeakState.PRE_WINDOW:
+        peak_style = "dim cyan"
+    else:  # RISING
         peak_style = "cyan"
     cur.add_row("Hoy (obs)", f"min {snap.today_min_obs:.1f}°F  /  "
                              f"max {snap.today_max_obs:.1f}°F  "

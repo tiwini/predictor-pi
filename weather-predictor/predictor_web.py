@@ -15,7 +15,7 @@ from flask import Flask, Response, jsonify, redirect, render_template_string, re
 
 from predictor import (
     POLL_SEC, PR_TZ, PEAK_HOURS,
-    Assertion, State,
+    Assertion, State, PeakState, peak_state_display,
     fetch_station, build_snapshot, refresh_auto, eval_assertion,
     find_informative_bin, most_likely_max, movement_cents, parse_expr, log_snapshot,
     record_kalshi, invalidate_obs_cache, fetch_precip_context_12h,
@@ -276,6 +276,7 @@ HTML = """<!doctype html>
   .peak-green { color: var(--green); }
   .peak-yellow { color: var(--yellow); }
   .peak-cyan { color: var(--cyan); }
+  .peak-dim { color: var(--muted); }
   .diff-badge { padding: .65rem .8rem; border-radius: 10px; margin-bottom: .9rem;
                 border: 1px solid var(--surface2); font-size: .92rem; }
   .diff-label { font-weight: 600; font-size: .85rem; }
@@ -1364,9 +1365,12 @@ def index():
                             "status": status, "class": cls,
                             "mv_str": mv_str, "mv_class": mv_class}
 
-    peak_class = ("peak-green" if "confirmado" in snap.peak_status
-                  else "peak-yellow" if "meseta" in snap.peak_status
-                  else "peak-cyan")
+    peak_class = {
+        PeakState.CONFIRMED: "peak-green",
+        PeakState.PLATEAU: "peak-yellow",
+        PeakState.PRE_WINDOW: "peak-dim",
+        PeakState.RISING: "peak-cyan",
+    }.get(snap.peak_state, "peak-cyan")
 
     pr_time = snap.station_local.astimezone(PR_TZ).strftime("%H:%M")
     local_time = snap.station_local.strftime("%H:%M %Z")
@@ -3653,6 +3657,7 @@ def _compute_stations_table_row(sid: str) -> dict:
         "today_max_asos_6h": snap.today_max_asos_6h,
         "today_max_asos_6h_ts": _iso(snap.today_max_asos_6h_ts),
         "peak_status": snap.peak_status,
+        "peak_state": snap.peak_state.value,
         "peak_window_open": snap.peak_window_open,
         "prob_rising": snap.prob_rising,
         "last_direction": snap.current_temp_last_direction,
@@ -3732,6 +3737,7 @@ STATIONS_TABLE_TMPL = """<!doctype html>
   .peak-confirmado{color:var(--green);}
   .peak-meseta{color:var(--yellow);}
   .peak-subiendo{color:var(--cyan);}
+  .peak-pre{color:var(--muted);}
   .dir-up{color:var(--green);}
   .dir-down{color:var(--red);}
   .rain-hi{color:var(--accent);font-weight:600;}
@@ -3811,12 +3817,16 @@ function fmtAge(iso) {
   if (secs < 3600) return `${Math.floor(secs/60)}m`;
   return `${Math.floor(secs/3600)}h${Math.floor((secs%3600)/60)}m`;
 }
-function peakClass(s) {
-  if (!s) return '';
-  if (s.includes('confirmado')) return 'peak-confirmado';
-  if (s.includes('meseta')) return 'peak-meseta';
-  if (s.includes('subiendo')) return 'peak-subiendo';
-  return '';
+function peakClass(state) {
+  // Bug #2 Fable 2026-07-21: enum en vez de substring match para no
+  // colapsar pre_window en confirmado.
+  if (!state) return '';
+  return {
+    confirmed: 'peak-confirmado',
+    plateau: 'peak-meseta',
+    rising: 'peak-subiendo',
+    pre_window: 'peak-pre',
+  }[state] || '';
 }
 function rainCls(pct) {
   if (pct === null || pct === undefined) return 'rain-lo';
@@ -3881,7 +3891,7 @@ function render() {
       <td class="time">${fmtTime(r.current_obs_time)}</td>
       <td class="num">${fmt(maxEff)}°F${srcMark}</td>
       <td class="time">${fmtTime(maxTs)}</td>
-      <td class="${peakClass(r.peak_status)}">${r.peak_status || '—'}</td>
+      <td class="${peakClass(r.peak_state)}">${r.peak_status || '—'}</td>
       <td class="num">${probRise}</td>
       <td class="${dirCls}">${dirSym}${stable}</td>
       <td class="num">${fmt(r.our_max_pred)}°F</td>
@@ -5798,22 +5808,31 @@ def do_poll():
         if state.last_snapshot is not None:
             prev_dist = sorted(state.last_snapshot.ensemble_daily_maxes)
             state.prev_dist_med = prev_dist[len(prev_dist) // 2]
-            # Fable #5 histéresis 2-ciclos: sólo cambiar peak_status si el nuevo
+            # Fable #5 histéresis 2-ciclos: sólo cambiar peak_state si el nuevo
             # candidate coincide con el del poll anterior. Evita parpadeo por
             # una lectura ruidosa (5-min feed rounding). El candidate ya viene
-            # calculado en build_snapshot; peak_status es el confirmado.
-            prev_cand = getattr(state.last_snapshot, "peak_state_candidate", "")
-            prev_confirmed = state.last_snapshot.peak_status
-            if snap.peak_state_candidate != prev_cand and prev_confirmed:
-                snap.peak_status = prev_confirmed
+            # calculado en build_snapshot; peak_state es el confirmado.
+            # Bug #2 Fable 2026-07-21: histéresis SOLO para transiciones hacia
+            # PLATEAU/CONFIRMED. PRE_WINDOW/RISING son deterministas
+            # (reloj + distribución ensemble fresh); aplicar histéresis ahí es
+            # lo que atrapaba pre-ventana en "confirmado" viejo.
+            prev_cand = getattr(state.last_snapshot, "peak_state_candidate", None)
+            prev_state = getattr(state.last_snapshot, "peak_state", None)
+            new_cand = snap.peak_state_candidate
+            hysteresis_targets = (PeakState.PLATEAU, PeakState.CONFIRMED)
+            if (new_cand in hysteresis_targets
+                    and new_cand != prev_cand
+                    and prev_state is not None):
+                snap.peak_state = prev_state
+                snap.peak_status = peak_state_display(prev_state)
                 # B7: la línea narrable arranca su parte de estado con el
-                # peak_status computado por build_snapshot. Si histéresis lo
-                # revierte, el prefijo también. narrative_line siempre empieza
-                # con el candidate; sustituir sólo esa cabeza.
-                if snap.narrative_line.startswith(snap.peak_state_candidate):
+                # display del candidate. Si histéresis revierte, sustituir
+                # sólo la cabeza. narrative_line siempre empieza con display.
+                cand_display = peak_state_display(new_cand)
+                if snap.narrative_line.startswith(cand_display):
                     snap.narrative_line = (
-                        prev_confirmed
-                        + snap.narrative_line[len(snap.peak_state_candidate):]
+                        snap.peak_status
+                        + snap.narrative_line[len(cand_display):]
                     )
         state.last_snapshot = snap
         refresh_auto(state, snap)
