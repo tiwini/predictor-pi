@@ -20,7 +20,7 @@ def _mk_response(status_code=200, payload=None):
 
 def test_series_for_known_and_unknown():
     assert kalshi.series_for("KPHX") == "KXHIGHTPHX"
-    assert kalshi.series_for("klga") == "KXHIGHNY"
+    assert kalshi.series_for("knyc") == "KXHIGHNY"
     assert kalshi.series_for("KJFK") is None
 
 

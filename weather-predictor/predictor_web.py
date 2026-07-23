@@ -1703,7 +1703,7 @@ def api_streak():
 
 @app.route("/api/peak-status")
 def api_peak_status():
-    """F4 — Peak status por estación curada (KPHX/KLAX/KLAS/KLGA/KBOS).
+    """F4 — Peak status por estación curada (KPHX/KLAX/KLAS/KNYC/KBOS).
     On-demand + TTL 20 min. ?refresh=1 fuerza recompute.
     Costo: 2 hits Open-Meteo (ensemble+obs) × 5 estaciones por refresh."""
     now = datetime.now(timezone.utc)
@@ -2041,7 +2041,7 @@ COMPARE_TMPL = """<!doctype html>
 {% if not bins %}
 <div class="card">
   <p>No hay mercado activo para esta estación/fecha.</p>
-  <p class="dim">Estaciones soportadas (Kalshi): KPHX, KLAX, KLAS, KLGA, KBOS.</p>
+  <p class="dim">Estaciones soportadas (Kalshi): KPHX, KLAX, KLAS, KNYC, KBOS.</p>
 </div>
 {% else %}
 {% if recs_safe or recs_edge or recs_low %}
@@ -3182,7 +3182,7 @@ def movement_view():
     return redirect(target, code=301)
 
 
-DEFAULT_CROSS = ["KPHX", "KLAX", "KLAS", "KLGA", "KBOS"]
+DEFAULT_CROSS = ["KPHX", "KLAX", "KLAS", "KNYC", "KBOS"]
 
 PEAK_POLL_SEC = 180
 LOST_POLL_SEC = 2700  # 45 min para estaciones settled / sin info útil
@@ -3451,7 +3451,7 @@ CROSS_TMPL = """<!doctype html>
 </table>
 </div>
 <p class="dim" style="font-size:12px">
-Default: KPHX, KLAX, KLAS, KLGA, KBOS (estaciones Kalshi curadas).
+Default: KPHX, KLAX, KLAS, KNYC, KBOS (estaciones Kalshi curadas).
 Custom: <code>/cross?stations=KPHX,KLAX</code>
 </p>
 </body></html>"""
@@ -3753,7 +3753,7 @@ STATIONS_TABLE_TMPL = """<!doctype html>
 <div class="container">
   <p><a href="/">← volver</a></p>
   <h1>Tabla estaciones curadas</h1>
-  <div class="sub">5 estaciones (KPHX/KLAX/KLAS/KLGA/KBOS). Snapshot fresco cached {{ ttl_sec }}s. Click en cabecera para ordenar; usa el filtro para acotar por texto.</div>
+  <div class="sub">5 estaciones (KPHX/KLAX/KLAS/KNYC/KBOS). Snapshot fresco cached {{ ttl_sec }}s. Click en cabecera para ordenar; usa el filtro para acotar por texto.</div>
 
   <div class="toolbar">
     <input type="text" id="filter" placeholder="Filtrar (KPHX, meseta, up...)" autofocus>
@@ -6051,7 +6051,7 @@ def main():
 
 _GRID_STATION_CITY = {
     "KPHX": "Phoenix", "KLAX": "Los Angeles", "KLAS": "Las Vegas",
-    "KLGA": "New York (CP)", "KBOS": "Boston", "KMIA": "Miami",
+    "KNYC": "New York (Central Park)", "KBOS": "Boston", "KMIA": "Miami",
     "KMDW": "Chicago", "KIAH": "Houston", "KSFO": "San Francisco",
     "KAUS": "Austin", "KDEN": "Denver", "KSAT": "San Antonio",
     "KDCA": "Washington", "KDFW": "Dallas", "KPHL": "Philadelphia",

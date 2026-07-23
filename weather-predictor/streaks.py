@@ -21,7 +21,7 @@ STATION_TZ: dict[str, str] = {
     "KPHX": "America/Phoenix",
     "KLAX": "America/Los_Angeles",
     "KLAS": "America/Los_Angeles",
-    "KLGA": "America/New_York",
+    "KNYC": "America/New_York",
     "KBOS": "America/New_York",
     "KMIA": "America/New_York",
     "KDCA": "America/New_York",

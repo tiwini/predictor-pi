@@ -56,7 +56,7 @@ NUDGE_ATTEN_NEAR = 0.5
 NUDGE_ATTEN_FAR = 1.5
 NUDGE_ATTEN_HALF = 0.5
 
-# Conditional bias by climatology percentile. KLGA is bimodal: cold on warm
+# Conditional bias by climatology percentile. KNYC is bimodal: cold on warm
 # days and warm on cold days. Splitting samples by climatology percentile
 # of the predicted max lets us correct each regime separately, but only if
 # we have enough data in the matching bucket.
@@ -98,7 +98,7 @@ def compute_bias(station_id: str, today: Optional[_date] = None,
         cur = con.cursor()
         # early_pred = mediana de los primeros 3 auto-snapshots tras T08:00.
         # Fix Codex Round 4 (2026-06-25): un solo snapshot exploratorio
-        # (ej. KLGA 06-21: 94 → 77 → 82 en 2 min antes de estabilizar en 82)
+        # (ej. KNYC 06-21: 94 → 77 → 82 en 2 min antes de estabilizar en 82)
         # antes contaba como "early_pred" y metía un err fantasma de +12°F al
         # EWMA. La mediana de 3 es robusta a un outlier inicial.
         cur.execute(
@@ -206,7 +206,7 @@ def _extreme_bias(rows: list) -> float:
     Antes usábamos el peor caso (max |err|), pero la autocorrelación lag-1
     del error diario es ≈ −0.25 pooled (Fable round 2): el error de ayer
     NO se repite entero hoy. Media × SHRINK con cap es estrictamente mejor
-    en KPHX (-0.44 MAE) y KLGA (-0.12), y nunca empeora en la muestra."""
+    en KPHX (-0.44 MAE) y KNYC (-0.12), y nunca empeora en la muestra."""
     if not rows:
         return 0.0
     errs = [pred - actual for _, actual, pred in rows]

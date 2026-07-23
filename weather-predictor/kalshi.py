@@ -1,12 +1,12 @@
 """Market fetcher for daily high-temperature contracts (Kalshi).
 
-Las 5 estaciones curadas (KPHX, KLAX, KLAS, KLGA, KBOS) tienen serie KXHIGH
+Las 5 estaciones curadas (KPHX, KLAX, KLAS, KNYC, KBOS) tienen serie KXHIGH
 en Kalshi. Liquidación oficial = NWS Climatological Report (CLI) del WFO
 correspondiente. Bins B-prefix = 2°F enteros; T-prefix = colas abiertas.
 Persistimos bid/ask/mid por poll en market_cache.db.
 
-Nota NY: Kalshi (KXHIGHNY) liquida con NYC CLI (Central Park), no LGA.
-Mantenemos KLGA como station id porque es nuestro punto METAR de pred.
+Nota NY: Kalshi (KXHIGHNY) liquida con NYC CLI (Central Park = KNYC),
+mismo id que nuestro station id post-rename 2026-07-22.
 """
 import re
 import sqlite3

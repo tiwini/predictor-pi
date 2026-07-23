@@ -2,7 +2,7 @@ import predictor
 
 
 def test_peak_hours_has_all_curated_stations():
-    expected = {"KPHX", "KLAX", "KLAS", "KLGA"}
+    expected = {"KPHX", "KLAX", "KLAS", "KNYC"}
     assert expected.issubset(predictor.PEAK_HOURS.keys())
 
 
@@ -30,7 +30,7 @@ def test_sigma_widens_away_from_peak():
 
 
 def test_sigma_monotone_non_decreasing_with_distance():
-    sid = "KLGA"
+    sid = "KNYC"
     lo, hi = predictor.PEAK_HOURS[sid]
     peak_mid = (lo + hi) // 2
     prev = 0.0

@@ -277,22 +277,9 @@ def deg_to_cardinal(d):
     return CARDINALS[int((d % 360) / 22.5 + 0.5) % 16]
 
 
-# Forecast-target overrides: cuando el id METAR no coincide con el punto
-# que liquida el mercado. Mantenemos id (claves DB); el lat/lon del forecast
-# apunta al punto Kalshi.
-# KLGA: Kalshi NY (KXHIGHNY) liquida con NYC CLI = Central Park (KNYC).
-STATION_OVERRIDES: dict[str, dict] = {
-    "KLGA": {"name": "New York (Central Park, settle Kalshi)",
-             "lat": 40.7794, "lon": -73.9692},
-}
-
-# Observation overrides: jalar obs (current + intra-día) de la estación que
-# liquida Kalshi en vez del METAR id. Antes obs venían de KLGA airport
-# mientras la pred era para Central Park — mismatch silencioso al validar
-# bets en vivo. Ahora ambas miran KNYC.
-OBS_STATION_OVERRIDES: dict[str, str] = {
-    "KLGA": "KNYC",
-}
+# NOTA (2026-07-22): antes había STATION_OVERRIDES + OBS_STATION_OVERRIDES
+# para forzar que "KLGA" en el roster jalara obs y forecast de Central Park
+# (KNYC). Ahora el roster ya usa KNYC nativamente — ver stations.py doctrina.
 
 
 def fetch_station(sid: str) -> Station:
@@ -303,11 +290,6 @@ def fetch_station(sid: str) -> Station:
     p = d["properties"]
     lon, lat = d["geometry"]["coordinates"]
     name = p["name"]
-    ov = STATION_OVERRIDES.get(sid.upper())
-    if ov:
-        name = ov.get("name", name)
-        lat = ov.get("lat", lat)
-        lon = ov.get("lon", lon)
     return Station(id=sid.upper(), name=name, lat=lat, lon=lon,
                    tz=ZoneInfo(p["timeZone"]))
 
@@ -316,9 +298,8 @@ def fetch_current(station: Station) -> dict:
     """Latest observation. If the most recent reading has no temperature
     (NWS sometimes returns null on preliminary/QC-pending reports), walk
     back through recent observations until we find one with a valid temp."""
-    obs_sid = OBS_STATION_OVERRIDES.get(station.id, station.id)
     r = requests.get(
-        f"https://api.weather.gov/stations/{obs_sid}/observations",
+        f"https://api.weather.gov/stations/{station.id}/observations",
         params={"limit": 10},
         headers={"User-Agent": UA}, timeout=15)
     r.raise_for_status()
@@ -384,9 +365,8 @@ def fetch_today_obs(station: Station) -> list:
     today = datetime.now(station.tz).date()
     start = datetime.combine(today, datetime.min.time(), station.tz)
     end = datetime.combine(today, datetime.max.time(), station.tz)
-    obs_sid = OBS_STATION_OVERRIDES.get(station.id, station.id)
     r = requests.get(
-        f"https://api.weather.gov/stations/{obs_sid}/observations",
+        f"https://api.weather.gov/stations/{station.id}/observations",
         params={"start": start.isoformat(), "end": end.isoformat()},
         headers={"User-Agent": UA}, timeout=30)
     r.raise_for_status()
@@ -1110,7 +1090,7 @@ def build_snapshot(station: Station) -> Snapshot:
         pass
 
     # Apply per-station rolling bias correction (subtract historical bias from
-    # the prior). Conditional by climatology regime when available — KLGA
+    # the prior). Conditional by climatology regime when available — KNYC
     # is bimodal (cold on warm days, warm on cold days). Falls back to global
     # bias if same-regime bucket has insufficient samples.
     #

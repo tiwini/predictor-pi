@@ -72,11 +72,11 @@ def test_streak_counts_consecutive_hits(db):
     today = date(2026, 6, 25)
     for i, (obs, pred) in enumerate([(80, 80.0), (81, 80.5), (82, 81.5)], start=1):
         d = today - timedelta(days=i)
-        _insert_outcome(db, "KLGA", d, obs)
-        _insert_snapshot(db, "KLGA", d, 15, pred)
-    out = streaks.compute_streaks(str(db), today=today, stations=["KLGA"],
+        _insert_outcome(db, "KNYC", d, obs)
+        _insert_snapshot(db, "KNYC", d, 15, pred)
+    out = streaks.compute_streaks(str(db), today=today, stations=["KNYC"],
                                   windows=(15,))
-    assert out[15][0].station_id == "KLGA"
+    assert out[15][0].station_id == "KNYC"
     assert out[15][0].streak_days == 3
 
 
@@ -86,9 +86,9 @@ def test_streak_broken_by_error_above_threshold(db):
     plan = [(80, 80.0), (90, 80.0), (78, 78.0)]
     for i, (obs, pred) in enumerate(plan, start=1):
         d = today - timedelta(days=i)
-        _insert_outcome(db, "KLGA", d, obs)
-        _insert_snapshot(db, "KLGA", d, 15, pred)
-    out = streaks.compute_streaks(str(db), today=today, stations=["KLGA"],
+        _insert_outcome(db, "KNYC", d, obs)
+        _insert_snapshot(db, "KNYC", d, 15, pred)
+    out = streaks.compute_streaks(str(db), today=today, stations=["KNYC"],
                                   windows=(15,))
     assert out[15][0].streak_days == 1
 
@@ -97,10 +97,10 @@ def test_missing_snapshot_skips_does_not_break(db):
     today = date(2026, 6, 25)
     # ayer hit, anteayer sin snapshot, antes hit → racha = 2 (salta el hueco)
     d1, d2, d3 = today - timedelta(days=1), today - timedelta(days=2), today - timedelta(days=3)
-    _insert_outcome(db, "KLGA", d1, 80); _insert_snapshot(db, "KLGA", d1, 15, 80.0)
-    _insert_outcome(db, "KLGA", d2, 81)  # sin snapshot
-    _insert_outcome(db, "KLGA", d3, 79); _insert_snapshot(db, "KLGA", d3, 15, 79.5)
-    out = streaks.compute_streaks(str(db), today=today, stations=["KLGA"],
+    _insert_outcome(db, "KNYC", d1, 80); _insert_snapshot(db, "KNYC", d1, 15, 80.0)
+    _insert_outcome(db, "KNYC", d2, 81)  # sin snapshot
+    _insert_outcome(db, "KNYC", d3, 79); _insert_snapshot(db, "KNYC", d3, 15, 79.5)
+    out = streaks.compute_streaks(str(db), today=today, stations=["KNYC"],
                                   windows=(15,))
     assert out[15][0].streak_days == 2
 
@@ -108,10 +108,10 @@ def test_missing_snapshot_skips_does_not_break(db):
 def test_snapshot_outside_tolerance_skips(db):
     today = date(2026, 6, 25)
     d = today - timedelta(days=1)
-    _insert_outcome(db, "KLGA", d, 80)
+    _insert_outcome(db, "KNYC", d, 80)
     # snapshot 3 horas DESPUÉS de las 15:00 local → fuera de ±2h
-    _insert_snapshot(db, "KLGA", d, 15, 80.0, offset_min=180)
-    out = streaks.compute_streaks(str(db), today=today, stations=["KLGA"],
+    _insert_snapshot(db, "KNYC", d, 15, 80.0, offset_min=180)
+    out = streaks.compute_streaks(str(db), today=today, stations=["KNYC"],
                                   windows=(15,))
     assert out.get(15, []) == []  # no califica
 
@@ -119,10 +119,10 @@ def test_snapshot_outside_tolerance_skips(db):
 def test_snapshot_inside_tolerance_counts(db):
     today = date(2026, 6, 25)
     d = today - timedelta(days=1)
-    _insert_outcome(db, "KLGA", d, 80)
+    _insert_outcome(db, "KNYC", d, 80)
     # snapshot 90 min después → dentro de ±120
-    _insert_snapshot(db, "KLGA", d, 15, 80.0, offset_min=90)
-    out = streaks.compute_streaks(str(db), today=today, stations=["KLGA"],
+    _insert_snapshot(db, "KNYC", d, 15, 80.0, offset_min=90)
+    out = streaks.compute_streaks(str(db), today=today, stations=["KNYC"],
                                   windows=(15,))
     assert out[15][0].streak_days == 1
 
@@ -130,16 +130,16 @@ def test_snapshot_inside_tolerance_counts(db):
 def test_to_json_shape(db):
     today = date(2026, 6, 25)
     d = today - timedelta(days=1)
-    _insert_outcome(db, "KLGA", d, 80)
-    _insert_snapshot(db, "KLGA", d, 15, 80.5)
-    out = streaks.compute_streaks(str(db), today=today, stations=["KLGA"],
+    _insert_outcome(db, "KNYC", d, 80)
+    _insert_snapshot(db, "KNYC", d, 15, 80.5)
+    out = streaks.compute_streaks(str(db), today=today, stations=["KNYC"],
                                   windows=(15,))
     payload = streaks.to_json(out, top_n=3)
     assert payload["threshold_f"] == streaks.THRESH_F
     assert len(payload["windows"]) == 1
     w = payload["windows"][0]
     assert w["window_local"] == 15
-    assert w["top"][0]["station_id"] == "KLGA"
+    assert w["top"][0]["station_id"] == "KNYC"
     assert w["top"][0]["streak_days"] == 1
     assert w["top"][0]["details"][0]["err_f"] == 0.5
 
@@ -149,8 +149,8 @@ def test_threshold_break_strict(db):
     today = date(2026, 6, 25)
     d1 = today - timedelta(days=1)
     d2 = today - timedelta(days=2)
-    _insert_outcome(db, "KLGA", d1, 80); _insert_snapshot(db, "KLGA", d1, 15, 81.5)
-    _insert_outcome(db, "KLGA", d2, 80); _insert_snapshot(db, "KLGA", d2, 15, 81.6)
-    out = streaks.compute_streaks(str(db), today=today, stations=["KLGA"],
+    _insert_outcome(db, "KNYC", d1, 80); _insert_snapshot(db, "KNYC", d1, 15, 81.5)
+    _insert_outcome(db, "KNYC", d2, 80); _insert_snapshot(db, "KNYC", d2, 15, 81.6)
+    out = streaks.compute_streaks(str(db), today=today, stations=["KNYC"],
                                   windows=(15,))
     assert out[15][0].streak_days == 1  # d1 pasa, d2 rompe

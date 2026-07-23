@@ -24,7 +24,7 @@ UA = "weather-predictor/0.1 jose.rubio.uhy@gmail.com"
 API = "https://api.weather.gov"
 
 # Station id NWS → location code que NWS usa en /products?location=...
-# Override KLGA→NYC (Kalshi KXHIGHNY liquida con Central Park, no LGA).
+# NY: Kalshi KXHIGHNY liquida con Central Park (KNYC), mismo id que la station id.
 # Source of truth en stations.py.
 from stations import STATION_TO_LOCATION  # noqa: E402
 

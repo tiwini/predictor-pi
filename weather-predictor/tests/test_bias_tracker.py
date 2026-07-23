@@ -112,13 +112,13 @@ def test_consistent_cold_bias_negative(db):
 
 def test_balanced_signs_below_threshold(db):
     # +2, -2, +2, -2 averages to 0 → below threshold → not applied
-    _seed(db, "KLGA", [
+    _seed(db, "KNYC", [
         ("2026-04-28", 50, 52),
         ("2026-04-27", 60, 58),
         ("2026-04-26", 55, 57),
         ("2026-04-25", 65, 63),
     ])
-    r = bt.compute_bias("KLGA", today=date(2026, 5, 1), db_path=db)
+    r = bt.compute_bias("KNYC", today=date(2026, 5, 1), db_path=db)
     assert r["applied"] is False
     assert abs(r["bias"]) < bt.APPLY_THRESHOLD
 
@@ -145,7 +145,7 @@ def _seed_with_multi_snapshots(db_path: Path, station: str, date_str: str,
                                actual: float, thresholds: list):
     """Variante de _seed que mete VARIOS snapshots auto para un mismo día.
     `thresholds`: list[float] en orden cronológico. Permite simular el bug
-    KLGA 06-21 (94 → 77 → 82 antes de estabilizar)."""
+    KNYC 06-21 (94 → 77 → 82 antes de estabilizar)."""
     con = sqlite3.connect(db_path)
     cur = con.cursor()
     cur.executescript("""
@@ -179,16 +179,16 @@ def _seed_with_multi_snapshots(db_path: Path, station: str, date_str: str,
 
 
 def test_early_pred_median_robust_to_outlier_snapshot(db):
-    """KLGA 2026-06-21 reproducer: primeros 3 snapshots 94→77→82, actual=82.
+    """KNYC 2026-06-21 reproducer: primeros 3 snapshots 94→77→82, actual=82.
     El bug viejo (LIMIT 1) lee 94 → err fantasma +12°F → bias EWMA contaminado.
     La mediana de 3 elige 82 → err real 0°F."""
-    _seed_with_multi_snapshots(db, "KLGA", "2026-06-21", actual=82.0,
+    _seed_with_multi_snapshots(db, "KNYC", "2026-06-21", actual=82.0,
                                thresholds=[94.0, 77.0, 82.0])
     # Llenar con 3 días neutrales para superar MIN_DAYS
     for d, a, p in [("2026-06-20", 80, 80), ("2026-06-19", 81, 81),
                     ("2026-06-18", 86, 86)]:
-        _seed_with_multi_snapshots(db, "KLGA", d, actual=a, thresholds=[p])
-    r = bt.compute_bias("KLGA", today=date(2026, 6, 22), db_path=db)
+        _seed_with_multi_snapshots(db, "KNYC", d, actual=a, thresholds=[p])
+    r = bt.compute_bias("KNYC", today=date(2026, 6, 22), db_path=db)
     # Con el fix: err de 06-21 = 82 - 82 = 0 → bias ~0, no +5°F
     assert abs(r["bias"]) < 0.5, (
         f"early_pred median fix failed: bias={r['bias']:.2f} "
@@ -239,7 +239,7 @@ def test_conditional_uses_only_same_regime(db):
     # Bimodal: warm regime has +3 bias, cold regime has -3 bias.
     # Today's predicted max sits in cold regime (pct 30) → expect -3 bias,
     # not the global avg ~0.
-    _seed(db, "KLGA", [
+    _seed(db, "KNYC", [
         ("2026-04-28", 50, 47),  # cold regime: pred 47 → pct ~25
         ("2026-04-27", 52, 49),  # cold regime
         ("2026-04-26", 51, 48),  # cold regime
@@ -253,7 +253,7 @@ def test_conditional_uses_only_same_regime(db):
         return 25.0 if pred < 60 else 80.0
 
     r = bt.compute_bias_conditional(
-        "KLGA", predicted_max_f=50.0, today_percentile=30.0,
+        "KNYC", predicted_max_f=50.0, today_percentile=30.0,
         percentile_for_pred=pct_lookup,
         today=date(2026, 5, 1), db_path=db,
     )
@@ -265,7 +265,7 @@ def test_conditional_uses_only_same_regime(db):
 
 def test_conditional_falls_back_when_bucket_thin(db):
     # Today is warm regime (pct 80), but only 1 historical warm day → fallback
-    _seed(db, "KLGA", [
+    _seed(db, "KNYC", [
         ("2026-04-28", 50, 47),
         ("2026-04-27", 52, 49),
         ("2026-04-26", 51, 48),
@@ -277,7 +277,7 @@ def test_conditional_falls_back_when_bucket_thin(db):
         return 25.0 if pred < 60 else 80.0
 
     r = bt.compute_bias_conditional(
-        "KLGA", predicted_max_f=72.0, today_percentile=80.0,
+        "KNYC", predicted_max_f=72.0, today_percentile=80.0,
         percentile_for_pred=pct_lookup,
         today=date(2026, 5, 1), db_path=db,
     )
@@ -286,14 +286,14 @@ def test_conditional_falls_back_when_bucket_thin(db):
 
 
 def test_conditional_no_today_pct_falls_back(db):
-    _seed(db, "KLGA", [
+    _seed(db, "KNYC", [
         ("2026-04-28", 50, 52),
         ("2026-04-27", 52, 54),
         ("2026-04-26", 54, 56),
         ("2026-04-25", 48, 50),
     ])
     r = bt.compute_bias_conditional(
-        "KLGA", predicted_max_f=55.0, today_percentile=None,
+        "KNYC", predicted_max_f=55.0, today_percentile=None,
         percentile_for_pred=lambda d, p: 50.0,
         today=date(2026, 5, 1), db_path=db,
     )
@@ -342,13 +342,13 @@ def test_no_regime_when_signs_mixed(db):
 
 def test_no_regime_when_drift_too_small(db):
     # 4 días mismo signo pero |media|=0.5°F < 1.5°F → no es régimen, sólo ruido
-    _seed(db, "KLGA", [
+    _seed(db, "KNYC", [
         ("2026-05-07", 50, 50.5),   # +0.5
         ("2026-05-06", 50, 50.5),   # +0.5
         ("2026-05-05", 50, 50.5),   # +0.5
         ("2026-05-04", 50, 50.5),   # +0.5
     ])
-    r = bt.compute_bias("KLGA", today=date(2026, 5, 8), db_path=db)
+    r = bt.compute_bias("KNYC", today=date(2026, 5, 8), db_path=db)
     assert r["regime_break"] is False
     assert r["n"] == 4
 

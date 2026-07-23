@@ -28,7 +28,7 @@ VALID_INTERVALS = {1, 5, 10, 30, 60, 120, 240, 480, 600, 800, 1000}
 
 STATION_CITY = {
     "KPHX": "Phoenix", "KLAX": "Los Angeles", "KLAS": "Las Vegas",
-    "KLGA": "New York", "KBOS": "Boston", "KMIA": "Miami",
+    "KNYC": "New York (Central Park)", "KBOS": "Boston", "KMIA": "Miami",
     "KMDW": "Chicago", "KIAH": "Houston", "KSFO": "San Francisco",
     "KAUS": "Austin", "KDEN": "Denver", "KSAT": "San Antonio",
     "KDCA": "Washington DC", "KDFW": "Dallas", "KPHL": "Philadelphia",
@@ -388,7 +388,7 @@ Los snapshots de Kalshi en este caso reflejan la liquidación, no precios live. 
 REGLAS DURAS (NUNCA flag opportunity si se viola):
 1. Spread ens_p90-ens_p10 > 5°F → modelo incierto, no flag
 2. Modelo crudo `model_p_raw` viene del ensemble GFS sin calibración bayesiana/bias/isotonic. Es ruidoso. Solo flag si modelo Y otra señal coinciden.
-3. KLGA settle es Central Park (KNYC), no LGA. LGA suele ser ~1.5°F más caliente que CP en verano. Si flageas KLGA, ajusta.
+3. KNYC = Central Park. Settle Kalshi NY es KNYC directo. NO usar LaGuardia como referencia — el sistema no lo trackea.
 4. Conviction "high" solo si edge ≥ 30pp + 3 señales convergen. "med" si edge 15-30pp. "low" no se reportan.
 
 GUARDRAIL DURO (Codex Round 5):
@@ -747,8 +747,8 @@ CONTEXTO QUE RECIBES:
 REGLAS:
 - Spread p90-p10 >5°F = modelo incierto, sé prudente
 - today_max_obs ≈ ens_med con spread=0 → día settled, no recomendar
-- KLGA es alias interno: obs y forecast ya son Central Park (KNYC). NO restar
-  ni sumar diferencias vs LGA airport — el snapshot completo es Central Park
+- KNYC = New York (Central Park). Settle Kalshi NY es KNYC directo.
+  NO usar LaGuardia como referencia — el sistema no lo trackea.
 - Si el brief menciona patrón (capa marina, lake breeze, monsoon) y aplica al
   día actual (mes, viento implícito por spread), inclúyelo en la razón.
 """
@@ -766,19 +766,7 @@ def _gather_station_ctx(station_id: str) -> dict:
 
 def _build_station_prompt(ctx: dict, station_id: str, question: str,
                           brief: tuple[str, str] | None) -> str:
-    # KLGA es un alias interno: todas nuestras obs vienen de KNYC (Central Park)
-    # y el forecast lat/lon apunta también a Central Park (STATION_OVERRIDES).
-    # El AI NO debe tratar KLGA (LaGuardia airport) y Central Park como lugares
-    # distintos — todos los números que ve YA son Central Park.
-    if station_id == "KLGA":
-        station_header = ("KLGA (alias interno) → Central Park / NYC (KNYC). "
-                          "TODOS los números abajo (obs + ensemble) son ya "
-                          "Central Park. NO comparar contra LGA airport ni "
-                          "sumar/restar diferencias — es el mismo lugar para "
-                          "efectos de pronóstico y settle Kalshi.")
-    else:
-        station_header = station_id
-    lines = [f"ESTACIÓN: {station_header}",
+    lines = [f"ESTACIÓN: {station_id}",
              f"TIMESTAMP UTC: {ctx['timestamp_utc']}", ""]
     if brief:
         lines.append(f"=== CONTEXTO LOCAL FIJO ===")

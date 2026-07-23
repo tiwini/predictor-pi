@@ -3,13 +3,20 @@
 Antes esto vivía duplicado en:
   - predictor.py            (PEAK_HOURS)
   - kalshi.py               (STATION_TO_SERIES)
-  - nws_cli.py              (STATION_TO_LOCATION — override KLGA→NYC)
+  - nws_cli.py              (STATION_TO_LOCATION)
   - predictor_web.py        (SUPPORTED_STATIONS)
   - analysis_poller.py      (STATIONS)
 
 Cualquier estación nueva se agrega aquí (una sola línea) y los 5 archivos
 la heredan vía import. Re-exportamos las vistas con los mismos nombres
 que tenían los originales para minimizar diff en callers.
+
+DOCTRINA NY (2026-07-22): la estación de Nueva York es **KNYC (Central Park)**,
+que es también donde liquida el mercado Kalshi KXHIGHNY. Históricamente el
+id fue "KLGA" (LaGuardia) como legacy pero el fetch de obs y el forecast
+Open-Meteo *ya* apuntaban a Central Park vía overrides ocultos. Rename
+KLGA→KNYC removió esa capa de confusión — el id ahora refleja la fuente
+real de datos. Nunca reintroducir "KLGA" como estación.
 """
 from __future__ import annotations
 
@@ -20,7 +27,7 @@ from dataclasses import dataclass
 class StationConfig:
     id: str             # NWS METAR id, e.g. "KPHX"
     kalshi_series: str  # Kalshi series ticker, e.g. "KXHIGHTPHX"
-    nws_cli_loc: str    # NWS CLI product location code (KLGA→"NYC" Central Park)
+    nws_cli_loc: str    # NWS CLI product location code (e.g. "NYC" para KNYC)
     peak_lo: int        # local hour, peak window start (inclusive)
     peak_hi: int        # local hour, peak window end (exclusive)
     lon: float          # longitud °E (negativo = W); usado para ordenar E→W
@@ -30,7 +37,7 @@ STATIONS: list[StationConfig] = [
     StationConfig("KPHX", "KXHIGHTPHX",  "PHX", 14, 17, -112.02),
     StationConfig("KLAX", "KXHIGHLAX",   "LAX", 12, 15, -118.41),
     StationConfig("KLAS", "KXHIGHTLV",   "LAS", 14, 17, -115.15),
-    StationConfig("KLGA", "KXHIGHNY",    "NYC", 13, 16,  -73.87),
+    StationConfig("KNYC", "KXHIGHNY",    "NYC", 13, 16,  -73.97),
     StationConfig("KBOS", "KXHIGHTBOS",  "BOS", 13, 16,  -71.01),
     StationConfig("KMIA", "KXHIGHMIA",   "MIA", 14, 17,  -80.29),
     StationConfig("KMDW", "KXHIGHCHI",   "MDW", 14, 17,  -87.75),

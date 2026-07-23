@@ -88,8 +88,8 @@ def test_blend_klas_today_scenario():
     assert ext_p < p < 0.80
 
 
-def test_blend_klga_tail_negation_scenario():
-    """KLGA 2026-05-25: ext_med ~75.6, bin [≤71] our 95% (cold tail muy lejos).
+def test_blend_knyc_tail_negation_scenario():
+    """KNYC 2026-05-25: ext_med ~75.6, bin [≤71] our 95% (cold tail muy lejos).
     Discrepancia chica → anchor weight 0 → blended igual a our_p."""
     p, w = em.blend_with_external(0.95, 75.6, 2.5, float("-inf"), 71.0,
                                   ext_diff=-0.5, lam=0.0)

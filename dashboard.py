@@ -46,7 +46,7 @@ WEATHER_STATIONS = [
     ("KPHX", "Phoenix"),
     ("KLAX", "Los Angeles"),
     ("KLAS", "Las Vegas"),
-    ("KLGA", "New York LGA→CP"),
+    ("KNYC", "New York (Central Park)"),
     ("KBOS", "Boston"),
     ("KMIA", "Miami"),
     ("KMDW", "Chicago Midway"),

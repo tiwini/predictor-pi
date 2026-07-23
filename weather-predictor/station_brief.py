@@ -42,14 +42,14 @@ _BRIEFS: dict[str, tuple[str, str]] = {
         "Mountains al amanecer. Pico 16-17h LST. Heat domes regionales con "
         "KPHX correlacionados — si Phoenix bate récord, Vegas suele acompañar."
     ),
-    "KLGA": (
-        "Nueva York · LaGuardia (East River) · settle KNYC (Central Park)",
-        "OJO: predicción METAR es KLGA (junto al agua, más fresco), pero "
-        "Kalshi liquida con Central Park (NYC CLI). Diferencia típica "
-        "KNYC > KLGA: 1-3°F en verano (inland más cálido). Heat waves "
-        "Jul-Aug con heat domes Atlántico — humedad alta amplifica heat "
-        "index pero la max real queda atada al patrón sinóptico. Brisa "
-        "marina desde Long Island Sound puede recortar 2-5°F las tardes."
+    "KNYC": (
+        "Nueva York · Central Park · settle Kalshi KXHIGHNY",
+        "Estación oficial NY (Manhattan interior). Heat waves Jul-Aug "
+        "con heat domes Atlántico — humedad alta amplifica heat index "
+        "pero la max real queda atada al patrón sinóptico. Brisa marina "
+        "desde Long Island Sound puede recortar 2-5°F las tardes cuando "
+        "el flujo es SE. Inland vs aeropuertos costeros (LGA/JFK): "
+        "Central Park típicamente 1-3°F más cálido en verano."
     ),
     "KBOS": (
         "Boston · Logan (Boston Harbor) · costa Atlántica",

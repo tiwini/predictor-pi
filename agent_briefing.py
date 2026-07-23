@@ -33,7 +33,7 @@ MAX_TOKENS = 1500
 
 STATION_CITY = {
     "KPHX": "Phoenix", "KLAX": "Los Angeles", "KLAS": "Las Vegas",
-    "KLGA": "New York", "KBOS": "Boston", "KMIA": "Miami",
+    "KNYC": "New York (Central Park)", "KBOS": "Boston", "KMIA": "Miami",
     "KMDW": "Chicago", "KIAH": "Houston", "KSFO": "San Francisco",
     "KAUS": "Austin", "KDEN": "Denver", "KSAT": "San Antonio",
     "KDCA": "Washington DC", "KDFW": "Dallas", "KPHL": "Philadelphia",
@@ -158,7 +158,7 @@ Tu briefing debe ser narrativo (no JSON), en español, máximo 6-8 líneas, estr
 REGLAS DURAS:
 - Conviction "high" requiere: edge≥30pp + ens_spread≤5°F + ext_med disponible. Si no, no flag.
 - Mercado settled = ens_spread=0 + today_max_obs ≈ ens_med. Skip.
-- KLGA settle es Central Park (KNYC), suele ser ~1.5°F más frío que LGA.
+- KNYC = Central Park (settle Kalshi NY). NO usar LaGuardia como referencia — el sistema no lo trackea.
 - Si NO hay setups buenos, dilo claramente — "hoy no tomar entries, esperar".
 
 Tono: directo, accionable, sin disclaimers. El usuario sabe que esto es educativo.
