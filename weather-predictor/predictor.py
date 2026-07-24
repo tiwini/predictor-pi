@@ -1234,7 +1234,10 @@ def build_snapshot(station: Station) -> Snapshot:
     elif below_max and not rising_signal and not convective_ambient:
         peak_state_candidate = PeakState.CONFIRMED
     elif near_max:
-        peak_state_candidate = PeakState.PLATEAU
+        # Bug #5 fix (2026-07-24): near_max sin señal alza = plateau real;
+        # con señal alza fuerte del ensemble = todavía subiendo (RISING).
+        # Antes: near_max ganaba siempre → mostraba "meseta" con prob_rising 0.90.
+        peak_state_candidate = PeakState.RISING if rising_signal else PeakState.PLATEAU
     elif convective_ambient and below_max:
         # Baja pero con convección → tratar como meseta (no confirmar). Regla
         # KMIA 2026-07-19: TS SPECI 12:19 bajó temp de 91→88°F, rebotó a 90°F.
