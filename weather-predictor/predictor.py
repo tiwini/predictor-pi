@@ -305,11 +305,19 @@ def fetch_current(station: Station) -> dict:
     r.raise_for_status()
     features = r.json().get("features", [])
     p = None
+    raw_fallback = ""
     for f in features:
         cand = f["properties"]
         t = cand.get("temperature") or {}
-        if t.get("value") is not None:
+        if t.get("value") is not None and p is None:
             p = cand
+        # Bug L2 fix 2026-07-24: NWS 5-min feed retorna rawMessage='' en obs :XX;
+        # solo METAR hourly :51/:53/:54 lleva raw. Sin fallback, parse_convective_flags
+        # veía "" y perdía 93% de señales TS/CB. Recorrer features y quedarse con
+        # el primer rawMessage no vacío del batch (~última hora de obs).
+        if not raw_fallback and cand.get("rawMessage"):
+            raw_fallback = cand["rawMessage"]
+        if p is not None and raw_fallback:
             break
     if p is None:
         # fall back to whatever the first entry says, even if temp is None
@@ -328,7 +336,7 @@ def fetch_current(station: Station) -> dict:
     return {
         "temp_f": c_to_f(val("temperature")),
         "desc": p.get("textDescription") or "",
-        "raw": p.get("rawMessage") or "",
+        "raw": p.get("rawMessage") or raw_fallback or "",
         "time": ts,
         "dewpoint_f": c_to_f(val("dewpoint")),
         "humidity_pct": val("relativeHumidity"),
