@@ -6106,15 +6106,17 @@ def _grid_payload() -> dict:
             "top_bin_label": None,
             "top_side": None,
         }
+    # El ladder vigente es la ultima foto del poller: MAX(ts) por estacion.
+    # Agrupar por (station, bin_lo, bin_hi) resucitaba cada bin que alguna vez
+    # existio con su ultima cotizacion historica (KPHX servia "93 to 94" de
+    # hace 6 dias), y el top-edge salia siempre de esos bins zombie.
     bins = c.execute("""
         WITH latest AS (
-            SELECT station, bin_lo, bin_hi, MAX(ts) AS ts
-            FROM kalshi_snapshots GROUP BY station, bin_lo, bin_hi
+            SELECT station, MAX(ts) AS ts FROM kalshi_snapshots GROUP BY station
         )
         SELECT k.station, k.label, k.yes_mid, k.our_p
         FROM kalshi_snapshots k
-        JOIN latest l ON k.station=l.station AND k.bin_lo=l.bin_lo
-                     AND k.bin_hi=l.bin_hi AND k.ts=l.ts
+        JOIN latest l ON k.station=l.station AND k.ts=l.ts
         WHERE k.yes_mid IS NOT NULL AND k.our_p IS NOT NULL
     """).fetchall()
     c.close()
