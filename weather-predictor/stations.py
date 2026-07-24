@@ -38,7 +38,7 @@ STATIONS: list[StationConfig] = [
     StationConfig("KLAX", "KXHIGHLAX",   "LAX", 12, 15, -118.41),
     StationConfig("KLAS", "KXHIGHTLV",   "LAS", 14, 17, -115.15),
     StationConfig("KNYC", "KXHIGHNY",    "NYC", 13, 16,  -73.97),
-    StationConfig("KBOS", "KXHIGHTBOS",  "BOS", 13, 16,  -71.01),
+    StationConfig("KBOS", "KXHIGHTBOS",  "BOS", 12, 17,  -71.01),
     StationConfig("KMIA", "KXHIGHMIA",   "MIA", 14, 17,  -80.29),
     StationConfig("KMDW", "KXHIGHCHI",   "MDW", 14, 17,  -87.75),
     StationConfig("KIAH", "KXHIGHTHOU",  "IAH", 14, 17,  -95.34),
