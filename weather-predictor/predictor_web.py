@@ -5956,6 +5956,14 @@ def poll_loop():
             if last_settle_day != today:
                 try:
                     settled = _calibration.settle_pending(state.station)
+                    try:
+                        _cov = _calibration.settle_coverage(state.station)
+                        if _cov:
+                            print(f"settle_coverage {state.station.id}: "
+                                  f"{len(_cov)} days", file=sys.stderr)
+                    except Exception as e:
+                        print(f"settle_coverage primary error: {e}",
+                              file=sys.stderr)
                     last_settle_day = today
                     try:
                         _check_settle_alerts(state.station, settled)
@@ -5978,6 +5986,13 @@ def poll_loop():
                         _settled = _calibration.settle_pending(_st)
                         if _settled:
                             print(f"settle_pending {_sid}: {len(_settled)} days",
+                                  file=sys.stderr)
+                        # Cobertura: settle_pending solo mira
+                        # prediction_snapshots, que no existen para estaciones
+                        # que nunca fueron activas -> 16 de 20 sin settle real.
+                        _cov = _calibration.settle_coverage(_st)
+                        if _cov:
+                            print(f"settle_coverage {_sid}: {len(_cov)} days",
                                   file=sys.stderr)
                     except Exception as e:
                         print(f"settle_pending {_sid} error: {e}",

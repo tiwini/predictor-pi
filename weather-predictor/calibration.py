@@ -680,6 +680,60 @@ def settle_pending(station, max_days_back: int = 14) -> list:
     return settled
 
 
+def settle_coverage(station, days_back: int = 4) -> list:
+    """Garantiza day_outcomes para todo dia con obs, no solo los que tienen
+    prediction_snapshots pendientes.
+
+    settle_pending() arranca de prediction_snapshots, que solo se pueblan
+    cuando la estacion es la activa. Medido 2026-07-24: las 20 estaciones
+    tenian 35 dias de obs en station_snapshots pero day_outcomes iba de 1 fila
+    (KMSY/KSAT/KMSP) a 77 (KPHX), asi que 16 de 20 no eran backtesteables
+    contra el settle que Kalshi realmente usa. Los backtests caian al proxy
+    MAX(today_max_obs), que difiere del CLI en 70% de los dias.
+
+    Ventana corta a proposito: api.weather.gov/products solo sirve el CLI unos
+    ~3 dias (medido 2026-07-24: -3d OK, -5d ya None). Correr esto a diario es
+    lo que construye la serie; no hay backfill hacia atras por esta via.
+
+    Devuelve lista de (date, max_f) settleados en esta llamada.
+    """
+    if not ANALYSIS_DB_PATH.exists():
+        return []
+    today = datetime.now(station.tz).date()
+    cutoff = today - timedelta(days=days_back)
+    src_c = sqlite3.connect(ANALYSIS_DB_PATH)
+    try:
+        rows = src_c.execute(
+            """SELECT DISTINCT date(ts) FROM station_snapshots
+               WHERE station=? AND date(ts) >= ? AND date(ts) < ?
+               ORDER BY date(ts)""",
+            (station.id, cutoff.isoformat(), today.isoformat())).fetchall()
+    finally:
+        src_c.close()
+    if not rows:
+        return []
+    c = _conn()
+    have = {r[0] for r in c.execute(
+        """SELECT date FROM day_outcomes
+           WHERE station_id=? AND max_obs_f IS NOT NULL""",
+        (station.id,))}
+    c.close()
+    settled = []
+    for r in rows:
+        ds = r[0]
+        if ds in have:
+            continue
+        try:
+            max_f = settle_day(station, date.fromisoformat(ds))
+        except requests.RequestException:
+            continue
+        except Exception:
+            continue
+        if max_f is not None:
+            settled.append((date.fromisoformat(ds), max_f))
+    return settled
+
+
 def reliability(station_id: str | None = None,
                 n_buckets: int = 10) -> ReliabilityReport:
     """Bucket settled snapshots by predicted_p and compute hit rate per bucket."""
