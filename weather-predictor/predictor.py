@@ -1746,7 +1746,16 @@ def _compute_final_our_p_per_bin(station_id: str, snap: Snapshot,
     cal = None
     if _iso is not None:
         try:
-            cal = _iso.get(station_id)
+            # Calibrador GLOBAL, no por estacion. Medido out-of-sample
+            # 2026-07-24 sobre 83724 eventos (bins Kalshi con settle NWS real,
+            # split temporal 70/30, Brier vs baseline constante):
+            #   por estacion (lo anterior)  0.17935  skill -12.4%
+            #   global                      0.15985  skill  -0.1%
+            #   our_p sin calibrar          0.21298  skill -33.4%
+            # Por estacion overfitea: solo 7 de 20 estaciones pasaban
+            # MIN_N/MIN_DAYS, asi que las otras 13 corrian con our_p crudo.
+            # El fit global tiene n_fit=2213 sobre 88 dias y cubre las 20.
+            cal = _iso.get(None)
             if cal is not None and (cal.n_fit < _iso.MIN_N
                                     or cal.n_days < _iso.MIN_DAYS):
                 cal = None

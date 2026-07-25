@@ -2455,7 +2455,10 @@ def ladder_view():
                 print(f"ladder live-fetch error: {e}", file=sys.stderr)
 
     import isotonic as _iso
-    cal = _iso.get(station.id)
+    # Global, no por estacion — por estacion daba skill -12.4% vs -0.1%
+    # global, medido out-of-sample 2026-07-24 sobre 83724 eventos. Ver
+    # nota extensa en predictor._compute_final_our_p_per_bin.
+    cal = _iso.get(None)
     cal_active = (cal is not None
                   and cal.n_fit >= _iso.MIN_N
                   and cal.n_days >= _iso.MIN_DAYS)
@@ -2578,7 +2581,7 @@ def comparison_view():
                   file=sys.stderr)
 
     import isotonic as _iso
-    cal = _iso.get(station.id)
+    cal = _iso.get(None)  # global, ver nota en /ladder
     cal_active = (cal is not None
                   and cal.n_fit >= _iso.MIN_N
                   and cal.n_days >= _iso.MIN_DAYS)
@@ -4484,7 +4487,7 @@ def _build_dashboard(station_id: str) -> dict:
     iso_days = 0
     try:
         import isotonic as _iso
-        cal = _iso.get(station_id)
+        cal = _iso.get(None)  # global: el calibrador en uso
         if cal is not None:
             iso_days = cal.n_days
     except Exception:
@@ -5675,7 +5678,7 @@ def _check_edge_alerts(snap, station) -> None:
     if gate_ext_diff is None and anchor_ctx is not None:
         gate_ext_diff = anchor_ctx["ext_diff"]
     import isotonic as _iso
-    _cal = _iso.get(station.id)
+    _cal = _iso.get(None)  # global, ver nota en /ladder
     _cal_active = (_cal is not None and _cal.n_fit >= _iso.MIN_N
                    and _cal.n_days >= _iso.MIN_DAYS)
     _cal_for_apply = _cal if _cal_active else None
