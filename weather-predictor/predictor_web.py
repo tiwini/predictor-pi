@@ -6070,7 +6070,7 @@ def main():
 _GRID_STATION_CITY = {
     "KPHX": "Phoenix", "KLAX": "Los Angeles", "KLAS": "Las Vegas",
     "KNYC": "New York (Central Park)", "KBOS": "Boston", "KMIA": "Miami",
-    "KMDW": "Chicago", "KIAH": "Houston", "KSFO": "San Francisco",
+    "KMDW": "Chicago", "KHOU": "Houston", "KSFO": "San Francisco",
     "KAUS": "Austin", "KDEN": "Denver", "KSAT": "San Antonio",
     "KDCA": "Washington", "KDFW": "Dallas", "KPHL": "Philadelphia",
     "KSEA": "Seattle", "KATL": "Atlanta", "KMSY": "New Orleans",

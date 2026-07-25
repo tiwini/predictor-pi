@@ -78,13 +78,14 @@ _BRIEFS: dict[str, tuple[str, str]] = {
         "cuando el front penetra (típicamente 13-16h LST en primavera). "
         "Heat domes Jul-Aug con dewpoints altos (>70°F)."
     ),
-    "KIAH": (
-        "Houston Intercontinental · Gulf coast · subtropical húmedo",
-        "Influencia del Golfo: HR alta (70-90%), sea breeze diaria pero "
-        "más débil que MIA por estar inland (~50 km). Heat waves con flujo "
-        "S/SW desde el desierto mexicano. Convección vespertina jun-sep. "
-        "Max típica 95-100°F en verano, raramente >105°F. Lluvia frecuente "
-        "tarde-noche no afecta la max."
+    "KHOU": (
+        "Houston Hobby · Gulf coast · subtropical húmedo",
+        "Influencia del Golfo: HR alta (70-90%) y sea breeze diaria — Hobby "
+        "está ~15 km de la bahía de Galveston, así que la brisa llega antes "
+        "y más fuerte que a Bush/KIAH: en verano corre 1-3°F más fresco. "
+        "Heat waves con flujo S/SW desde el desierto mexicano. Convección "
+        "vespertina jun-sep. Max típica 92-98°F, raramente >103°F. Lluvia "
+        "tarde-noche no afecta la max. Es la estación de settle de KXHIGHTHOU."
     ),
     "KSFO": (
         "San Francisco · costa Pacífica · capa marina dominante",

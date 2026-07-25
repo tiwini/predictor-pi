@@ -28,7 +28,7 @@ STATION_TZ: dict[str, str] = {
     "KPHL": "America/New_York",
     "KATL": "America/New_York",
     "KMDW": "America/Chicago",
-    "KIAH": "America/Chicago",
+    "KHOU": "America/Chicago",
     "KAUS": "America/Chicago",
     "KSAT": "America/Chicago",
     "KDFW": "America/Chicago",

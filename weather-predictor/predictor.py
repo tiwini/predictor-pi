@@ -351,22 +351,43 @@ def fetch_current(station: Station) -> dict:
     }
 
 
+def is_metar_slot_minute(minute: int) -> bool:
+    """¿El minuto corresponde al METAR horario y no al feed automático?
+
+    El METAR de la hora se emite en :45-:59 según la estación (medido sobre
+    3 días × las 20: :51, :52, :53, :54, :56). El feed automático de 5
+    minutos publica en múltiplos de 5, así que excluirlos separa ambos sin
+    enumerar estación por estación. Ver docstring de `fetch_today_obs`.
+    """
+    return 45 <= minute <= 59 and minute % 5 != 0
+
+
 def fetch_today_obs(station: Station) -> list:
     """Return today's official METAR observations as list of dicts.
 
     NWS stations publish ~230+ automated readings/día; many are transient
     glitches (seen 27°C spikes at midnight vs 25°C daytime). Filter:
       • lecturas con `rawMessage` (METAR/SPECI oficiales), O
-      • lecturas en minuto :51, :53 o :54 aunque el texto raw no haya
-        propagado. ASOS samplea a :53 en muchas estaciones; KPHX y otras
-        publican a :51. Esas son las mismas lecturas del METAR oficial,
-        sólo que la API a veces adjunta el texto tarde o nunca.
+      • lecturas en el slot horario del METAR aunque el texto raw no haya
+        propagado — mismas lecturas del METAR oficial, sólo que la API a
+        veces adjunta el texto tarde o nunca.
     Fable decision 2026-07-10 tras incidente KIAH (real 91.9°F a las 14:53
     sin rawMessage → sistema mostraba 91.0°F). Rechazos se loggean para
     graduar en ~2 sem a guarda por vecinos temporales (opción C).
     Extensión 2026-07-14: :51 añadido tras observar KPHX congelado en
     98.1°F (última obs con rawMessage) mientras las obs :51 subsiguientes
     a 100-103°F sin rawMessage eran rechazadas.
+
+    Fix 2026-07-25: la whitelist `(51, 53, 54)` era del roster de 5 curadas
+    y dejaba fuera a estaciones del roster de 20. Medido sobre 3 días × 20
+    estaciones (obs CON rawMessage, o sea METARs confirmados), los slots
+    reales son :51 (80), :52 (60), :53 (220), :54 (39), :56 (40) — la
+    whitelist cubría 77%, y :52 (KOKC) y :56 (KLAS) caían fuera. Efecto:
+    KLAS 2026-07-25 tenía 6 obs aceptadas, la última de 4h antes, con
+    max_obs 109.0°F mientras el actual marcaba 113.0°F.
+    Ahora la regla se deriva en vez de enumerarse: el METAR horario cae en
+    :45-:59, y el feed automático de 5 minutos publica en múltiplos de 5,
+    así que `minute % 5 != 0` lo excluye sin listar estación por estación.
 
     Each entry: {'time': datetime, 'temp_f': float|None, 'pressure_inhg': float|None}
     """
@@ -385,7 +406,7 @@ def fetch_today_obs(station: Station) -> list:
         has_raw = bool(p.get("rawMessage"))
         ts = datetime.fromisoformat(p["timestamp"].replace("Z", "+00:00"))
         minute = ts.minute
-        is_metar_slot = minute in (51, 53, 54)
+        is_metar_slot = is_metar_slot_minute(minute)
         accepted = has_raw or is_metar_slot
         tv = p["temperature"]["value"]
         if not accepted:
@@ -867,6 +888,33 @@ def build_precip_summary(station: Station, day_offset: int = 0) -> dict:
 
 # ───────────────────── snapshot builder ─────────────────────
 
+# Fix 2026-07-25: high-water mark de (max_obs, ts) por (estación, fecha local).
+# `fetch_today_obs` devuelve lo que api.weather.gov sirve *en ese instante*, y
+# el feed **retira** observaciones entre polls: KLAS el 07-25 fue
+# 109.0 → 111.0 → 109.0 → 111.9 → 109.0 en snapshots consecutivos. Un máximo
+# acumulado del día no puede bajar, así que memorizamos el mayor visto.
+# Sólo entran valores que ya pasaron el filtro de `fetch_today_obs`, o sea
+# esto no relaja el QC — únicamente impide que el valor retroceda.
+# En memoria a propósito: un restart lo reconstruye desde el feed, que es el
+# comportamiento actual, y así un glitch nunca queda congelado más de un día.
+_MAX_OBS_HWM: dict[tuple[str, date], tuple[float, datetime | None]] = {}
+
+
+def _max_obs_high_water(station_id: str, day: date, max_obs: float,
+                        max_obs_ts: datetime | None
+                        ) -> tuple[float, datetime | None]:
+    """Devuelve el mayor (max_obs, ts) visto hoy para esta estación."""
+    if max_obs is None or max_obs <= -900:
+        return (max_obs, max_obs_ts)
+    for k in [k for k in _MAX_OBS_HWM if k[1] != day]:
+        del _MAX_OBS_HWM[k]
+    prev = _MAX_OBS_HWM.get((station_id, day))
+    if prev is not None and prev[0] > max_obs:
+        return prev
+    _MAX_OBS_HWM[(station_id, day)] = (max_obs, max_obs_ts)
+    return (max_obs, max_obs_ts)
+
+
 def build_snapshot(station: Station) -> Snapshot:
     current = fetch_current(station)
     obs_full = fetch_today_obs(station)  # list of dicts
@@ -901,6 +949,9 @@ def build_snapshot(station: Station) -> Snapshot:
             if o["temp_f"] is not None and o["temp_f"] == max_obs:
                 max_obs_ts = o["time"]
                 break
+
+    max_obs, max_obs_ts = _max_obs_high_water(
+        station.id, today, max_obs, max_obs_ts)
 
     # Fix 2026-07-15: ASOS 6h-max group del METAR remarks. Iteramos todos los
     # obs cuyo raw traiga el grupo `1sTTT` (típicamente :51Z de 05/11/17/23 UTC)

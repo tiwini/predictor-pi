@@ -96,3 +96,63 @@ def test_parse_convective_flags_scattered_no_convection():
     # SCT045 sin CB/TCU no debe disparar
     raw = "KLAX 191553Z 24006KT 10SM SCT045 22/15 A2998"
     assert predictor.parse_convective_flags(raw) is False
+
+
+# ── slot METAR (fix 2026-07-25: whitelist (51,53,54) perdía :52 y :56) ──
+
+def test_metar_slot_accepts_measured_station_minutes():
+    # Medidos sobre 3 días × 20 estaciones, obs CON rawMessage.
+    for m in (51, 52, 53, 54, 56):
+        assert predictor.is_metar_slot_minute(m), f":{m} debe aceptarse"
+
+
+def test_metar_slot_rejects_five_minute_feed():
+    # El feed automático publica en múltiplos de 5 — esos no son METAR.
+    for m in (0, 5, 15, 30, 45, 50, 55):
+        assert not predictor.is_metar_slot_minute(m), f":{m} no es METAR"
+
+
+def test_metar_slot_rejects_first_three_quarters_of_hour():
+    for m in (1, 12, 26, 33, 44):
+        assert not predictor.is_metar_slot_minute(m)
+
+
+# ── high-water mark de max_obs (el feed retira obs entre polls) ──
+
+def test_max_obs_high_water_holds_after_feed_retracts():
+    from datetime import date, datetime, timezone
+    predictor._MAX_OBS_HWM.clear()
+    day = date(2026, 7, 25)
+    t1 = datetime(2026, 7, 25, 21, 56, tzinfo=timezone.utc)
+    v, ts = predictor._max_obs_high_water("KLAS", day, 111.9, t1)
+    assert (v, ts) == (111.9, t1)
+    # Siguiente poll: el feed ya no sirve la obs de 111.9.
+    v, ts = predictor._max_obs_high_water("KLAS", day, 109.0, None)
+    assert v == 111.9 and ts == t1, "el max del día no puede bajar"
+
+
+def test_max_obs_high_water_still_rises():
+    from datetime import date, datetime, timezone
+    predictor._MAX_OBS_HWM.clear()
+    day = date(2026, 7, 25)
+    predictor._max_obs_high_water("KLAS", day, 109.0, None)
+    t2 = datetime(2026, 7, 25, 22, 56, tzinfo=timezone.utc)
+    v, ts = predictor._max_obs_high_water("KLAS", day, 113.0, t2)
+    assert (v, ts) == (113.0, t2)
+
+
+def test_max_obs_high_water_resets_next_day():
+    from datetime import date
+    predictor._MAX_OBS_HWM.clear()
+    predictor._max_obs_high_water("KLAS", date(2026, 7, 25), 113.0, None)
+    v, _ = predictor._max_obs_high_water("KLAS", date(2026, 7, 26), 80.0, None)
+    assert v == 80.0, "el día nuevo arranca limpio"
+    assert all(k[1] == date(2026, 7, 26) for k in predictor._MAX_OBS_HWM)
+
+
+def test_max_obs_high_water_ignores_sentinel():
+    from datetime import date
+    predictor._MAX_OBS_HWM.clear()
+    v, _ = predictor._max_obs_high_water("KLAS", date(2026, 7, 25), -999, None)
+    assert v == -999
+    assert not predictor._MAX_OBS_HWM

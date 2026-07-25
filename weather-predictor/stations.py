@@ -17,6 +17,15 @@ id fue "KLGA" (LaGuardia) como legacy pero el fetch de obs y el forecast
 Open-Meteo *ya* apuntaban a Central Park vía overrides ocultos. Rename
 KLGA→KNYC removió esa capa de confusión — el id ahora refleja la fuente
 real de datos. Nunca reintroducir "KLGA" como estación.
+
+DOCTRINA HOUSTON (2026-07-25): el mercado KXHIGHTHOU liquida con el CLI de
+**Houston/Hobby (KHOU, loc "HOU")**, no con Bush Intercontinental (KIAH).
+Verificado contra el settle real de Kalshi en dos días: 07-24 Hobby 94 /
+Bush 95 → Kalshi resolvió "93° to 94°"; 07-25 Hobby 92 / Bush 95 → mercado
+en "92° or below" a 88¢. Hobby corre 1-3°F más fresco en verano (brisa de
+la bahía), así que el sesgo no es un offset corregible. Auditar cada
+estación nueva contra el `result` de Kalshi de un día ya liquidado —
+19/20 estaban bien, ésta no.
 """
 from __future__ import annotations
 
@@ -41,7 +50,7 @@ STATIONS: list[StationConfig] = [
     StationConfig("KBOS", "KXHIGHTBOS",  "BOS", 12, 17,  -71.01),
     StationConfig("KMIA", "KXHIGHMIA",   "MIA", 14, 17,  -80.29),
     StationConfig("KMDW", "KXHIGHCHI",   "MDW", 14, 17,  -87.75),
-    StationConfig("KIAH", "KXHIGHTHOU",  "IAH", 14, 17,  -95.34),
+    StationConfig("KHOU", "KXHIGHTHOU",  "HOU", 14, 17,  -95.28),
     StationConfig("KSFO", "KXHIGHTSFO",  "SFO", 12, 15, -122.38),
     StationConfig("KAUS", "KXHIGHAUS",   "AUS", 14, 17,  -97.67),
     StationConfig("KDEN", "KXHIGHDEN",   "DEN", 13, 16, -104.67),
