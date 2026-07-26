@@ -91,7 +91,12 @@ def _conn() -> sqlite3.Connection:
                      ("humidity_pct", "REAL"),
                      ("today_min_obs", "REAL"),
                      ("convective_ambient", "INTEGER"),
-                     ("narrative_line", "TEXT")]:
+                     ("narrative_line", "TEXT"),
+                     # Piso de observación (2026-07-26): sin estas dos no hay
+                     # forma de medir después si el clamp cambió algo ni cuántas
+                     # veces actuó por estación.
+                     ("obs_floor_n", "INTEGER"),
+                     ("obs_floor_delta_f", "REAL")]:
         if col not in existing:
             c.execute(f"ALTER TABLE station_snapshots ADD COLUMN {col} {typ}")
     # Codex Round 5 (2026-06-29): señales para que agent_monitor las lea sin
@@ -287,6 +292,7 @@ def poll_one(station_id: str, c: sqlite3.Connection) -> None:
          wind_mph, wind_dir_deg, wind_dir_card, wind_gust_mph, wind_chill_f,
          pressure_inhg, pressure_trend_3h, dewpoint_f, humidity_pct,
          today_min_obs, convective_ambient, narrative_line,
+         obs_floor_n, obs_floor_delta_f,
          pred_calibrated_f, bias_f, bias_applied, bias_path,
          ext_med_f, ext_spread_f, ext_diff_f,
          difficulty_score, difficulty_label, difficulty_reasons_json,
@@ -296,6 +302,7 @@ def poll_one(station_id: str, c: sqlite3.Connection) -> None:
          roi_mid_pct, trades_mid,
          brier_us_7d, brier_kalshi_7d, signal_error)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                ?, ?,
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (ts, station_id, snap.current_temp_f, snap.today_max_obs,
@@ -307,6 +314,7 @@ def poll_one(station_id: str, c: sqlite3.Connection) -> None:
          snap.dewpoint_f, snap.humidity_pct,
          snap.today_min_obs, 1 if snap.convective_ambient else 0,
          snap.narrative_line or None,
+         snap.obs_floor_n, snap.obs_floor_delta_f,
          sig["pred_calibrated_f"], sig["bias_f"], sig["bias_applied"], sig["bias_path"],
          sig["ext_med_f"], sig["ext_spread_f"], sig["ext_diff_f"],
          sig["difficulty_score"], sig["difficulty_label"], sig["difficulty_reasons_json"],

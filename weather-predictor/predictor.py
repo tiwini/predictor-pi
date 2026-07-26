@@ -135,6 +135,11 @@ class Snapshot:
     peak_state: PeakState = PeakState.PRE_WINDOW
     peak_state_candidate: PeakState = PeakState.PRE_WINDOW
     peak_window_open: bool = False
+    # Piso de observación (2026-07-26): cuántos miembros venían por debajo del
+    # max ya observado y cuánto había que subir al peor. Telemetría para poder
+    # medir en semanas si el clamp cambió algo — 0 significa que no actuó.
+    obs_floor_n: int = 0
+    obs_floor_delta_f: float | None = None
     # extended METAR fields (may be None if unavailable)
     dewpoint_f: float | None = None
     humidity_pct: float | None = None
@@ -265,6 +270,32 @@ def parse_convective_flags(raw: str) -> bool:
     if not raw:
         return False
     return bool(_CONVECTIVE_TS_RE.search(raw)) or bool(_CONVECTIVE_CB_TCU_RE.search(raw))
+
+
+def apply_obs_floor(daily_maxes: list, floor: float | None) -> tuple:
+    """Re-impone el piso físico: el máximo del día no puede quedar por debajo
+    del máximo ya observado.
+
+    Los miembros nacen con ese piso (`dmax = max([max_obs] + vals)`), pero los
+    ajustes posteriores — seasonal, anclaje climático, bias tracker, ext_shift —
+    restan grados de `daily_maxes` y lo rompen. Medido 2026-07-26 sobre 4092
+    celdas estación × día × hora local de tarde: 176 con la predicción por
+    debajo del max ya observado, y el settle del NWS terminó en o sobre ese max
+    en **174**. No es una apuesta agresiva, es un error con piso conocido.
+
+    Se clampea la distribución entera, no sólo la mediana, para que percentiles
+    y `our_p_for_bin` queden coherentes (el heisenbug ens_med vs bins de KLAS
+    salió justo de ajustar una cosa y no la otra).
+
+    Devuelve (daily_maxes, n_por_debajo, delta_del_peor).
+    """
+    if not daily_maxes or floor is None:
+        return (daily_maxes, 0, None)
+    below = [v for v in daily_maxes if v < floor]
+    if not below:
+        return (daily_maxes, 0, None)
+    return ([v if v >= floor else floor for v in daily_maxes],
+            len(below), round(floor - min(below), 2))
 
 
 CARDINALS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
@@ -1263,6 +1294,13 @@ def build_snapshot(station: Station) -> Snapshot:
     except Exception:
         ext_shift_info = None
 
+    # Último paso de la cadena de ajustes: re-imponer el piso de la observación.
+    # Va acá a propósito — después de seasonal, clima, bias y ext_shift, que son
+    # los que lo rompen, y antes de que algo derive de daily_maxes (narrative,
+    # bins, Snapshot).
+    daily_maxes, obs_floor_n, obs_floor_delta_f = apply_obs_floor(
+        daily_maxes, max_obs if max_obs is not None and max_obs > -900 else None)
+
     # Fable #5 (2026-07-15): peak state 3-way con ventana + tendencia + ensemble.
     # Anchor a max_obs (QC'd), no a current (5-min feed puede tener redondeo).
     # ↗ subiendo: default, sigue habiendo espacio de subida
@@ -1337,6 +1375,8 @@ def build_snapshot(station: Station) -> Snapshot:
         _p50 = _sorted_dm[len(_sorted_dm) // 2]
         _diff = _p50 - curr_t
         _parts.append(f"ens_p50 {_diff:+.1f} sobre current")
+    if obs_floor_n:
+        _parts.append(f"piso obs {max_obs:.0f}° ({obs_floor_n}m)")
     if convective_ambient:
         _parts.append("CONVECTIVE")
     narrative_line = " · ".join(_parts)
@@ -1384,6 +1424,8 @@ def build_snapshot(station: Station) -> Snapshot:
         today_max_obs_ts=max_obs_ts,
         obs_count=len(obs_today),
         ensemble_daily_maxes=daily_maxes,
+        obs_floor_n=obs_floor_n,
+        obs_floor_delta_f=obs_floor_delta_f,
         forecast_next_hours=forecast,
         prob_rising=prob_rising,
         peak_status=peak_status,

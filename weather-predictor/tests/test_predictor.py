@@ -156,3 +156,39 @@ def test_max_obs_high_water_ignores_sentinel():
     v, _ = predictor._max_obs_high_water("KLAS", date(2026, 7, 25), -999, None)
     assert v == -999
     assert not predictor._MAX_OBS_HWM
+
+
+def test_obs_floor_lifts_members_below_observed_max():
+    """Los miembros nacen con piso en max_obs, pero bias/ext_shift restan grados
+    y lo rompen. El clamp lo re-impone sobre la distribución entera."""
+    out, n, delta = predictor.apply_obs_floor([88.0, 90.0, 91.0, 93.0], 91.0)
+    assert out == [91.0, 91.0, 91.0, 93.0]
+    assert n == 2
+    assert delta == 3.0          # el peor miembro venía 3°F por debajo
+
+
+def test_obs_floor_noop_when_all_above():
+    out, n, delta = predictor.apply_obs_floor([92.0, 93.0], 91.0)
+    assert out == [92.0, 93.0]
+    assert (n, delta) == (0, None)
+
+
+def test_obs_floor_ignores_missing_floor():
+    """Sin obs válida (sentinel -999 ya filtrado por el caller) no se toca nada."""
+    out, n, delta = predictor.apply_obs_floor([88.0, 90.0], None)
+    assert out == [88.0, 90.0]
+    assert (n, delta) == (0, None)
+
+
+def test_obs_floor_empty_distribution():
+    assert predictor.apply_obs_floor([], 91.0) == ([], 0, None)
+
+
+def test_obs_floor_preserves_length_for_weighted_members():
+    """daily_maxes viene con repetición por peso bayesiano: el clamp no puede
+    cambiar el tamaño de la distribución o los percentiles se corren."""
+    dist = [85.0] * 10 + [92.0] * 23
+    out, n, _ = predictor.apply_obs_floor(dist, 90.0)
+    assert len(out) == len(dist) == 33
+    assert n == 10
+    assert min(out) == 90.0
