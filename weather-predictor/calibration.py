@@ -173,6 +173,12 @@ def _conn() -> sqlite3.Connection:
     do_cols = {r[1] for r in c.execute("PRAGMA table_info(day_outcomes)").fetchall()}
     if "min_obs_f" not in do_cols:
         c.execute("ALTER TABLE day_outcomes ADD COLUMN min_obs_f REAL")
+    # 2026-07-26: settle_day puede caer al CF6 cuando el CLI ya expiró de
+    # /products. Sin esta columna no se distingue el settle que Kalshi usa
+    # (CLI) del prelim mensual, y la doctrina del proyecto es no mezclar
+    # fuentes de settle a ciegas. NULL en filas viejas = 'cli'.
+    if "source" not in do_cols:
+        c.execute("ALTER TABLE day_outcomes ADD COLUMN source TEXT")
     # Fable Round 2 (2026-07-10 tras snapshot 4h): la guarda de fase 2
     # compara vs interpolación lineal entre METARs flanqueantes (no vs
     # nearest accepted). Delta 5-min ≠ delta 90-min: rampa matinal KPHX
@@ -314,7 +320,8 @@ def _fetch_archive_max(station, target_date: date) -> float | None:
 
 
 def settle_day(station, target_date: date,
-               allow_archive_fallback: bool = False) -> float | None:
+               allow_archive_fallback: bool = False,
+               allow_cf6: bool = True) -> float | None:
     """Fetch max for target_date, mark all snapshots for that (station, date).
 
     Sólo NWS CLI por defecto (mismo source que Kalshi liquida). Open-Meteo
@@ -324,17 +331,27 @@ def settle_day(station, target_date: date,
     nunca va a publicar (días viejos). Devuelve None si NWS no tiene final.
     """
     max_f, min_f = nws_cli.fetch_max_min_for(station.id, target_date)
+    source = "cli"
+    if max_f is None and allow_cf6:
+        # /products sirve el CLI sólo ~2-3 días; pasado eso el único NWS que
+        # queda para ese día es el CF6 del mes. Es PRELIMINARY y Kalshi liquida
+        # con el CLI, así que entra únicamente cuando el CLI ya no está —
+        # nunca lo sobrescribe. Un hueco es peor que un valor prelim.
+        max_f, min_f = nws_cli.fetch_max_min_cf6(station.id, target_date)
+        if max_f is not None:
+            source = "cf6"
     if max_f is None and allow_archive_fallback:
         max_f = _fetch_archive_max(station, target_date)
+        source = "archive"
     if max_f is None:
         return None
     c = _conn()
     c.execute("""INSERT OR REPLACE INTO day_outcomes
-                 (station_id, date, max_obs_f, settled_at, min_obs_f)
-                 VALUES (?, ?, ?, ?, ?)""",
+                 (station_id, date, max_obs_f, settled_at, min_obs_f, source)
+                 VALUES (?, ?, ?, ?, ?, ?)""",
               (station.id, target_date.isoformat(), float(max_f),
                datetime.utcnow().isoformat(),
-               float(min_f) if min_f is not None else None))
+               float(min_f) if min_f is not None else None, source))
     # update outcomes on all snapshots for that day
     cur = c.execute("""SELECT id, op, threshold, bin_half
                        FROM prediction_snapshots

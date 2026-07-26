@@ -70,4 +70,31 @@ STATION_IDS: list[str] = [s.id for s in STATIONS]
 PEAK_HOURS: dict[str, tuple[int, int]] = {s.id: (s.peak_lo, s.peak_hi) for s in STATIONS}
 STATION_TO_SERIES: dict[str, str] = {s.id: s.kalshi_series for s in STATIONS}
 STATION_TO_LOCATION: dict[str, str] = {s.id: s.nws_cli_loc for s in STATIONS}
+
+# IANA timezone por estación (DST-aware vía zoneinfo). Vivía en streaks.py;
+# movido aquí 2026-07-26 porque nws_cli también la necesita — el CLI hay que
+# leerlo sabiendo cuándo terminó el día local de la estación, si no se aceptan
+# reports parciales del día en curso.
+STATION_TZ: dict[str, str] = {
+    "KPHX": "America/Phoenix",
+    "KLAX": "America/Los_Angeles",
+    "KLAS": "America/Los_Angeles",
+    "KNYC": "America/New_York",
+    "KBOS": "America/New_York",
+    "KMIA": "America/New_York",
+    "KDCA": "America/New_York",
+    "KPHL": "America/New_York",
+    "KATL": "America/New_York",
+    "KMDW": "America/Chicago",
+    "KHOU": "America/Chicago",
+    "KAUS": "America/Chicago",
+    "KSAT": "America/Chicago",
+    "KDFW": "America/Chicago",
+    "KMSY": "America/Chicago",
+    "KOKC": "America/Chicago",
+    "KMSP": "America/Chicago",
+    "KDEN": "America/Denver",
+    "KSFO": "America/Los_Angeles",
+    "KSEA": "America/Los_Angeles",
+}
 STATION_TO_LON: dict[str, float] = {s.id: s.lon for s in STATIONS}

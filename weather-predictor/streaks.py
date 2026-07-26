@@ -16,29 +16,9 @@ from zoneinfo import ZoneInfo
 from stations import STATION_IDS
 
 
-# IANA timezone por estación (DST-aware vía zoneinfo).
-STATION_TZ: dict[str, str] = {
-    "KPHX": "America/Phoenix",
-    "KLAX": "America/Los_Angeles",
-    "KLAS": "America/Los_Angeles",
-    "KNYC": "America/New_York",
-    "KBOS": "America/New_York",
-    "KMIA": "America/New_York",
-    "KDCA": "America/New_York",
-    "KPHL": "America/New_York",
-    "KATL": "America/New_York",
-    "KMDW": "America/Chicago",
-    "KHOU": "America/Chicago",
-    "KAUS": "America/Chicago",
-    "KSAT": "America/Chicago",
-    "KDFW": "America/Chicago",
-    "KMSY": "America/Chicago",
-    "KOKC": "America/Chicago",
-    "KMSP": "America/Chicago",
-    "KDEN": "America/Denver",
-    "KSFO": "America/Los_Angeles",
-    "KSEA": "America/Los_Angeles",
-}
+# IANA timezone por estación: vive en stations.py (single source), se re-exporta
+# aquí para no romper `from streaks import STATION_TZ`.
+from stations import STATION_TZ  # noqa: E402,F401
 
 WINDOWS_LOCAL: tuple[int, ...] = (6, 9, 12, 15, 17)
 THRESH_F: float = 1.5
