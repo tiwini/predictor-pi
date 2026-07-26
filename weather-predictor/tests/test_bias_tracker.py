@@ -12,6 +12,22 @@ import pytest
 import bias_tracker as bt
 
 
+def _morning_utc(station: str, date_str: str, local_hour: int = 9) -> str:
+    """Timestamp UTC que corresponde a `local_hour` en la estación.
+
+    Los snapshots se guardan en UTC pero la ventana de early_pred se evalúa en
+    hora LOCAL, así que sembrar "12:00Z" para todas significaba 05:00 en Phoenix
+    y 08:00 en Boston. El helper vuelve la intención explícita: "un snapshot de
+    las 9 de la mañana allá".
+    """
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    from stations import STATION_TZ
+    y, m, d = (int(x) for x in date_str.split("-"))
+    local = datetime(y, m, d, local_hour, tzinfo=ZoneInfo(STATION_TZ[station]))
+    return local.astimezone(ZoneInfo("UTC")).isoformat()
+
+
 def _seed(db_path: Path, station: str, rows):
     """rows: list of (date_str, actual_max_f, early_pred_f).
     early_pred_f may be None to simulate missing snapshot."""
@@ -40,7 +56,7 @@ def _seed(db_path: Path, station: str, rows):
                 "INSERT INTO prediction_snapshots "
                 "(station_id,date,snapshot_time,slot,is_auto,expr,op,threshold,predicted_p) "
                 "VALUES (?,?,?,?,?,?,?,?,?)",
-                (station, d, f"{d}T12:00:00+00:00", 0, 1,
+                (station, d, _morning_utc(station, d), 0, 1,
                  "auto", "~", float(pred), 0.5),
             )
     con.commit()
@@ -507,3 +523,76 @@ def test_skips_pre_dawn_snapshot(db):
     r = bt.compute_bias("KBOS", today=date(2026, 5, 1), db_path=db)
     assert r["n"] == 2
     assert r["applied"] is False  # below MIN_DAYS=3
+
+
+# ─── ventana de early_pred en hora LOCAL (fix 2026-07-26) ──────────────────
+def _insert_snap(cur, station, date_str, ts_utc, thr, op="~"):
+    cur.execute(
+        "INSERT INTO prediction_snapshots "
+        "(station_id,date,snapshot_time,slot,is_auto,expr,op,threshold,predicted_p) "
+        "VALUES (?,?,?,?,?,?,?,?,?)",
+        (station, date_str, ts_utc, 0, 1, "auto", op, float(thr), 0.5))
+
+
+def test_early_pred_ignores_afternoon_snapshot(db):
+    """El caso que motivó el fix: KMDW tenía snapshots a 20:36Z tomados como
+    'early', que en Chicago son las 15:36 con el día ya resuelto."""
+    _seed(db, "KMDW", [("2026-07-20", 82.0, None)])
+    con = sqlite3.connect(db)
+    cur = con.cursor()
+    _insert_snap(cur, "KMDW", "2026-07-20", "2026-07-20T20:36:00+00:00", 84.0)
+    con.commit()
+    assert bt._early_pred(cur, "KMDW", "2026-07-20") is None
+    con.close()
+
+
+def test_early_window_is_local_not_utc(db):
+    """El mismo instante UTC cae dentro o fuera según la estación: 14:00Z son
+    07:00 en Phoenix (fuera) y 10:00 en Boston (dentro, EDT)."""
+    _seed(db, "KPHX", [("2026-07-20", 110.0, None)])
+    con = sqlite3.connect(db)
+    cur = con.cursor()
+    _insert_snap(cur, "KPHX", "2026-07-20", "2026-07-20T14:00:00+00:00", 108.0)
+    _insert_snap(cur, "KBOS", "2026-07-20", "2026-07-20T14:00:00+00:00", 80.0)
+    con.commit()
+    assert bt._early_pred(cur, "KPHX", "2026-07-20") is None
+    assert bt._early_pred(cur, "KBOS", "2026-07-20") == 80.0
+    con.close()
+
+
+def test_early_pred_skips_instrumented_kalshi_bins(db):
+    """op='b' son bordes de bin de Kalshi, no predicciones puntuales. La
+    variante condicional no los excluía y podía tomar 116.0 como 'pred'."""
+    _seed(db, "KPHX", [("2026-07-20", 110.0, None)])
+    con = sqlite3.connect(db)
+    cur = con.cursor()
+    _insert_snap(cur, "KPHX", "2026-07-20",
+                 _morning_utc("KPHX", "2026-07-20"), 116.0, op="b")
+    con.commit()
+    assert bt._early_pred(cur, "KPHX", "2026-07-20") is None
+    con.close()
+
+
+def test_early_pred_medians_first_three_in_window(db):
+    """Mediana de los 3 primeros de la ventana (robustez al exploratorio), y el
+    cuarto ya no entra."""
+    _seed(db, "KPHX", [("2026-07-20", 110.0, None)])
+    con = sqlite3.connect(db)
+    cur = con.cursor()
+    for i, thr in enumerate((94.0, 77.0, 82.0, 200.0)):
+        _insert_snap(cur, "KPHX", "2026-07-20",
+                     f"2026-07-20T16:0{i}:00+00:00", thr)   # 09:0i local MST
+    con.commit()
+    assert bt._early_pred(cur, "KPHX", "2026-07-20") == 82.0
+    con.close()
+
+
+def test_early_pred_treats_naive_timestamp_as_utc(db):
+    """calibration.record() usa datetime.utcnow(), que es naive."""
+    _seed(db, "KPHX", [("2026-07-20", 110.0, None)])
+    con = sqlite3.connect(db)
+    cur = con.cursor()
+    _insert_snap(cur, "KPHX", "2026-07-20", "2026-07-20T16:00:00", 105.0)
+    con.commit()
+    assert bt._early_pred(cur, "KPHX", "2026-07-20") == 105.0
+    con.close()

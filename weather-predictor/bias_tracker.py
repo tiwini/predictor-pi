@@ -15,8 +15,12 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import date as _date
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+from zoneinfo import ZoneInfo
+
+from stations import STATION_TZ
 
 DEFAULT_DB = Path(__file__).parent / "calibration.db"
 
@@ -24,6 +28,12 @@ N_DAYS = 7
 ALPHA = 0.4              # weight on most recent day; older = (1-α)^k * α
 MIN_DAYS = 3             # need ≥ this many settled days with early prediction
 APPLY_THRESHOLD = 0.7    # only apply correction if |bias| ≥ this (skip noise)
+
+# Ventana LOCAL de la que sale early_pred, y cuántos snapshots se medianizan.
+# El borde superior no es arbitrario: 12h es la apertura de ventana de pico más
+# temprana del roster (KLAX/KBOS/KSFO), o sea "antes de que el pico influya".
+EARLY_WINDOW_LOCAL = (8, 12)
+N_EARLY = 3
 
 # Regime-shift detector: si los últimos REGIME_K días tienen residuos del mismo
 # signo y |media| ≥ REGIME_MIN_ABS, restringimos el EWMA a esos K para no dilatar
@@ -77,6 +87,55 @@ SEASONAL_OFFSET_F = {
 SEASONAL_OFFSET_ACTIVE_SINCE = "2026-07-06"  # ISO date
 
 
+def _early_pred(cur, station_id: str, date_str: str) -> Optional[float]:
+    """Mediana de los primeros N_EARLY snapshots que caen en la ventana matinal
+    **local** de la estación. None si ese día no tiene ninguno.
+
+    Antes el filtro era `snapshot_time > date || 'T08:00'` comparando strings, y
+    `snapshot_time` está en UTC: para estaciones en UTC-4..UTC-7 ese corte es
+    01:00-04:00 local, o sea **no filtraba nada**. Medido en KMDW 2026-07-26, el
+    "early_pred" salió de snapshots de 13:17Z, 20:36Z y 17:43Z según el día — el
+    de 20:36Z es 15:36 hora local, con el día prácticamente resuelto, así que el
+    error medido no era el de la predicción matinal.
+
+    Unifica lo que antes estaba duplicado y divergido entre compute_bias y
+    compute_bias_conditional: la variante condicional tomaba `LIMIT 1` (sin la
+    mediana de 3 que arregló el outlier exploratorio en Codex Round 4) y no
+    excluía `op='b'`, así que podía tomar el borde de un bin de Kalshi
+    instrumentado como si fuera una predicción puntual.
+    """
+    tzname = STATION_TZ.get(station_id)
+    if tzname is None:
+        return None
+    tz = ZoneInfo(tzname)
+    lo, hi = EARLY_WINDOW_LOCAL
+    cur.execute(
+        """
+        SELECT snapshot_time, threshold FROM prediction_snapshots
+        WHERE station_id = ? AND date = ? AND is_auto = 1
+          AND (op IS NULL OR op != 'b') AND threshold IS NOT NULL
+        ORDER BY snapshot_time ASC
+        """,
+        (station_id, date_str),
+    )
+    vals: list[float] = []
+    for ts_s, thr in cur.fetchall():
+        try:
+            ts = datetime.fromisoformat(ts_s)
+        except (TypeError, ValueError):
+            continue
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)   # record() usa utcnow() naive
+        if lo <= ts.astimezone(tz).hour < hi:
+            vals.append(float(thr))
+            if len(vals) >= N_EARLY:
+                break
+    if not vals:
+        return None
+    vals.sort()
+    return vals[len(vals) // 2]
+
+
 def compute_bias(station_id: str, today: Optional[_date] = None,
                  db_path: Path = DEFAULT_DB,
                  ext_diff: Optional[float] = None) -> dict:
@@ -96,11 +155,11 @@ def compute_bias(station_id: str, today: Optional[_date] = None,
     con = sqlite3.connect(db_path)
     try:
         cur = con.cursor()
-        # early_pred = mediana de los primeros 3 auto-snapshots tras T08:00.
-        # Fix Codex Round 4 (2026-06-25): un solo snapshot exploratorio
-        # (ej. KNYC 06-21: 94 → 77 → 82 en 2 min antes de estabilizar en 82)
-        # antes contaba como "early_pred" y metía un err fantasma de +12°F al
-        # EWMA. La mediana de 3 es robusta a un outlier inicial.
+        # early_pred = mediana de los primeros N_EARLY snapshots de la ventana
+        # matinal local (ver _early_pred). La mediana de 3 viene del fix Codex
+        # Round 4 (2026-06-25): un solo snapshot exploratorio (ej. KNYC 06-21:
+        # 94 → 77 → 82 en 2 min antes de estabilizar en 82) contaba como
+        # "early_pred" y metía un err fantasma de +12°F al EWMA.
         cur.execute(
             """
             SELECT date, max_obs_f FROM day_outcomes
@@ -112,19 +171,8 @@ def compute_bias(station_id: str, today: Optional[_date] = None,
         outcomes = cur.fetchall()
         rows = []
         for d, actual in outcomes:
-            cur.execute(
-                """
-                SELECT threshold FROM prediction_snapshots
-                WHERE station_id = ? AND date = ? AND is_auto = 1
-                  AND (op IS NULL OR op != 'b')
-                  AND snapshot_time > ? || 'T08:00' AND threshold IS NOT NULL
-                ORDER BY snapshot_time ASC LIMIT 3
-                """,
-                (station_id, d, d),
-            )
-            thresholds = sorted(t[0] for t in cur.fetchall())
-            if thresholds:
-                pred = thresholds[len(thresholds) // 2]
+            pred = _early_pred(cur, station_id, d)
+            if pred is not None:
                 # Compensación del offset estacional: si el snapshot es
                 # anterior a la fecha de activación, sumamos |offset| al pred
                 # histórico para que el err reflejado sea el residual
@@ -297,24 +345,19 @@ def compute_bias_conditional(station_id: str, predicted_max_f: float,
         cur = con.cursor()
         cur.execute(
             """
-            SELECT o.date, o.max_obs_f,
-                   (SELECT threshold FROM prediction_snapshots p
-                    WHERE p.station_id = o.station_id
-                      AND p.date = o.date
-                      AND p.is_auto = 1
-                      AND p.snapshot_time > o.date || 'T08:00'
-                    ORDER BY p.snapshot_time ASC LIMIT 1) AS early_pred
-            FROM day_outcomes o
-            WHERE o.station_id = ? AND o.date < ?
-            ORDER BY o.date DESC LIMIT ?
+            SELECT date, max_obs_f FROM day_outcomes
+            WHERE station_id = ? AND date < ?
+            ORDER BY date DESC LIMIT ?
             """,
             (station_id, today.isoformat(), N_DAYS),
         )
-        all_rows = [
-            (d, float(actual), float(pred))
-            for d, actual, pred in cur.fetchall()
-            if pred is not None
-        ]
+        # Mismo early_pred que compute_bias — antes esta variante tenía su propia
+        # subquery con LIMIT 1 y sin excluir op='b'.
+        all_rows = []
+        for d, actual in cur.fetchall():
+            pred = _early_pred(cur, station_id, d)
+            if pred is not None:
+                all_rows.append((d, float(actual), float(pred)))
     finally:
         con.close()
 
