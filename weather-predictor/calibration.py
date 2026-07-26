@@ -321,7 +321,8 @@ def _fetch_archive_max(station, target_date: date) -> float | None:
 
 def settle_day(station, target_date: date,
                allow_archive_fallback: bool = False,
-               allow_cf6: bool = True) -> float | None:
+               allow_cf6: bool = True,
+               instrument: bool = True) -> float | None:
     """Fetch max for target_date, mark all snapshots for that (station, date).
 
     Sólo NWS CLI por defecto (mismo source que Kalshi liquida). Open-Meteo
@@ -345,6 +346,21 @@ def settle_day(station, target_date: date,
         source = "archive"
     if max_f is None:
         return None
+    return _record_settle(station, target_date, max_f, min_f, source,
+                          instrument=instrument)
+
+
+def _record_settle(station, target_date: date, max_f: float,
+                   min_f: float | None, source: str,
+                   instrument: bool = True) -> float:
+    """Persiste un settle ya obtenido: day_outcomes, outcomes pendientes,
+    day_summary, bets y (opcional) pares de isotónica.
+
+    `instrument=False` escribe el settle pero no instrumenta bins de Kalshi ni
+    refitea la isotónica. Backfillear settles viejos es rellenar datos; abrir
+    cientos de días nuevos a la calibración global es cambiar el modelo, y eso
+    se decide midiendo, aparte.
+    """
     c = _conn()
     c.execute("""INSERT OR REPLACE INTO day_outcomes
                  (station_id, date, max_obs_f, settled_at, min_obs_f, source)
@@ -364,11 +380,13 @@ def settle_day(station, target_date: date,
                   (1 if hit else 0, sid))
     # Instrumentar bins de Kalshi como (predicted_p, outcome) pairs para
     # isotonic. Fuente unbiased (todos los bins del poller, no solo apostados).
-    try:
-        n_bins = _instrument_kalshi_bins(c, station.id, target_date,
-                                         float(max_f))
-    except Exception:
-        n_bins = 0
+    n_bins = 0
+    if instrument:
+        try:
+            n_bins = _instrument_kalshi_bins(c, station.id, target_date,
+                                             float(max_f))
+        except Exception:
+            n_bins = 0
     c.commit()
     c.close()
     try:
@@ -749,6 +767,49 @@ def settle_coverage(station, days_back: int = 4) -> list:
         if max_f is not None:
             settled.append((date.fromisoformat(ds), max_f))
     return settled
+
+
+def backfill_month_cf6(station, year: int, month: int,
+                       instrument: bool = False) -> list[tuple[date, float]]:
+    """Rellena los días de `day_outcomes` que faltan en un mes, vía CF6.
+
+    Por qué no llamar settle_day día por día: intenta el CLI primero, o sea 1
+    listado + hasta 10 productos por día contra api.weather.gov, y para días
+    viejos todos fallan porque el CLI ya expiró de /products. El CF6 trae el
+    mes entero en un producto: 2 requests por estación.
+
+    No sobrescribe: sólo escribe días ausentes. El día en curso se salta (el
+    F-6 lo trae parcial o con 'M'). `instrument=False` por defecto — ver
+    _record_settle.
+
+    Devuelve [(date, max_f)] de lo escrito.
+    """
+    got = nws_cli.fetch_month_extremes(station.id, year, month)
+    if not got:
+        return []
+    today = datetime.now(station.tz).date()
+    c = _conn()
+    have = {r[0] for r in c.execute(
+        """SELECT date FROM day_outcomes
+           WHERE station_id=? AND max_obs_f IS NOT NULL""", (station.id,))}
+    c.close()
+    written = []
+    for ds in sorted(got):
+        if ds in have:
+            continue
+        d = date.fromisoformat(ds)
+        if d >= today:
+            continue
+        max_f, min_f = got[ds]
+        if max_f is None:
+            continue
+        try:
+            _record_settle(station, d, float(max_f), min_f, "cf6",
+                           instrument=instrument)
+        except Exception:
+            continue
+        written.append((d, float(max_f)))
+    return written
 
 
 def reliability(station_id: str | None = None,
