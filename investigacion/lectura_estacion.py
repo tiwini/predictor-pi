@@ -34,6 +34,10 @@ PEAK_DONE_H = {"KLAX": 13, "KMIA": 14, "KNYC": 14, "KBOS": 15, "KDEN": 15,
                "KDCA": 16, "KMDW": 16, "KATL": 16, "KPHL": 16,
                "KPHX": 17, "KSEA": 17, "KLAS": 17, "KOKC": 17}
 DIFFICULTY_DOCTRINE = 70.0   # feedback_triple_convergence_fails_regime_roto
+# Los trades anteriores a esta fecha viven sobre el ledger roto (auditoría
+# Fable 2026-07-07): su ROI global era +53.2% sobre 548 trades y se sabe
+# artefacto. Cualquier ROI que los mezcle es ese número, no el del sistema.
+LEDGER_FIX_DATE = "2026-07-07"
 
 
 def f(v, w=6, d=1):
@@ -130,7 +134,32 @@ def main() -> int:
     print(f"  bias                {f(r['bias_f'], 5, 2)}  aplicado={r['bias_applied']} path={r['bias_path']}")
     print(f"  streak hot/cold     {r['streak_block_hot']}/{r['streak_block_cold']}"
           f"   cold_bias_block={r['cold_bias_block']}")
-    print(f"  ROI hist            {f(r['roi_hist_pct'], 6, 1)}%  ({r['trades_settled']} trades)")
+    # `roi_hist_pct` sale de A.historical_roi sobre TODA la historia, y el
+    # grueso de esa historia es anterior al arreglo del ledger del 2026-07-07
+    # — el periodo cuyo ROI +53% global ya se sabe artefacto. Mostrarlo pelado
+    # hace que KLAS parezca +87% rentable cuando esos 72 trades son todos
+    # pre-fix y no ha ejecutado ninguno desde entonces. Se parte en dos.
+    cal = sqlite3.connect(f"file:{CALIB_DB}?mode=ro", uri=True)
+    print("  ROI (ejecutados, sin shadow)")
+    for lab, cond in (("pre  07-07 ⚠ledger roto", "date < ?"),
+                      ("post 07-07 ✓fiable", "date >= ?")):
+        q = cal.execute(
+            f"""SELECT COUNT(*), COALESCE(SUM(pnl),0), COALESCE(SUM(stake),0),
+                       COALESCE(SUM(won),0)
+                FROM simulated_bets
+                WHERE station_id=? AND won IS NOT NULL AND blocked_by IS NULL
+                  AND {cond}""", (st, LEDGER_FIX_DATE)).fetchone()
+        n, pnl, stake, wins = q
+        roi = f"{100 * pnl / stake:+.1f}%" if stake else "   —"
+        print(f"    {lab:24s} N={n:3d}  ROI {roi:>8s}  wins {wins}/{n}")
+    sh = cal.execute(
+        """SELECT COUNT(*) FROM simulated_bets WHERE station_id=? AND
+           won IS NOT NULL AND blocked_by IS NOT NULL AND date >= ?""",
+        (st, LEDGER_FIX_DATE)).fetchone()[0]
+    if sh:
+        print(f"    {'shadow post-fix':24s} N={sh:3d}  (bloqueados por guardas, "
+              f"no ejecutados)")
+    cal.close()
 
     if args.cli:
         try:
