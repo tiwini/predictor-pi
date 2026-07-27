@@ -204,11 +204,11 @@ def main() -> int:
             if (b["yes_mid"] is not None and b["yes_mid"] <= 0.02
                     and ev["recommended_side"] == "YES"):
                 extra.append("cola 1¢: edge = piso del calibrador, no señal")
-            # Punto ciego conocido: el bin que CONTIENE our_pred_f se clasifica
-            # 'mid', y bias_blocks_direction devuelve False para mid. O sea el
-            # gate de ext_diff protege los bins hot y cold pero deja abierto
-            # justo el de nuestra predicción — el que más sufre cuando el modelo
-            # está caliente. Visto en KBOS 2026-07-27 con ext_diff +2.8.
+            # `bias_blocks_direction` devuelve False para 'mid' por diseño, así
+            # que el bin que contiene our_pred_f no recibe el gate de ext_diff.
+            # Aviso genérico; no se ha observado un caso real todavía — el
+            # candidato de KBOS 2026-07-27 resultó ser 'cold', porque
+            # our_pred_f era 81.045 y el borde del bin 81 queda por debajo.
             if (ev["direction"] == "mid" and ext_d is not None
                     and abs(ext_d) >= A.EXT_DIFF_BLOCK_THRESHOLD):
                 extra.append(f"⚠ bin mid: el gate de ext_diff ({ext_d:+.1f}) NO cubre mid")
