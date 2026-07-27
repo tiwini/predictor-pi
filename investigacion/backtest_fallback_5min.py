@@ -76,6 +76,31 @@ escrito antes de medirla.
   operativamente. Se reporta 60 y 120 como sensibilidad, SIN poder de decisión:
   si el veredicto cambia entre ellos, la conclusión es que el resultado no es
   robusto y se queda en zona gris.
+
+--------------------- TERCER PRE-REGISTRO (mismo día) -----------------------
+A petición explícita del usuario tras el rechazo de B y C. Escrito antes de
+medir.
+
+  D = max(A, max(current_f) - MARGEN)
+
+  Razón del margen, principiada y NO ajustada a los datos: el feed llega en °C
+  enteros, así que un "31°C" representa el intervalo [30.5, 31.5)°C =
+  [86.9, 88.7)°F. El valor real puede estar hasta 0.9°F por debajo del
+  reportado. Para un PISO, lo conservador es el extremo inferior del intervalo:
+  reportado - 0.9°F. Es medio escalón de °C, no un parámetro libre.
+
+  MARGEN = 0.9°F es la variante pre-registrada. Se reportan 0.5 y 1.4 como
+  sensibilidad SIN poder de decisión (misma regla que antes: si el veredicto
+  cambia entre ellas, no es robusto).
+
+  MISMO criterio de decisión que B y C, sin relajarlo.
+
+  ⚠ SALVAGUARDA POR HIPÓTESIS MÚLTIPLE. Ésta es la TERCERA hipótesis probada
+  sobre los mismos 507 station-days. Con suficientes variantes, alguna acaba
+  pasando por azar. Por eso, aunque D cumpla el criterio, la decisión NO es
+  "aplicar" sino "candidata": exige confirmación sobre station-days FRESCOS
+  (posteriores a 2026-07-27) con N>=100 antes de tocar el pipeline. Un
+  resultado in-sample no basta para modificar el piso.
 =============================================================================
 """
 from __future__ import annotations
@@ -136,6 +161,9 @@ def collect() -> list[dict]:
              hi.strftime("%Y-%m-%dT%H:%M:%S"))).fetchall()
         for gap_min in (60, 90, 120):
             row[f"C{gap_min}"] = _conditional_max(serie, gap_min)
+        # D: feed siempre, pero descontando medio escalón de °C como margen.
+        for margen in (0.5, 0.9, 1.4):
+            row[f"D{margen}"] = a if c is None else max(a, c - margen)
         out.append(row)
     return out
 
@@ -231,6 +259,32 @@ def main() -> int:
             v = "ZONA GRIS"
         tag = "  <- pre-registrada" if gap_min == 90 else "  (sensibilidad)"
         print(f"  {key:12s} {len(over):5d}/{len(sub):<5d} {p:4.1f}% "
+              f"{exc:+8.2f} {g:+8.2f} {cl:7.0f}%  {v}{tag}")
+
+    # ---- estimador D: feed con margen por el redondeo ----
+    print("\n" + "=" * 74)
+    print("D — FEED SIEMPRE, DESCONTANDO EL REDONDEO DE °C")
+    print(f"  {'variante':12s} {'se pasa':>16s} {'exceso':>8s} {'gap':>8s} "
+          f"{'cerrado':>8s}  veredicto")
+    for margen in (0.5, 0.9, 1.4):
+        key = f"D{margen}"
+        sub = [r for r in rows if r.get(key) is not None]
+        if not sub:
+            continue
+        over = [r for r in sub if r[key] > r["settle"] + 0.05]
+        p_ = 100 * len(over) / len(sub)
+        exc = statistics.median([r[key] - r["settle"] for r in over]) if over else 0.0
+        g = statistics.median([r["settle"] - r[key] for r in sub])
+        ga_sub = statistics.median([r["settle"] - r["A"] for r in sub])
+        cl = 100 * (ga_sub - g) / ga_sub if ga_sub else 0.0
+        if cl >= 50 and p_ <= 5 and exc <= 0.5:
+            v = "CANDIDATA (exige datos frescos)"
+        elif p_ > 15 or exc > 1.0:
+            v = "RECHAZAR"
+        else:
+            v = "ZONA GRIS"
+        tag = "  <- pre-registrada" if margen == 0.9 else "  (sensibilidad)"
+        print(f"  {key:12s} {len(over):5d}/{len(sub):<5d} {p_:4.1f}% "
               f"{exc:+8.2f} {g:+8.2f} {cl:7.0f}%  {v}{tag}")
 
     print("\nPor estación (gap cerrado / veces que B se pasa):")
