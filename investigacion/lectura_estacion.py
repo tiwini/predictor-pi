@@ -102,13 +102,25 @@ def main() -> int:
     # Incidente del 2026-07-27: api.weather.gov cortó los METAR horarios a las
     # ~12:53Z en 14 de 20 estaciones y el max_obs quedó hasta 12.6°F por debajo
     # de lo ya observado (KOKC). Sin este aviso la lectura parece normal.
-    cur_f = r["current_f"]
+    # Comparar contra el `current_f` puntual no basta: si el pico perdido ya
+    # pasó y la temperatura bajó, el actual queda por debajo del max congelado
+    # y no se nota nada (KMIA hoy: pico de 87.8 a las 14:30Z, ya en 82.4 y el
+    # max en 82.9). Hay que mirar el MÁXIMO de current_f en lo que va de día
+    # local, que es la huella que el feed de 5 min dejó en los snapshots.
     mx = r["today_max_obs"]
-    if cur_f is not None and mx is not None and mx > -900 and cur_f > mx + 0.5:
-        print(f"  ⚠ MAX OBS CONGELADO  actual {cur_f:.1f}°F > max {mx:.1f}°F "
-              f"(+{cur_f - mx:.1f}) — falta el METAR de esta hora;")
-        print("    el piso de observación y todo lo que dependa de max_obs "
-              "van bajos. No leer max_obs como el máximo real de hoy.")
+    day_start = datetime.combine(now_local.date(), datetime.min.time(), tz)
+    peak_5min = con.execute(
+        """SELECT MAX(current_f) FROM station_snapshots
+           WHERE station=? AND ts>=? AND current_f IS NOT NULL""",
+        (st, day_start.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"))
+    ).fetchone()[0]
+    if (peak_5min is not None and mx is not None and mx > -900
+            and peak_5min > mx + 0.5):
+        print(f"  ⚠ MAX OBS CONGELADO  el feed de 5-min llegó a "
+              f"{peak_5min:.1f}°F y el max dice {mx:.1f}°F "
+              f"({peak_5min - mx:+.1f})")
+        print("    falta el METAR horario; el piso de observación y todo lo "
+              "que dependa de max_obs van bajos.")
     cli_h = CLI_LATE_HOUR[st]
     if r["today_max_cli"] is not None:
         print(f"  CLI parcial         {f(r['today_max_cli'])}°F   ← piso duro, "
