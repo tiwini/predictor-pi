@@ -205,10 +205,9 @@ def _local(station, hour, minute=0):
 
 
 def test_cli_window_opens_half_hour_before_expected_issue():
-    # KDEN emite ~17:36 local, o sea la ventana abre 17:06.
-    assert predictor.cli_window_open("KDEN", _local("KDEN", 17, 10))
-    assert not predictor.cli_window_open("KDEN", _local("KDEN", 17, 0))
-    assert not predictor.cli_window_open("KDEN", _local("KDEN", 16, 0))
+    # KDEN emite ~16:32 local, o sea la ventana abre 16:02.
+    assert predictor.cli_window_open("KDEN", _local("KDEN", 16, 10))
+    assert not predictor.cli_window_open("KDEN", _local("KDEN", 15, 50))
 
 
 def test_cli_window_closed_at_morning_cli_hour():
@@ -218,11 +217,10 @@ def test_cli_window_closed_at_morning_cli_hour():
 
 
 def test_cli_window_is_per_station():
-    """KHOU emite 4h antes que KATL: una hora fija serviría a una y no a la otra."""
-    at_1700 = 17
-    assert predictor.cli_window_open("KHOU", _local("KHOU", at_1700))
-    assert not predictor.cli_window_open("KATL", _local("KATL", at_1700))
-    assert predictor.cli_window_open("KATL", _local("KATL", 21))
+    """KOKC emite a las 16:11 y KLAX a las 18:38: una hora fija no sirve."""
+    assert predictor.cli_window_open("KOKC", _local("KOKC", 16, 30))
+    assert not predictor.cli_window_open("KLAX", _local("KLAX", 16, 30))
+    assert predictor.cli_window_open("KLAX", _local("KLAX", 19))
 
 
 def test_cli_window_stays_open_until_end_of_local_day():
@@ -271,3 +269,16 @@ def test_current_floor_respects_the_rounding_margin():
     floor = 0.0 - predictor.CURRENT_FLOOR_MARGIN_F + 87.8
     assert abs(floor - 86.9) < 1e-9
     assert floor < 87.8
+
+
+def test_cli_hour_is_the_FIRST_afternoon_report_not_the_last():
+    """Varios WFO emiten 2-3 CLI al día. La tabla original guardaba el ÚLTIMO y
+    el poller perdía hasta 3.9h de piso duro (KATL: 16:40 vs 20:35). Tomar el
+    primero es seguro porque el CLI sólo sube el piso y nunca sobreestima."""
+    from stations import CLI_LATE_HOUR
+    # las 7 que estaban mal, con la hora del primer report de la tarde
+    for st, hi in (("KATL", 17.0), ("KMSP", 17.0), ("KDFW", 17.0),
+                   ("KSAT", 17.0), ("KAUS", 17.0), ("KDEN", 17.0),
+                   ("KOKC", 17.0)):
+        assert CLI_LATE_HOUR[st] < hi, (
+            f"{st}: {CLI_LATE_HOUR[st]} parece el CLI tardío, no el primero")

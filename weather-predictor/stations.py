@@ -99,8 +99,20 @@ STATION_TZ: dict[str, str] = {
 }
 STATION_TO_LON: dict[str, float] = {s.id: s.lon for s in STATIONS}
 
-# Hora local a la que el WFO emite el CLI **de la tarde** — el que reporta el
-# día en curso con el max acumulado a fidelidad ASOS 1-min. Medida 2026-07-26
+# Hora local del PRIMER CLI de la tarde — el primero que reporta el día en curso
+# con el max acumulado a fidelidad ASOS 1-min.
+#
+# CORREGIDA 2026-07-27. La medida original tomaba el ÚLTIMO CLI del mismo día, y
+# varios WFO emiten dos o tres: KATL saca uno a las 16:40 y otro a las 20:35, así
+# que la tabla decía 20.6 y el poller se perdía **3.9 horas** de piso duro. Igual
+# KMSP (3.3h), KDFW (3.0h), KSAT y KAUS (1.2h), KDEN (1.1h), KOKC (1.0h).
+#
+# Tomar el primero es estrictamente mejor porque el CLI se consume como PISO y
+# sólo sube: si el siguiente trae más, el piso sube; nunca baja. Verificado que
+# el primero NUNCA sobreestima al final — 23 iguales, 9 por debajo, **0 por
+# encima** sobre las 7 estaciones afectadas.
+#
+# Medida original 2026-07-26
 # sobre ~7 días por estación (probe `investigacion/cli_intraday_probe.py`): la
 # hora es estable dentro de ±0.3h, y ese report ya trae el max FINAL del día en
 # 93 de 102 días-estación (91%). Los 9 desacuerdos son **todos negativos**
@@ -111,8 +123,8 @@ STATION_TO_LON: dict[str, float] = {s.id: s.lon for s in STATIONS}
 # daño porque el valor sólo entra vía max(), pero la ventana de fetch arranca
 # medio hora antes de ESTA hora para no gastar requests en el matinal.
 CLI_LATE_HOUR: dict[str, float] = {
-    "KHOU": 16.4, "KMIA": 16.5, "KMDW": 16.6, "KNYC": 16.6, "KMSY": 16.8,
-    "KOKC": 17.2, "KPHX": 17.4, "KDCA": 17.4, "KBOS": 17.5, "KLAS": 17.5,
-    "KDEN": 17.6, "KSFO": 17.6, "KPHL": 17.6, "KAUS": 17.8, "KSAT": 17.8,
-    "KSEA": 18.3, "KLAX": 18.6, "KDFW": 19.5, "KMSP": 19.8, "KATL": 20.6,
+    "KOKC": 16.2, "KHOU": 16.4, "KMIA": 16.4, "KDEN": 16.5, "KDFW": 16.5,
+    "KMSP": 16.5, "KMDW": 16.6, "KNYC": 16.6, "KAUS": 16.6, "KSAT": 16.6,
+    "KATL": 16.7, "KMSY": 16.8, "KPHX": 17.4, "KDCA": 17.5, "KBOS": 17.5,
+    "KLAS": 17.5, "KSFO": 17.6, "KPHL": 17.6, "KSEA": 18.3, "KLAX": 18.6,
 }
