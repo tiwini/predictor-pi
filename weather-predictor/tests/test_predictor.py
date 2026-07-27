@@ -225,8 +225,13 @@ def test_cli_window_is_per_station():
     assert predictor.cli_window_open("KATL", _local("KATL", 21))
 
 
-def test_cli_window_closes_after_trail():
-    assert not predictor.cli_window_open("KMIA", _local("KMIA", 23, 0))
+def test_cli_window_stays_open_until_end_of_local_day():
+    """Cerrarla 4h después de la emisión dejó a KMSY y KDCA prediciendo 1°F por
+    debajo del CLI ya publicado, a las 21-22h local. El settle todavía no
+    existe a esa hora, así que el parcial sigue siendo la mejor fuente."""
+    assert predictor.cli_window_open("KMIA", _local("KMIA", 23, 0))
+    assert predictor.cli_window_open("KDCA", _local("KDCA", 22, 14))
+    assert predictor.cli_window_open("KMSY", _local("KMSY", 21, 10))
 
 
 def test_cli_window_unknown_station_never_opens():

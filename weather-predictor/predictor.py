@@ -309,11 +309,17 @@ def apply_obs_floor(daily_maxes: list, floor: float | None) -> tuple:
 
 # Ventana en la que tiene sentido pedirle el CLI parcial al NWS: desde media
 # hora antes de la emisión esperada (medida por estación, ±0.3h de varianza) y
-# hasta 4h después. Antes de eso el único CLI de hoy es el matinal, que trae el
-# max hasta las ~6am — inofensivo porque entra vía max(), pero es un request
-# regalado. Después, el settle nocturno ya recoge el valor definitivo.
+# hasta el final del día local. Antes de eso el único CLI de hoy es el matinal,
+# que trae el max hasta las ~6am — inofensivo porque entra vía max(), pero es
+# un request regalado.
+#
+# Sin techo a propósito. La primera versión cortaba 4h después de la emisión y
+# la noche del deploy se vio el costo: a las 21:10 local KMSY predecía 93-94°F
+# con el CLI ya diciendo 95, y KDCA daba "84 or below" contra un CLI de 85. En
+# los dos casos el mercado tenía razón, nosotros no, y el CLI habría corregido
+# — pero la ventana ya se había cerrado. El gasto de mantenerla abierta lo
+# absorbe el TTL del cache.
 CLI_WINDOW_LEAD_H = 0.5
-CLI_WINDOW_TRAIL_H = 4.0
 
 
 def cli_window_open(station_id: str, now_local: datetime) -> bool:
@@ -322,7 +328,7 @@ def cli_window_open(station_id: str, now_local: datetime) -> bool:
     if expected is None:
         return False
     hour = now_local.hour + now_local.minute / 60
-    return (expected - CLI_WINDOW_LEAD_H) <= hour <= (expected + CLI_WINDOW_TRAIL_H)
+    return hour >= (expected - CLI_WINDOW_LEAD_H)
 
 
 CARDINALS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
