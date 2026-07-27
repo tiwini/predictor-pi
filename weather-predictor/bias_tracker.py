@@ -431,6 +431,10 @@ def compute_bias_conditional(station_id: str, predicted_max_f: float,
         bias = _extreme_bias(active)
         bias_path = "regime"
     else:
+        # Mismo criterio que en compute_bias: winsorizar sólo el path EWMA.
+        # Esta rama es la que usa KPHX (bucket "cálido", n=4), así que sin
+        # esto el cap no llegaba a la única estación que lo necesitaba.
+        active = _winsorize(active)
         bias = _weighted_bias(active)
         bias_path = "ewma"
     applied = abs(bias) >= APPLY_THRESHOLD
@@ -461,7 +465,8 @@ def compute_bias_conditional(station_id: str, predicted_max_f: float,
         "bias_path": bias_path,
         "today_percentile": today_percentile,
         "reason": "" if applied else f"|bias|={abs(bias):.2f}°F < umbral {APPLY_THRESHOLD}°F (régimen)",
-        "samples": [(d, pred - actual) for d, actual, pred in bucket],
+        "samples": [(d, pred - actual) for d, actual, pred in active],
+        "samples_raw": [(d, pred - actual) for d, actual, pred in bucket],
         "global_bias": base.get("bias", 0.0),
         "global_n": base.get("n", 0),
     }

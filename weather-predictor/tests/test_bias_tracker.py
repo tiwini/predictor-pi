@@ -641,3 +641,14 @@ def test_winsorize_preserves_sign_of_the_outlier():
     rows = [("2026-07-26", 110.0, 130.0)]
     _, actual, pred = bias_tracker._winsorize(rows)[0]
     assert pred > actual, "un error positivo enorme debe seguir siendo positivo"
+
+
+def test_conditional_path_also_winsorizes():
+    """El fix inicial sólo tocó compute_bias y KPHX usa el CONDICIONAL, así que
+    el cap no llegaba a la única estación que lo necesitaba. Verificado en vivo:
+    el bias seguía en +3.29 tras desplegar."""
+    import inspect
+    import bias_tracker
+    src = inspect.getsource(bias_tracker.compute_bias_conditional)
+    assert "_winsorize" in src, (
+        "compute_bias_conditional debe winsorizar igual que compute_bias")
