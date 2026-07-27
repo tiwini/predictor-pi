@@ -596,3 +596,48 @@ def test_early_pred_treats_naive_timestamp_as_utc(db):
     con.commit()
     assert bt._early_pred(cur, "KPHX", "2026-07-20") == 105.0
     con.close()
+
+
+# ── winsorización de muestras (2026-07-27) ───────────────────────────────────
+
+def test_cap_is_the_p95_of_observed_errors():
+    """6.5°F es el p95 de |error| sobre 503 días-estación, no un número a ojo.
+    Si alguien lo baja para que a una estación le salga el bias que quiere,
+    este test lo señala."""
+    import bias_tracker
+    assert bias_tracker.BIAS_SAMPLE_CAP_F == 6.5
+
+
+def test_winsorize_clips_extreme_positive_error():
+    """Caso KPHX 2026-07-26: error de +8.91 en un día de ruptura de régimen
+    (117 -> 110) volcaba el EWMA pese a que las otras 4 muestras eran negativas."""
+    import bias_tracker
+    rows = [("2026-07-26", 110.0, 118.91)]      # error +8.91
+    out = bias_tracker._winsorize(rows)
+    d, actual, pred = out[0]
+    assert d == "2026-07-26"
+    assert actual == 110.0
+    assert abs((pred - actual) - bias_tracker.BIAS_SAMPLE_CAP_F) < 1e-9
+
+
+def test_winsorize_clips_extreme_negative_error():
+    import bias_tracker
+    rows = [("2026-07-20", 100.0, 88.0)]        # error -12.0
+    out = bias_tracker._winsorize(rows)
+    _, actual, pred = out[0]
+    assert abs((pred - actual) + bias_tracker.BIAS_SAMPLE_CAP_F) < 1e-9
+
+
+def test_winsorize_leaves_normal_samples_untouched():
+    """El 94.6% de las muestras cae dentro del cap y no debe moverse."""
+    import bias_tracker
+    rows = [("2026-07-25", 110.0, 109.0), ("2026-07-24", 100.0, 102.0)]
+    assert bias_tracker._winsorize(rows) == rows
+
+
+def test_winsorize_preserves_sign_of_the_outlier():
+    """Se recorta, no se excluye: el día extremo sigue aportando su signo."""
+    import bias_tracker
+    rows = [("2026-07-26", 110.0, 130.0)]
+    _, actual, pred = bias_tracker._winsorize(rows)[0]
+    assert pred > actual, "un error positivo enorme debe seguir siendo positivo"

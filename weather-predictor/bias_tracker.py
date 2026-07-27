@@ -70,6 +70,42 @@ NUDGE_ATTEN_HALF = 0.5
 # days and warm on cold days. Splitting samples by climatology percentile
 # of the predicted max lets us correct each regime separately, but only if
 # we have enough data in the matching bucket.
+# Winsorización de las muestras (2026-07-27). Un día cuyo error supera al 95%
+# de los errores históricos no es sesgo sistemático: es una ruptura de régimen,
+# y el EWMA — que pondera lo más reciente — deja que un solo día así mande sobre
+# el resto. Caso que lo motivó: KPHX el 07-26 marcó +8.91°F (pasó de 117 a 110)
+# y volcó el bias a +3.29 pese a que las otras cuatro muestras eran negativas;
+# la predicción cayó de 113.35 a 110.06 con el mercado y la climatología en
+# 112-114.
+#
+# El cap es el **p95 de |error| de la predicción matinal** medido sobre 503
+# días-estación: p50 1.93 · p75 3.22 · p90 5.05 · **p95 6.50** · p99 11.26.
+# Sale de la distribución de errores, NO de ajustar el resultado de ninguna
+# estación — se fijó antes de mirar su efecto. Recorta el 5.4% de las muestras.
+#
+# Se winsoriza (recorta) en vez de excluir: el día extremo sigue aportando su
+# signo y parte de su magnitud, que es información real; lo que se le quita es
+# la capacidad de dominar el EWMA él solo.
+BIAS_SAMPLE_CAP_F = 6.5
+
+
+def _winsorize(rows: list) -> list:
+    """Recorta el error de cada muestra a ±BIAS_SAMPLE_CAP_F.
+
+    `rows` son tuplas (date_str, actual, pred) y el error es (pred - actual),
+    así que para recortar el error hay que mover `pred`.
+    """
+    out = []
+    for d, actual, pred in rows:
+        err = pred - actual
+        if err > BIAS_SAMPLE_CAP_F:
+            pred = actual + BIAS_SAMPLE_CAP_F
+        elif err < -BIAS_SAMPLE_CAP_F:
+            pred = actual - BIAS_SAMPLE_CAP_F
+        out.append((d, actual, pred))
+    return out
+
+
 CONDITIONAL_MIN_DAYS = 3
 COND_BUCKET_EDGE = 50.0  # below = "cold regime", at/above = "warm regime"
 
@@ -187,6 +223,7 @@ def compute_bias(station_id: str, today: Optional[_date] = None,
         con.close()
 
     samples = [(d, pred - actual) for d, actual, pred in rows]
+    samples_raw = samples
 
     if len(rows) < MIN_DAYS:
         return {
@@ -204,6 +241,12 @@ def compute_bias(station_id: str, today: Optional[_date] = None,
         bias = _extreme_bias(active)
         bias_path = "regime"
     else:
+        # La winsorización va SÓLO aquí, no en el path de régimen: ahí el día
+        # extremo ES la señal y `REGIME_SHRINK` ya lo modera con su propia
+        # justificación (autocorrelación lag-1 ~ -0.25). En el EWMA, en cambio,
+        # un único día de ruptura domina por el peso del más reciente.
+        active = _winsorize(active)
+        samples = [(d, pred - actual) for d, actual, pred in active]
         bias = _weighted_bias(active)
         bias_path = "ewma"
     applied = abs(bias) >= APPLY_THRESHOLD
@@ -229,6 +272,7 @@ def compute_bias(station_id: str, today: Optional[_date] = None,
         "applied": applied,
         "reason": reason,
         "samples": samples,
+        "samples_raw": samples_raw,
         "regime_break": regime,
         "sign_nudge": sign_nudge,
         "nudge_f": nudge_f,
