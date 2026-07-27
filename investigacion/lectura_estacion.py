@@ -95,7 +95,20 @@ def main() -> int:
     print(f"  externos (mediana)  {f(r['ext_med_f'])}°F   ext_diff {f(ext_d, 5, 1)}{band}")
 
     print("\nOBSERVACIÓN")
-    print(f"  max obs hoy         {f(r['today_max_obs'])}°F   (feed 5-min)")
+    print(f"  max obs hoy         {f(r['today_max_obs'])}°F   (METAR horario aceptado)")
+    # `current_f` sale del feed de 5 min y `today_max_obs` sólo de METARs
+    # horarios. Si el actual supera al máximo del día, el máximo está
+    # congelado: o falta el METAR de esta hora o el feed dejó de publicarlo.
+    # Incidente del 2026-07-27: api.weather.gov cortó los METAR horarios a las
+    # ~12:53Z en 14 de 20 estaciones y el max_obs quedó hasta 12.6°F por debajo
+    # de lo ya observado (KOKC). Sin este aviso la lectura parece normal.
+    cur_f = r["current_f"]
+    mx = r["today_max_obs"]
+    if cur_f is not None and mx is not None and mx > -900 and cur_f > mx + 0.5:
+        print(f"  ⚠ MAX OBS CONGELADO  actual {cur_f:.1f}°F > max {mx:.1f}°F "
+              f"(+{cur_f - mx:.1f}) — falta el METAR de esta hora;")
+        print("    el piso de observación y todo lo que dependa de max_obs "
+              "van bajos. No leer max_obs como el máximo real de hoy.")
     cli_h = CLI_LATE_HOUR[st]
     if r["today_max_cli"] is not None:
         print(f"  CLI parcial         {f(r['today_max_cli'])}°F   ← piso duro, "
