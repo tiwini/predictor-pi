@@ -101,6 +101,32 @@ medir.
   "aplicar" sino "candidata": exige confirmación sobre station-days FRESCOS
   (posteriores a 2026-07-27) con N>=100 antes de tocar el pipeline. Un
   resultado in-sample no basta para modificar el piso.
+
+============================ RESULTADOS 2026-07-27 ==========================
+507 station-days, 2026-06-25 a 07-26.
+
+                     se pasa   exceso     gap    cerrado   veredicto
+  A (actual)           5.3%    +0.08    +0.98       —
+  B (feed siempre)    29.0%    +0.40    +0.06      94%      RECHAZAR
+  C60                 16.0%    +0.40    +0.40      59%      RECHAZAR
+  C90  (registrada)   12.2%    +0.40    +0.92       6%      ZONA GRIS
+  C120                 9.1%    +0.40    +0.94       4%      ZONA GRIS
+  D0.5                13.8%    +0.10    +0.50      49%      ZONA GRIS
+  D0.9 (registrada)    5.3%    +0.08    +0.90       8%      ZONA GRIS
+  D1.4                 5.3%    +0.08    +0.94       4%      ZONA GRIS
+
+NINGUNA de las tres hipótesis pasa. No se toca el pipeline.
+
+Lectura de por qué, que cierra la línea entera: el gap a cerrar es 0.98°F y el
+escalón del instrumento es 1.8°F, porque el feed llega en °C enteros. La
+cuantización es casi el doble del efecto que se quiere medir, así que las
+variantes sólo mueven el error entre "quedarse corto" y "pasarse" sin poder
+reducirlo. D0.9 lo enseña bien: elimina el riesgo añadido por completo (5.3% y
++0.08°F, idénticos a A) y con él desaparece el beneficio.
+
+La fuente con resolución suficiente es el CLI parcial (ASOS 1-min), que iguala
+el settle el 91% de los días — pero no sale hasta las 16:26-20:34 local, así
+que un corte de mediodía como el de hoy queda descubierto.
 =============================================================================
 """
 from __future__ import annotations
