@@ -179,7 +179,7 @@ def main() -> int:
         print("  (sin bins — mercado cerrado o sin datos)")
     else:
         print(f"  {'bin':22s} {'mercado':>8s} {'our_p':>7s} {'our_cal':>8s} "
-              f"{'edge':>7s} {'dir':>5s}  veredicto")
+              f"{'edge':>7s} {'side':>5s} {'dir':>5s}  veredicto")
         for b in bins:
             ev = A.evaluate_bin(
                 station_id=st, bin_lo=b["bin_lo"], bin_hi=b["bin_hi"],
@@ -204,13 +204,21 @@ def main() -> int:
             if (b["yes_mid"] is not None and b["yes_mid"] <= 0.02
                     and ev["recommended_side"] == "YES"):
                 extra.append("cola 1¢: edge = piso del calibrador, no señal")
+            # Punto ciego conocido: el bin que CONTIENE our_pred_f se clasifica
+            # 'mid', y bias_blocks_direction devuelve False para mid. O sea el
+            # gate de ext_diff protege los bins hot y cold pero deja abierto
+            # justo el de nuestra predicción — el que más sufre cuando el modelo
+            # está caliente. Visto en KBOS 2026-07-27 con ext_diff +2.8.
+            if (ev["direction"] == "mid" and ext_d is not None
+                    and abs(ext_d) >= A.EXT_DIFF_BLOCK_THRESHOLD):
+                extra.append(f"⚠ bin mid: el gate de ext_diff ({ext_d:+.1f}) NO cubre mid")
             reasons = extra + list(ev["blocked_reasons"])
             verdict = "✅ ACTIONABLE" if (ev["actionable"] and not extra) else (
                 " · ".join(reasons)[:70] if reasons else "—")
             print(f"  {(b['label'] or '')[:22]:22s} {f(b['yes_mid'], 8, 2)} "
                   f"{f(b['our_p'], 7, 3)} {f(b['our_p_calibrated'], 8, 3)} "
                   f"{f(edge, 6, 1)}pp {str(ev['recommended_side'] or '-'):>4s}"
-                  f"  {verdict}")
+                  f" {str(ev['direction'] or '-'):>5s}  {verdict}")
 
     print("\nCHECKLIST antes de cualquier llamada (doctrina de memoria)")
     print("  [ ] snapshot age ≤10 min (arriba)")
