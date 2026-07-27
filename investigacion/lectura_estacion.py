@@ -33,7 +33,9 @@ NUNCA_CONVERGE = {"KBOS", "KLAX", "KDCA", "KSEA", "KMDW", "KDEN"}
 PEAK_DONE_H = {"KLAX": 13, "KMIA": 14, "KNYC": 14, "KBOS": 15, "KDEN": 15,
                "KDCA": 16, "KMDW": 16, "KATL": 16, "KPHL": 16,
                "KPHX": 17, "KSEA": 17, "KLAS": 17, "KOKC": 17}
-DIFFICULTY_DOCTRINE = 70.0   # feedback_triple_convergence_fails_regime_roto
+# El gate de difficulty se revocó el 2026-07-06 y el backtest por componente
+# del 2026-07-27 lo confirma sobre 505 station-days: ninguna de las cinco
+# componentes correlaciona con |error|. No se usa para bloquear.
 # Los trades anteriores a esta fecha viven sobre el ledger roto (auditoría
 # Fable 2026-07-07): su ROI global era +53.2% sobre 548 trades y se sabe
 # artefacto. Cualquier ROI que los mezcle es ese número, no el del sistema.
@@ -125,10 +127,13 @@ def main() -> int:
 
     print("\nGATES")
     diff = r["difficulty_score"]
-    if diff is not None and diff > DIFFICULTY_DOCTRINE:
-        print(f"  difficulty          {diff:.0f}  🔴 BLOQUEA (doctrina: no operar >{DIFFICULTY_DOCTRINE:.0f})")
-    else:
-        print(f"  difficulty          {f(diff, 4, 0)}  ok")
+    # NO bloquea. El gate se revocó el 2026-07-06 y el backtest por componente
+    # del 2026-07-27 (N=505 station-days) lo confirma: ninguna de las cinco
+    # componentes correlaciona con |error| — difficulty rho=+0.000, spread
+    # +0.047, anomalía +0.043, eff_n +0.070, ruptura de régimen -0.093 (signo
+    # contrario). Se muestra como contexto, no como veredicto.
+    print(f"  difficulty          {f(diff, 4, 0)}  (informativo — no correlaciona "
+          f"con el error, N=505)")
     if r["difficulty_reasons_json"]:
         print(f"    por qué:          {r['difficulty_reasons_json'][:150]}")
     print(f"  bias                {f(r['bias_f'], 5, 2)}  aplicado={r['bias_applied']} path={r['bias_path']}")
@@ -196,8 +201,6 @@ def main() -> int:
             # con difficulty 94. La doctrina de no operar >70 sigue vigente, así
             # que se aplica acá — si no, esta tabla se contradice con sus GATES.
             extra = []
-            if diff is not None and diff > DIFFICULTY_DOCTRINE:
-                extra.append(f"difficulty {diff:.0f}>{DIFFICULTY_DOCTRINE:.0f}")
             # Cola barata: con el mercado a 1-2¢ el "edge" sale de que la
             # isotónica levanta p hasta su piso (MIN_P=0.03) y el blend lo sube
             # más. No es señal, es el suelo del calibrador.

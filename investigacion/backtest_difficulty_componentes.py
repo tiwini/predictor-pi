@@ -150,6 +150,19 @@ def collect() -> list[dict]:
             pass
         anom_txt = next((x for x in reasons if "anomal" in x), None)
         effn_txt = next((x for x in reasons if "reweight" in x), None)
+        # AÑADIDO 2026-07-27, tras la primera corrida. El pre-registro de
+        # arriba omitió esta componente y hay que decirlo: `regime_breaks>=2`
+        # fuerza overall=100 por una vía distinta de las otras cuatro — no es
+        # "el pronóstico es ruidoso" sino "hoy ya falló", con las obs fuera de
+        # p1-p99. Es la parte de la doctrina con mecanismo causal más claro y
+        # merecía su propia fila. El CRITERIO no se toca: mismos umbrales.
+        rupt_txt = next((x for x in reasons if "ruptura" in x), None)
+        s_rupt = 0.0
+        if rupt_txt:
+            try:
+                s_rupt = float(rupt_txt.split("(")[1].split("h")[0])
+            except Exception:
+                s_rupt = 0.0
         s_anom = s_effn = None
         if anom_txt:      # "anomalía climática (p96)"
             try:
@@ -168,6 +181,7 @@ def collect() -> list[dict]:
             "err_abs": abs(r["ens_med"] - settle),
             "difficulty": r["difficulty_score"],
             "s_spread": s_spread, "s_anom": s_anom, "s_effn": s_effn,
+            "s_rupt": s_rupt,
         })
     return out
 
@@ -183,7 +197,8 @@ def main() -> int:
     print(f"  {'componente':14s} {'N':>5s} {'rho':>7s} {'p':>9s}   veredicto")
     verdicts = {}
     for key, label in (("difficulty", "difficulty"), ("s_spread", "spread"),
-                       ("s_anom", "anomalía"), ("s_effn", "eff_n")):
+                       ("s_anom", "anomalía"), ("s_effn", "eff_n"),
+                       ("s_rupt", "ruptura(h)")):
         pairs = [(r[key], r["err_abs"]) for r in rows if r.get(key) is not None]
         if len(pairs) < 10:
             print(f"  {label:14s} {len(pairs):5d}       —         — (N insuficiente)")
