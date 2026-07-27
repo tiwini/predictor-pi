@@ -46,7 +46,7 @@ POLL_SEC = 300  # 5 min
 # Typical daily-peak window (inclusive-exclusive, local hour). Single source
 # of truth en stations.py; aquí solo importamos. Usado para adaptive polling
 # (predictor_web) y per-hour σ en Bayesian reweight.
-from stations import PEAK_HOURS  # noqa: E402
+from stations import CLI_LATE_HOUR, PEAK_HOURS  # noqa: E402
 
 
 def sigma_for_hour(hour: int, station_id: str) -> float:
@@ -191,6 +191,15 @@ class Snapshot:
     # METAR :51Z de hoy con el grupo, o si es < today_max_obs (no aporta).
     today_max_asos_6h: float | None = None
     today_max_asos_6h_ts: datetime | None = None
+    # F2 pieza 1 (2026-07-26): max del CLI **parcial** de la tarde. Mismo
+    # instrumento con el que Kalshi liquida y misma resolución 1-min, contra
+    # nuestro feed de 5 min que se pierde el pico. Es un PISO, no un settle:
+    # el CLI de la tarde ya trae el max final en 91% de los días y en el 9%
+    # restante se queda corto, nunca largo. Columna aparte de `today_max_obs`
+    # a propósito — esa serie histórica es la base de todas las mediciones
+    # de gap y cambiarle la semántica a mitad de camino las invalidaría.
+    today_max_cli: float | None = None
+    today_max_cli_ts: datetime | None = None   # UTC issuanceTime del report
     # L2 Fable 2026-07-20: TS/CB/TSRA/TCU/GR/VCTS en el METAR raw del current
     # observation. Bandera para consumidores: contexto AI (advertir) + estado
     # #5 (lectura convectiva NO confirma 🔒 ni rompe meseta — la temp puede
@@ -296,6 +305,24 @@ def apply_obs_floor(daily_maxes: list, floor: float | None) -> tuple:
         return (daily_maxes, 0, None)
     return ([v if v >= floor else floor for v in daily_maxes],
             len(below), round(floor - min(below), 2))
+
+
+# Ventana en la que tiene sentido pedirle el CLI parcial al NWS: desde media
+# hora antes de la emisión esperada (medida por estación, ±0.3h de varianza) y
+# hasta 4h después. Antes de eso el único CLI de hoy es el matinal, que trae el
+# max hasta las ~6am — inofensivo porque entra vía max(), pero es un request
+# regalado. Después, el settle nocturno ya recoge el valor definitivo.
+CLI_WINDOW_LEAD_H = 0.5
+CLI_WINDOW_TRAIL_H = 4.0
+
+
+def cli_window_open(station_id: str, now_local: datetime) -> bool:
+    """¿Estamos en la franja horaria en que el CLI de la tarde ya salió?"""
+    expected = CLI_LATE_HOUR.get(station_id)
+    if expected is None:
+        return False
+    hour = now_local.hour + now_local.minute / 60
+    return (expected - CLI_WINDOW_LEAD_H) <= hour <= (expected + CLI_WINDOW_TRAIL_H)
 
 
 CARDINALS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
@@ -1023,6 +1050,25 @@ def build_snapshot(station: Station) -> Snapshot:
             asos_6h_f = temp_f
             asos_6h_ts = ts_metar
 
+    # F2 pieza 1: CLI parcial de la tarde. Sólo dentro de la ventana horaria de
+    # la estación, y nunca deja caer el snapshot si el NWS no responde — es una
+    # mejora del piso, no una dependencia.
+    cli_max_f: float | None = None
+    cli_max_ts: datetime | None = None
+    if cli_window_open(station.id, now_local):
+        try:
+            import nws_cli
+            cli_max_f, cli_max_ts = nws_cli.fetch_intraday_max(station.id, today)
+        except Exception:
+            cli_max_f, cli_max_ts = None, None
+
+    # El piso efectivo del día es el mayor de las dos fuentes. El CLI gana
+    # +1.0°F de mediana (N=486) porque agrega ASOS 1-min y nuestro feed es de
+    # 5 min; cuando el CLI todavía no salió, esto es exactamente max_obs.
+    floor_f = max_obs if max_obs is not None and max_obs > -900 else None
+    if cli_max_f is not None:
+        floor_f = cli_max_f if floor_f is None else max(floor_f, cli_max_f)
+
     # N7 Fable veredicto R4: duración sin cambio + dirección último cambio.
     # Serie = obs aceptadas (filtro :53/:54); no fetch_current. Referencia =
     # último obs aceptado (puede diferir de current_temp_f por segs-mins pero
@@ -1297,12 +1343,16 @@ def build_snapshot(station: Station) -> Snapshot:
     # Último paso de la cadena de ajustes: re-imponer el piso de la observación.
     # Va acá a propósito — después de seasonal, clima, bias y ext_shift, que son
     # los que lo rompen, y antes de que algo derive de daily_maxes (narrative,
-    # bins, Snapshot).
+    # bins, Snapshot). `floor_f` = max(obs del feed, CLI parcial de la tarde).
     daily_maxes, obs_floor_n, obs_floor_delta_f = apply_obs_floor(
-        daily_maxes, max_obs if max_obs is not None and max_obs > -900 else None)
+        daily_maxes, floor_f)
 
     # Fable #5 (2026-07-15): peak state 3-way con ventana + tendencia + ensemble.
     # Anchor a max_obs (QC'd), no a current (5-min feed puede tener redondeo).
+    # OJO: acá va `max_obs` y NO `floor_f` — `curr_t` sale del feed de 5 min y
+    # el CLI mide con ASOS 1-min, así que compararlos cruza instrumentos: con
+    # el CLI 1°F arriba del feed, `below_max` daría True casi siempre y el
+    # estado se iría a 🔒 confirmado antes de tiempo.
     # ↗ subiendo: default, sigue habiendo espacio de subida
     # ▬ meseta: current cerca del max y ventana abierta ("estamos en el pico")
     # 🔒 confirmado: ventana cerrada o (baja del max Y sin señal de subida)
@@ -1375,8 +1425,11 @@ def build_snapshot(station: Station) -> Snapshot:
         _p50 = _sorted_dm[len(_sorted_dm) // 2]
         _diff = _p50 - curr_t
         _parts.append(f"ens_p50 {_diff:+.1f} sobre current")
-    if obs_floor_n:
-        _parts.append(f"piso obs {max_obs:.0f}° ({obs_floor_n}m)")
+    if obs_floor_n and floor_f is not None:
+        # Nombrar la fuente: si el piso lo puso el CLI, el número no está en la
+        # serie de obs y quien lea la línea no podría reconciliarlo.
+        _src = "CLI" if (cli_max_f is not None and cli_max_f > max_obs) else "obs"
+        _parts.append(f"piso {_src} {floor_f:.0f}° ({obs_floor_n}m)")
     if convective_ambient:
         _parts.append("CONVECTIVE")
     narrative_line = " · ".join(_parts)
@@ -1458,6 +1511,8 @@ def build_snapshot(station: Station) -> Snapshot:
         current_temp_last_direction=last_dir,
         today_max_asos_6h=asos_6h_f,
         today_max_asos_6h_ts=asos_6h_ts,
+        today_max_cli=cli_max_f,
+        today_max_cli_ts=cli_max_ts,
         convective_ambient=convective_ambient,
         narrative_line=narrative_line,
     )

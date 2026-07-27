@@ -192,3 +192,42 @@ def test_obs_floor_preserves_length_for_weighted_members():
     assert len(out) == len(dist) == 33
     assert n == 10
     assert min(out) == 90.0
+
+
+# --- ventana de fetch del CLI intradía ---------------------------------------
+
+def _local(station, hour, minute=0):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    from stations import STATION_TZ
+    return datetime(2026, 7, 25, hour, minute,
+                    tzinfo=ZoneInfo(STATION_TZ[station]))
+
+
+def test_cli_window_opens_half_hour_before_expected_issue():
+    # KDEN emite ~17:36 local, o sea la ventana abre 17:06.
+    assert predictor.cli_window_open("KDEN", _local("KDEN", 17, 10))
+    assert not predictor.cli_window_open("KDEN", _local("KDEN", 17, 0))
+    assert not predictor.cli_window_open("KDEN", _local("KDEN", 16, 0))
+
+
+def test_cli_window_closed_at_morning_cli_hour():
+    """El CLI matinal (~06:30) trae el max hasta esa hora. Entra vía max() sin
+    hacer daño, pero pedirlo es un request regalado."""
+    assert not predictor.cli_window_open("KPHX", _local("KPHX", 6, 30))
+
+
+def test_cli_window_is_per_station():
+    """KHOU emite 4h antes que KATL: una hora fija serviría a una y no a la otra."""
+    at_1700 = 17
+    assert predictor.cli_window_open("KHOU", _local("KHOU", at_1700))
+    assert not predictor.cli_window_open("KATL", _local("KATL", at_1700))
+    assert predictor.cli_window_open("KATL", _local("KATL", 21))
+
+
+def test_cli_window_closes_after_trail():
+    assert not predictor.cli_window_open("KMIA", _local("KMIA", 23, 0))
+
+
+def test_cli_window_unknown_station_never_opens():
+    assert not predictor.cli_window_open("KJFK", _local("KPHX", 17, 30))

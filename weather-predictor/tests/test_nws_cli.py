@@ -179,6 +179,105 @@ def test_fetch_ignores_partial_when_final_missing():
         assert nws_cli.fetch_max_min_for("KDEN", date(2026, 7, 25)) == (None, None)
 
 
+# --- CLI intradía: el parcial como PISO, nunca como settle -------------------
+# Mismo día KDEN 2026-07-25. El WFO emitió tres reports: matinal 06:37 (max 77),
+# tarde 16:31 (max 101 = el final) y el definitivo 01:39 del día siguiente.
+# `fetch_max_min_for` sólo acepta el tercero; `fetch_intraday_max` quiere el más
+# reciente de HOY, que a las 16:31 ya sabe el número.
+CLI_DEN_TARDE = """
+...THE DENVER CO CLIMATE SUMMARY FOR JULY 25 2026...
+
+TEMPERATURE (F)
+ MAXIMUM        101R   240 PM  99    1931  90     11       92
+ MINIMUM         71    519 AM  51    1915  61     10       57
+"""
+
+_LIST_DEN_SAME_DAY = {"@graph": [
+    {"id": "tarde", "issuanceTime": "2026-07-25T22:31:00+00:00"},
+    {"id": "matinal", "issuanceTime": "2026-07-25T12:37:00+00:00"},
+]}
+
+
+def _den_same_day_get(url, params=None, headers=None, timeout=None):
+    if url.endswith("/products"):
+        return _resp(200, _LIST_DEN_SAME_DAY)
+    if url.endswith("/products/tarde"):
+        return _resp(200, {"productText": CLI_DEN_TARDE})
+    return _resp(200, {"productText": CLI_DEN_PARCIAL})
+
+
+def test_intraday_takes_latest_partial_of_today():
+    """El de la tarde gana al matinal — es el más reciente del mismo día."""
+    with patch("nws_cli.requests.get", side_effect=_den_same_day_get):
+        mx, issued = nws_cli.fetch_intraday_max("KDEN", date(2026, 7, 25))
+    assert mx == 101.0
+    assert issued is not None and issued.hour == 22
+
+
+def test_intraday_none_when_no_product_for_today():
+    list_payload = {"@graph": [
+        {"id": "ayer", "issuanceTime": "2026-07-25T07:39:00+00:00"},
+    ]}
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        if url.endswith("/products"):
+            return _resp(200, list_payload)
+        return _resp(200, {"productText": CLI_DEN_FINAL})  # reporta el 25
+
+    with patch("nws_cli.requests.get", side_effect=fake_get):
+        assert nws_cli.fetch_intraday_max("KDEN", date(2026, 7, 26)) == (None, None)
+
+
+def test_intraday_cache_is_separate_from_settle_cache():
+    """LA guarda de este feature. Si ambos compartieran cache, el parcial de la
+    tarde se serviría como settle y volveríamos al bug que dejó KDEN liquidado
+    en 77°F. Tras leer el intradía, el settle debe seguir diciendo 'todavía no'."""
+    with patch("nws_cli.requests.get", side_effect=_den_same_day_get):
+        assert nws_cli.fetch_intraday_max("KDEN", date(2026, 7, 25))[0] == 101.0
+        # Ningún producto de la lista fue emitido después de la medianoche
+        # local del 26, así que el settle no tiene material válido.
+        assert nws_cli.fetch_max_min_for("KDEN", date(2026, 7, 25)) == (None, None)
+
+
+def test_intraday_respects_ttl():
+    calls = []
+
+    def counting_get(url, params=None, headers=None, timeout=None):
+        calls.append(url)
+        return _den_same_day_get(url, params, headers, timeout)
+
+    with patch("nws_cli.requests.get", side_effect=counting_get):
+        nws_cli.fetch_intraday_max("KDEN", date(2026, 7, 25), now=1000.0)
+        n_first = len(calls)
+        # dentro del TTL: servido de cache
+        nws_cli.fetch_intraday_max("KDEN", date(2026, 7, 25), now=1000.0 + 60)
+        assert len(calls) == n_first
+        # pasado el TTL: vuelve a pegarle a la API (el CLI de la tarde puede
+        # ser seguido por otro con el max ya subido)
+        nws_cli.fetch_intraday_max(
+            "KDEN", date(2026, 7, 25), now=1000.0 + nws_cli.INTRADAY_TTL_S + 1)
+        assert len(calls) > n_first
+
+
+def test_intraday_caches_negative_result():
+    """Sin CLI de hoy no se repega a la API cada 3 min durante el pico."""
+    calls = []
+
+    def counting_get(url, params=None, headers=None, timeout=None):
+        calls.append(url)
+        return _resp(200, {"@graph": []})
+
+    with patch("nws_cli.requests.get", side_effect=counting_get):
+        nws_cli.fetch_intraday_max("KDEN", date(2026, 7, 25), now=500.0)
+        n = len(calls)
+        nws_cli.fetch_intraday_max("KDEN", date(2026, 7, 25), now=500.0 + 30)
+        assert len(calls) == n
+
+
+def test_intraday_unsupported_station():
+    assert nws_cli.fetch_intraday_max("KJFK", date(2026, 7, 25)) == (None, None)
+
+
 # --- CF6 (F-6) ---------------------------------------------------------------
 # Recorte del producto real CF6PHX del 2026-07-26 (filas 1, 20, 24, 25) más una
 # fila sintética con MAX/MIN missing y el arranque de la página 2, que repite el

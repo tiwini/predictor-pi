@@ -98,3 +98,21 @@ STATION_TZ: dict[str, str] = {
     "KSEA": "America/Los_Angeles",
 }
 STATION_TO_LON: dict[str, float] = {s.id: s.lon for s in STATIONS}
+
+# Hora local a la que el WFO emite el CLI **de la tarde** — el que reporta el
+# día en curso con el max acumulado a fidelidad ASOS 1-min. Medida 2026-07-26
+# sobre ~7 días por estación (probe `investigacion/cli_intraday_probe.py`): la
+# hora es estable dentro de ±0.3h, y ese report ya trae el max FINAL del día en
+# 93 de 102 días-estación (91%). Los 9 desacuerdos son **todos negativos**
+# (-1/-2°F): el parcial nunca sobreestima, así que sirve como piso duro.
+#
+# Cada WFO emite además un CLI matinal (~06:30 local) con el max hasta esa hora,
+# que es el que envenenó el settle de KDEN el 07-25 (ver nws_cli). Acá no hace
+# daño porque el valor sólo entra vía max(), pero la ventana de fetch arranca
+# medio hora antes de ESTA hora para no gastar requests en el matinal.
+CLI_LATE_HOUR: dict[str, float] = {
+    "KHOU": 16.4, "KMIA": 16.5, "KMDW": 16.6, "KNYC": 16.6, "KMSY": 16.8,
+    "KOKC": 17.2, "KPHX": 17.4, "KDCA": 17.4, "KBOS": 17.5, "KLAS": 17.5,
+    "KDEN": 17.6, "KSFO": 17.6, "KPHL": 17.6, "KAUS": 17.8, "KSAT": 17.8,
+    "KSEA": 18.3, "KLAX": 18.6, "KDFW": 19.5, "KMSP": 19.8, "KATL": 20.6,
+}

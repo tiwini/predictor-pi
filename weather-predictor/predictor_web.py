@@ -862,6 +862,11 @@ HTML = """<!doctype html>
                 title="Grupo `1sTTT` del METAR remarks — max 6h computado por ASOS a partir del feed 1-minute (misma fuente que NWS CLI settle). Supera nuestro max del feed 5-min: captura un spike <5min.">
             · ASOS 1-min: {{ asos_6h_display }}</span>
           {% endif %}
+          {% if cli_display %}
+          <span class="muted" style="font-size:.8em;margin-top:.2rem;display:block"
+                title="CLI parcial de la tarde del propio WFO — el mismo producto con el que Kalshi liquida, leído antes del cierre. Trae ya el max final en 91% de los días y en el 9% restante se queda corto, nunca largo: es un piso.">
+            · CLI parcial: {{ cli_display }}</span>
+          {% endif %}
         </span></div>
       <div class="kv"><span class="kv-k">Min obs</span><span>{{ '%.1f' % snap.today_min_obs }}°F</span></div>
       <div class="kv"><span class="kv-k">Pico</span>
@@ -1637,10 +1642,27 @@ def index():
                           f"–{win_end.strftime('%H:%M AST')}")
         asos_6h_display = f"{snap.today_max_asos_6h:.1f}°F{window_str}"
 
+    # F2 pieza 1 (2026-07-26): el CLI parcial de la tarde manda sobre las dos
+    # anteriores como pista de settle — es literalmente el producto con el que
+    # Kalshi liquida, leído antes del cierre. Va después del bloque ASOS a
+    # propósito: si ambos hablan, gana el CLI.
+    cli_display = None
+    if (snap.today_max_cli is not None
+            and settle_hint_f is not None
+            and snap.today_max_cli > settle_hint_f):
+        settle_hint_f = snap.today_max_cli
+        issued_str = ""
+        if snap.today_max_cli_ts is not None:
+            issued_str = (" · emitido "
+                          + snap.today_max_cli_ts.astimezone(PR_TZ)
+                          .strftime("%H:%M AST"))
+        cli_display = f"{snap.today_max_cli:.1f}°F{issued_str}"
+
     return render_template_string(
         HTML, station=station, snap=snap, dash=dash, hero=hero,
         max_obs_ts_local=max_obs_ts_local,
         asos_6h_display=asos_6h_display,
+        cli_display=cli_display,
         settle_hint_f=settle_hint_f,
         current_over_max_note=current_over_max_note,
         dist_divergence_note=dist_divergence_note,
@@ -3659,6 +3681,8 @@ def _compute_stations_table_row(sid: str) -> dict:
         "today_max_obs_ts": _iso(snap.today_max_obs_ts),
         "today_max_asos_6h": snap.today_max_asos_6h,
         "today_max_asos_6h_ts": _iso(snap.today_max_asos_6h_ts),
+        "today_max_cli": snap.today_max_cli,
+        "today_max_cli_ts": _iso(snap.today_max_cli_ts),
         "peak_status": snap.peak_status,
         "peak_state": snap.peak_state.value,
         "peak_window_open": snap.peak_window_open,

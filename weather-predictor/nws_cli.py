@@ -15,6 +15,7 @@ None y dejamos que el caller use fallback (Open-Meteo archive).
 from __future__ import annotations
 
 import re
+import time
 from datetime import date, datetime, timedelta, timezone
 from datetime import time as dtime
 from typing import Optional
@@ -172,6 +173,95 @@ def fetch_max_min_for(
     return (None, None)
 
 
+# ─────────────────── CLI intradía (piso, NO settle) ───────────────────
+#
+# Cache PROPIO, deliberadamente separado de `_cache`. Los valores que viven acá
+# vienen de reports PARCIALES del día en curso: si compartieran cache con
+# `fetch_max_min_for`, un parcial se serviría como settle y volveríamos exacto
+# al bug que dejó KDEN 2026-07-25 liquidado en 77°F en vez de 101. La
+# separación es la guarda — no la borres para "ahorrar un fetch".
+# key → (max_f, issued_at_utc, fetched_at_monotonic)
+_intraday_cache: dict[tuple[str, str],
+                      tuple[Optional[float], Optional[datetime], float]] = {}
+
+INTRADAY_TTL_S = 20 * 60
+
+
+def fetch_intraday_max(
+        station_id: str, target_date: date,
+        limit: int = 6, timeout: float = 15.0, now: Optional[float] = None
+) -> tuple[Optional[float], Optional[datetime]]:
+    """(max_f, issued_at_utc) del CLI más reciente que reporta target_date,
+    **aceptando parciales del día en curso**.
+
+    Esto NO es un settle y no debe escribirse nunca en `day_outcomes`: es el
+    max acumulado según el NWS hasta `issued_at`. Su valor está en que se mide
+    con ASOS 1-min mientras nuestro feed de obs es de 5 min — medido sobre 486
+    días-estación, el CLI de la tarde le gana a nuestro `today_max_obs` una
+    mediana de **+1.0°F**, y en 49% de los días ≥1°F. Se consume como piso
+    (`max(...)`), que es la única operación segura con un parcial: el valor
+    sólo puede subir con el correr del día.
+
+    Devuelve (None, None) si todavía no hay ningún CLI de hoy.
+    """
+    sid = station_id.upper()
+    loc = STATION_TO_LOCATION.get(sid)
+    if loc is None:
+        return (None, None)
+
+    key = (sid, target_date.isoformat())
+    clock = time.monotonic() if now is None else now
+    hit = _intraday_cache.get(key)
+    if hit is not None and clock - hit[2] < INTRADAY_TTL_S:
+        return (hit[0], hit[1])
+
+    headers = {"User-Agent": UA, "Accept": "application/ld+json"}
+    try:
+        r = requests.get(f"{API}/products",
+                         params={"type": "CLI", "location": loc, "limit": limit},
+                         headers=headers, timeout=timeout)
+        if r.status_code != 200:
+            return (None, None)
+        items = r.json().get("@graph", [])
+    except (requests.RequestException, ValueError):
+        return (None, None)
+
+    # Newest-first: el primero cuyo cuerpo reporte target_date es el más
+    # reciente que tenemos para hoy. A diferencia del settle, acá NO filtramos
+    # por issuanceTime — el parcial es justamente lo que buscamos.
+    for item in items:
+        pid = item.get("id")
+        if not pid:
+            continue
+        try:
+            r2 = requests.get(f"{API}/products/{pid}",
+                              headers=headers, timeout=timeout)
+            if r2.status_code != 200:
+                continue
+            text = r2.json().get("productText", "")
+        except (requests.RequestException, ValueError):
+            continue
+        if _parse_summary_date(text) != target_date:
+            continue
+        mx = _parse_max(text)
+        if mx is None:
+            continue
+        issued = None
+        iss = item.get("issuanceTime")
+        if iss:
+            try:
+                issued = datetime.fromisoformat(iss).astimezone(timezone.utc)
+            except ValueError:
+                issued = None
+        _intraday_cache[key] = (mx, issued, clock)
+        return (mx, issued)
+
+    # Sin CLI de hoy todavía: cacheamos el negativo para no repegarle a la API
+    # cada 3 minutos durante la ventana de pico.
+    _intraday_cache[key] = (None, None, clock)
+    return (None, None)
+
+
 def _parse_cf6(text: str) -> tuple[Optional[tuple[int, int]],
                                    dict[int, tuple[Optional[float],
                                                    Optional[float]]]]:
@@ -305,3 +395,4 @@ def fetch_min_for(station_id: str, target_date: date,
 def clear_cache() -> None:
     _cache.clear()
     _cf6_cache.clear()
+    _intraday_cache.clear()
