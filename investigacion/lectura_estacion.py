@@ -234,9 +234,18 @@ def main() -> int:
                 extra.append("cola 1¢: edge = piso del calibrador, no señal")
             # `bias_blocks_direction` devuelve False para 'mid' por diseño, así
             # que el bin que contiene our_pred_f no recibe el gate de ext_diff.
-            # Aviso genérico; no se ha observado un caso real todavía — el
-            # candidato de KBOS 2026-07-27 resultó ser 'cold', porque
-            # our_pred_f era 81.045 y el borde del bin 81 queda por debajo.
+            #
+            # El hueco es ASIMÉTRICO y sólo una mitad hace daño:
+            #   NO  sobre bin mid con el modelo caliente -> defensivo (apuesta
+            #       contra tu propia predicción inflada). KSEA 2026-07-27.
+            #   YES sobre bin mid con el modelo caliente -> peligroso: apuesta a
+            #       acertar justo donde el sesgo dice que te pasas.
+            #
+            # Caso real de la mitad peligrosa, KOKC 2026-07-27: ext_diff +3.9
+            # (banda del 92% de sobre-predicción), regime_break con 5 horas
+            # fuera de p1-p99, y "105-106 YES" con 27.3pp sin cubrir. El
+            # mercado ponía 60% en 101-102, los externos 101.7, y nuestra
+            # propia predicción corregida por el sesgo de su banda daba 101.8.
             if (ev["direction"] == "mid" and ext_d is not None
                     and abs(ext_d) >= A.EXT_DIFF_BLOCK_THRESHOLD):
                 extra.append(f"⚠ bin mid: el gate de ext_diff ({ext_d:+.1f}) NO cubre mid")
