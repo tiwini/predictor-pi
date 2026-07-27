@@ -50,6 +50,32 @@ EXCLUSIONES
   - station-days sin settle NWS.
   - station-days con menos de 10 snapshots (día incompleto de datos).
   - KIAH y cualquier id fuera del roster actual.
+
+--------------------- SEGUNDO PRE-REGISTRO (mismo día) ----------------------
+Escrito tras ver que B (fallback agresivo) sale RECHAZADO: cierra el 94% del
+gap pero se pasa del settle el 29% de los días. B usa el feed SIEMPRE, y lo que
+se propuso operativamente era un fallback CONDICIONAL: usar el feed sólo cuando
+el METAR horario falta. Es una hipótesis distinta y va con su propio criterio,
+escrito antes de medirla.
+
+  C = como A, pero permitiendo que `current_f` levante el máximo únicamente
+      en los tramos donde `today_max_obs` lleva >= GAP_MIN minutos sin cambiar
+      Y `current_f` supera a `today_max_obs` en más de 0.5°F.
+
+      El proxy de "falta el METAR" es ese estancamiento: no persistimos la
+      edad del último METAR, pero un máximo que no se mueve mientras el actual
+      está por encima es exactamente la firma del hueco (KMIA hoy: max clavado
+      en 82.9 desde las 12:53Z con el feed marcando 87.8).
+
+  MISMO criterio de decisión que para B, sin relajarlo:
+    ADOPTAR  si cierra >= 50% del gap Y P(C>settle) <= 5% Y exceso <= 0.5°F
+    RECHAZAR si P(C>settle) > 15% O exceso mediano > 1.0°F
+    ZONA GRIS en otro caso.
+
+  GAP_MIN = 90 min, fijado de antemano por ser el valor que se propuso
+  operativamente. Se reporta 60 y 120 como sensibilidad, SIN poder de decisión:
+  si el veredicto cambia entre ellos, la conclusión es que el resultado no es
+  robusto y se queda en zona gris.
 =============================================================================
 """
 from __future__ import annotations
@@ -99,9 +125,43 @@ def collect() -> list[dict]:
         if n < MIN_SNAPSHOTS or a is None or a <= -900:
             continue
         b = a if c is None else max(a, c)
-        out.append({"station": st, "date": day, "settle": settle,
-                    "A": a, "B": b, "n": n})
+        row = {"station": st, "date": day, "settle": settle,
+               "A": a, "B": b, "n": n}
+        # Estimador C: sólo levanta el máximo en los tramos donde today_max_obs
+        # lleva >= gap_min sin moverse mientras current_f está por encima.
+        serie = an.execute(
+            """SELECT ts, today_max_obs, current_f FROM station_snapshots
+               WHERE station=? AND ts>=? AND ts< ? ORDER BY ts""",
+            (st, lo.strftime("%Y-%m-%dT%H:%M:%S"),
+             hi.strftime("%Y-%m-%dT%H:%M:%S"))).fetchall()
+        for gap_min in (60, 90, 120):
+            row[f"C{gap_min}"] = _conditional_max(serie, gap_min)
+        out.append(row)
     return out
+
+
+def _conditional_max(serie, gap_min: int) -> float | None:
+    """Max del día permitiendo el feed de 5 min sólo durante huecos de METAR."""
+    best = None
+    stale_since = None      # ts desde el que today_max_obs no se mueve
+    last_max = None
+    for ts_s, mx, cur in serie:
+        if mx is None or mx <= -900:
+            continue
+        try:
+            ts = datetime.fromisoformat(ts_s)
+        except ValueError:
+            continue
+        if last_max is None or mx != last_max:
+            last_max = mx
+            stale_since = ts
+        best = mx if best is None else max(best, mx)
+        if cur is None or stale_since is None:
+            continue
+        stalled_min = (ts - stale_since).total_seconds() / 60
+        if stalled_min >= gap_min and cur > mx + 0.5:
+            best = max(best, cur)
+    return best
 
 
 def main() -> int:
@@ -146,6 +206,32 @@ def main() -> int:
     print(f"  gap cerrado {closed:.0f}%  ·  P(B>settle) {pb:.1f}%  "
           f"·  exceso mediano {exc_b:+.2f}°F")
     print(f"  -> {v}")
+
+    # ---- estimador C: fallback condicional ----
+    print("\n" + "=" * 74)
+    print("C — FALLBACK CONDICIONAL (feed sólo durante huecos de METAR)")
+    print(f"  {'variante':12s} {'se pasa':>16s} {'exceso':>8s} {'gap':>8s} "
+          f"{'cerrado':>8s}  veredicto")
+    for gap_min in (60, 90, 120):
+        key = f"C{gap_min}"
+        sub = [r for r in rows if r.get(key) is not None]
+        if not sub:
+            continue
+        over = [r for r in sub if r[key] > r["settle"] + 0.05]
+        p = 100 * len(over) / len(sub)
+        exc = statistics.median([r[key] - r["settle"] for r in over]) if over else 0.0
+        g = statistics.median([r["settle"] - r[key] for r in sub])
+        ga_sub = statistics.median([r["settle"] - r["A"] for r in sub])
+        cl = 100 * (ga_sub - g) / ga_sub if ga_sub else 0.0
+        if cl >= 50 and p <= 5 and exc <= 0.5:
+            v = "ADOPTAR"
+        elif p > 15 or exc > 1.0:
+            v = "RECHAZAR"
+        else:
+            v = "ZONA GRIS"
+        tag = "  <- pre-registrada" if gap_min == 90 else "  (sensibilidad)"
+        print(f"  {key:12s} {len(over):5d}/{len(sub):<5d} {p:4.1f}% "
+              f"{exc:+8.2f} {g:+8.2f} {cl:7.0f}%  {v}{tag}")
 
     print("\nPor estación (gap cerrado / veces que B se pasa):")
     per: dict[str, list] = {}
