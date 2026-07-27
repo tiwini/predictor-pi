@@ -321,6 +321,13 @@ def apply_obs_floor(daily_maxes: list, floor: float | None) -> tuple:
 # absorbe el TTL del cache.
 CLI_WINDOW_LEAD_H = 0.5
 
+# Descuento al usar `current` como piso: el feed de 5 min llega en °C enteros,
+# así que un valor de 31°C = 87.8°F representa el intervalo [86.9, 88.7)°F. Para
+# un piso hay que quedarse con el extremo inferior, o sea medio escalón de °C.
+# No es un parámetro ajustado a los datos: sale de la resolución del
+# instrumento, y es el mismo valor que en backtest_fallback_5min.
+CURRENT_FLOOR_MARGIN_F = 0.9
+
 
 def cli_window_open(station_id: str, now_local: datetime) -> bool:
     """¿Estamos en la franja horaria en que el CLI de la tarde ya salió?"""
@@ -1068,12 +1075,32 @@ def build_snapshot(station: Station) -> Snapshot:
         except Exception:
             cli_max_f, cli_max_ts = None, None
 
-    # El piso efectivo del día es el mayor de las dos fuentes. El CLI gana
+    # El piso efectivo del día es el mayor de las tres fuentes. El CLI gana
     # +1.0°F de mediana (N=486) porque agrega ASOS 1-min y nuestro feed es de
     # 5 min; cuando el CLI todavía no salió, esto es exactamente max_obs.
     floor_f = max_obs if max_obs is not None and max_obs > -900 else None
     if cli_max_f is not None:
         floor_f = cli_max_f if floor_f is None else max(floor_f, cli_max_f)
+
+    # Tercera fuente (2026-07-27): la temperatura ACTUAL. `max_obs` sale sólo de
+    # METARs horarios, así que durante media hora de cada ciclo va atrasado y la
+    # predicción del máximo del día puede quedar por debajo de la temperatura
+    # que hace en ese momento — imposible por física. Medido en julio: 1231
+    # snapshots así (KMDW el 18.6% de los suyos), y el clamp de max_obs sólo
+    # había actuado en 5 de ellos: el agujero no era que el piso se quedara
+    # corto, era que nadie miraba `current`.
+    #
+    # Se descuenta CURRENT_FLOOR_MARGIN_F porque el feed llega en °C enteros:
+    # "87.8°F" representa [86.9, 88.7)°F y para un piso hay que tomar el extremo
+    # inferior. Con ese margen el riesgo añadido medido es CERO — floor con y
+    # sin current se pasan del settle en exactamente los mismos 1055 de 65502
+    # snapshots — mientras el |error| mediano baja de 1.400 a 1.283°F y las 1231
+    # violaciones desaparecen. Ninguna estación empeora.
+    # Backtest pre-registrado: investigacion/backtest_piso_current.py
+    curr_t_floor = current.get("temp_f")
+    if curr_t_floor is not None:
+        cand = curr_t_floor - CURRENT_FLOOR_MARGIN_F
+        floor_f = cand if floor_f is None else max(floor_f, cand)
 
     # N7 Fable veredicto R4: duración sin cambio + dirección último cambio.
     # Serie = obs aceptadas (filtro :53/:54); no fetch_current. Referencia =
@@ -1434,7 +1461,14 @@ def build_snapshot(station: Station) -> Snapshot:
     if obs_floor_n and floor_f is not None:
         # Nombrar la fuente: si el piso lo puso el CLI, el número no está en la
         # serie de obs y quien lea la línea no podría reconciliarlo.
-        _src = "CLI" if (cli_max_f is not None and cli_max_f > max_obs) else "obs"
+        if cli_max_f is not None and cli_max_f >= floor_f - 0.001:
+            _src = "CLI"
+        elif (curr_t_floor is not None
+              and curr_t_floor - CURRENT_FLOOR_MARGIN_F >= floor_f - 0.001
+              and curr_t_floor - CURRENT_FLOOR_MARGIN_F > max_obs):
+            _src = "actual"     # el METAR horario va atrasado
+        else:
+            _src = "obs"
         _parts.append(f"piso {_src} {floor_f:.0f}° ({obs_floor_n}m)")
     if convective_ambient:
         _parts.append("CONVECTIVE")

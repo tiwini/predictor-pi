@@ -236,3 +236,38 @@ def test_cli_window_stays_open_until_end_of_local_day():
 
 def test_cli_window_unknown_station_never_opens():
     assert not predictor.cli_window_open("KJFK", _local("KPHX", 17, 30))
+
+
+# --- el piso incluye la temperatura actual -----------------------------------
+
+def test_current_floor_margin_is_half_a_celsius_step():
+    """0.9°F = medio escalón de °C. Si alguien lo "afina" a ojo, el piso pasa a
+    apoyarse en el redondeo del feed en vez de en el extremo inferior real."""
+    assert predictor.CURRENT_FLOOR_MARGIN_F == 0.9
+
+
+def test_floor_lifts_when_metar_lags_behind_current():
+    """Caso KPHL 2026-07-27: METAR de hace 90 min en 86.0 y la temperatura
+    actual en 87.8. El máximo del día no puede ser 86.0."""
+    max_obs, current = 86.0, 87.8
+    floor = max(max_obs, current - predictor.CURRENT_FLOOR_MARGIN_F)
+    assert abs(floor - 86.9) < 1e-9      # 87.8-0.9 no es exacto en binario
+    out, n, _ = predictor.apply_obs_floor([86.0, 86.5, 88.0], floor)
+    assert n == 2
+    assert all(abs(v - floor) < 1e-9 for v in out[:2])
+    assert out[2] == 88.0
+
+
+def test_current_floor_never_lowers_the_floor():
+    """Con el METAR al día, `current` por debajo no debe bajar nada."""
+    max_obs, current = 91.0, 88.0
+    floor = max(max_obs, current - predictor.CURRENT_FLOOR_MARGIN_F)
+    assert floor == 91.0
+
+
+def test_current_floor_respects_the_rounding_margin():
+    """Un current de 87.8 NO justifica un piso de 87.8: el valor real puede ser
+    86.9 (el feed llega en °C enteros)."""
+    floor = 0.0 - predictor.CURRENT_FLOOR_MARGIN_F + 87.8
+    assert abs(floor - 86.9) < 1e-9
+    assert floor < 87.8
