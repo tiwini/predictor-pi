@@ -107,20 +107,41 @@ def main() -> int:
     # y no se nota nada (KMIA hoy: pico de 87.8 a las 14:30Z, ya en 82.4 y el
     # max en 82.9). Hay que mirar el MÁXIMO de current_f en lo que va de día
     # local, que es la huella que el feed de 5 min dejó en los snapshots.
+    # OJO con el falso positivo: durante la subida diurna el feed de 5 min está
+    # SIEMPRE por encima del último METAR horario, porque los METAR salen a
+    # :51-:56 y su edad oscila entre 0 y ~65 min. Comparar sólo el gap hacía
+    # saltar el aviso casi siempre. El discriminador real es cuánto lleva
+    # `today_max_obs` sin moverse: >= STALE_MIN con el feed por encima es el
+    # incidente del 2026-07-27 (142 min); 60-65 min es el ciclo normal.
+    STALE_MIN = 100
     mx = r["today_max_obs"]
     day_start = datetime.combine(now_local.date(), datetime.min.time(), tz)
-    peak_5min = con.execute(
-        """SELECT MAX(current_f) FROM station_snapshots
-           WHERE station=? AND ts>=? AND current_f IS NOT NULL""",
+    serie = con.execute(
+        """SELECT ts, today_max_obs, current_f FROM station_snapshots
+           WHERE station=? AND ts>=? ORDER BY ts""",
         (st, day_start.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"))
-    ).fetchone()[0]
+    ).fetchall()
+    peak_5min = max((x["current_f"] for x in serie
+                     if x["current_f"] is not None), default=None)
+    stalled_min, last_val, since = 0.0, None, None
+    for x in serie:
+        v = x["today_max_obs"]
+        if v is None or v <= -900:
+            continue
+        ts = datetime.fromisoformat(x["ts"])
+        if last_val is None or v != last_val:
+            last_val, since = v, ts
+        stalled_min = (ts - since).total_seconds() / 60 if since else 0.0
     if (peak_5min is not None and mx is not None and mx > -900
-            and peak_5min > mx + 0.5):
-        print(f"  ⚠ MAX OBS CONGELADO  el feed de 5-min llegó a "
-              f"{peak_5min:.1f}°F y el max dice {mx:.1f}°F "
+            and peak_5min > mx + 0.5 and stalled_min >= STALE_MIN):
+        print(f"  ⚠ MAX OBS CONGELADO  lleva {stalled_min:.0f} min sin moverse "
+              f"y el feed de 5-min llegó a {peak_5min:.1f}°F "
               f"({peak_5min - mx:+.1f})")
         print("    falta el METAR horario; el piso de observación y todo lo "
               "que dependa de max_obs van bajos.")
+    elif peak_5min is not None and mx is not None and peak_5min > mx + 0.5:
+        print(f"    (el feed de 5-min va {peak_5min - mx:+.1f}°F por delante; "
+              f"normal a mitad de ciclo horario, {stalled_min:.0f} min)")
     cli_h = CLI_LATE_HOUR[st]
     if r["today_max_cli"] is not None:
         print(f"  CLI parcial         {f(r['today_max_cli'])}°F   ← piso duro, "
