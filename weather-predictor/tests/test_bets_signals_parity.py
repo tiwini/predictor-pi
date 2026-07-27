@@ -71,7 +71,7 @@ def test_difficulty_block_parity_both_reject(tmp_path, monkeypatch):
     ev = sig.evaluate_bin(
         station_id="KLAS", bin_lo=95.0, bin_hi=96.0, bin_label="95° to 96°",
         kalshi_yes_price=0.10, model_p_calibrated=0.60,
-        pred_calibrated_f=95.5, difficulty_score=1000.0,
+        our_pred_f=95.5, difficulty_score=1000.0,
     )
     assert ev["actionable"] is False
     assert any("difficulty" in r for r in ev["blocked_reasons"])
@@ -92,7 +92,7 @@ def test_difficulty_allow_parity_both_accept(tmp_path, monkeypatch):
     ev = sig.evaluate_bin(
         station_id="KLAS", bin_lo=95.0, bin_hi=96.0, bin_label="95° to 96°",
         kalshi_yes_price=0.10, model_p_calibrated=0.60,
-        pred_calibrated_f=95.5, difficulty_score=50.0,
+        our_pred_f=95.5, difficulty_score=50.0,
     )
     assert ev["actionable"] is True
 
@@ -115,7 +115,7 @@ def test_cold_bias_block_parity(tmp_path, monkeypatch):
     ev = sig.evaluate_bin(
         station_id="KPHX", bin_lo=105.0, bin_hi=106.0, bin_label="105° to 106°",
         kalshi_yes_price=0.40, model_p_calibrated=0.90,
-        pred_calibrated_f=105.5, bias_info=bias_info,
+        our_pred_f=105.5, bias_info=bias_info,
     )
     assert ev["actionable"] is False
     assert any("cold_bias" in r or "cold-side" in r for r in ev["blocked_reasons"])
@@ -138,7 +138,7 @@ def test_ext_diff_block_parity_cold(tmp_path, monkeypatch):
     ev = sig.evaluate_bin(
         station_id="KX", bin_lo=105.0, bin_hi=106.0, bin_label="105° to 106°",
         kalshi_yes_price=0.64, model_p_calibrated=0.10,
-        pred_calibrated_f=102.9, ext_diff_f=-1.6,
+        our_pred_f=102.9, ext_diff_f=-1.6,
     )
     assert ev["actionable"] is False
     assert any("cold" in r for r in ev["blocked_reasons"])
@@ -159,7 +159,7 @@ def test_ext_diff_allow_parity_within_threshold(tmp_path, monkeypatch):
     ev = sig.evaluate_bin(
         station_id="KX", bin_lo=105.0, bin_hi=106.0, bin_label="105° to 106°",
         kalshi_yes_price=0.64, model_p_calibrated=0.10,
-        pred_calibrated_f=102.9, ext_diff_f=-1.0,
+        our_pred_f=102.9, ext_diff_f=-1.0,
     )
     assert ev["actionable"] is True
 
@@ -195,7 +195,7 @@ def test_streak_block_parity_cold(tmp_path, monkeypatch):
     ev = sig.evaluate_bin(
         station_id="KX", bin_lo=108.0, bin_hi=109.0, bin_label="108° to 109°",
         kalshi_yes_price=0.50, model_p_calibrated=0.10,
-        pred_calibrated_f=105.0,
+        our_pred_f=105.0,
         streak_cold_n=3,
     )
     assert ev["actionable"] is False

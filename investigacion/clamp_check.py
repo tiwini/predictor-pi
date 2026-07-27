@@ -31,10 +31,10 @@ HOURS = list(range(13, 21))
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--pred", choices=("ens", "cal"), default="cal")
+    ap.add_argument("--pred", choices=("ens", "iso"), default="ens")
     ap.add_argument("--margin", type=float, default=0.5)
     args = ap.parse_args()
-    col = "ens_med" if args.pred == "ens" else "pred_calibrated_f"
+    col = "ens_med" if args.pred == "ens" else "pred_iso_med_f"
 
     con = sqlite3.connect(f"file:{CALIB_DB}?mode=ro", uri=True, timeout=30)
     settles = {(s, d): m for s, d, m in con.execute(

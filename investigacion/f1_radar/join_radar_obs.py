@@ -27,7 +27,7 @@ JOIN_SQL_V1 = """
 WITH
 ss AS (
     SELECT id, ts, station, current_f, today_max_obs,
-           pred_calibrated_f, ens_med, ens_p10, ens_p90,
+           our_pred_f, ens_med, ens_p10, ens_p90,
            bias_f, ext_med_f, ext_diff_f,
            wind_mph, wind_dir_deg, wind_gust_mph,
            dewpoint_f, humidity_pct,
@@ -63,7 +63,7 @@ paired AS (
 )
 SELECT
     id, ts, station, current_f, today_max_obs,
-    pred_calibrated_f, ens_med, ens_p10, ens_p90,
+    our_pred_f, ens_med, ens_p10, ens_p90,
     bias_f, ext_med_f, ext_diff_f,
     wind_mph, wind_dir_deg, wind_gust_mph,
     dewpoint_f, humidity_pct,

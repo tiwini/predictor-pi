@@ -94,12 +94,16 @@ def render(title: str, pcts_by_st: dict, days: dict, stations: list,
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--pred", choices=("ens", "cal"), default="cal")
+    # "cal" existía y apuntaba a pred_calibrated_f, que era un alias exacto
+    # de ens_med (72910/72910 idénticas) — o sea el flag comparaba la serie
+    # consigo misma. Ahora "iso" apunta a pred_iso_med_f, la mediana
+    # implícita de la distribución ya calibrada, que sí es otra cosa.
+    ap.add_argument("--pred", choices=("ens", "iso"), default="ens")
     ap.add_argument("--tol", type=float, default=1.5)
     ap.add_argument("--min-n", type=int, default=8)
     args = ap.parse_args()
 
-    pred_col = "ens_med" if args.pred == "ens" else "pred_calibrated_f"
+    pred_col = "ens_med" if args.pred == "ens" else "pred_iso_med_f"
     settles = load_settles(CALIB_DB)
     rows = load_snapshots(ANALYSIS_DB, pred_col)
 
@@ -144,7 +148,7 @@ def main() -> int:
         print("Sin solape entre snapshots y settles.")
         return 1
 
-    label = "ens_med (crudo)" if args.pred == "ens" else "pred_calibrated_f"
+    label = "ens_med (crudo)" if args.pred == "ens" else "pred_iso_med_f (isotónica+blend)"
     print(f"Predicción: {label} · acierto = |pred − settle| ≤ {args.tol}°F")
     print(f"Settle: day_outcomes (NWS CLI). Días-estación descartados por "
           f"no tener settle: {len(dropped_days)}")

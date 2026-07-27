@@ -47,6 +47,63 @@ def _conn(db_path: str | Path) -> sqlite3.Connection:
     return c
 
 
+# === Mediana implicita de la distribucion calibrada ===
+
+def implied_median_f(bins: list, cal_ps: list) -> Optional[float]:
+    """Temperatura donde la CDF de la distribucion CALIBRADA cruza 0.5.
+
+    `bins` son los MarketBin de Kalshi (bin_lo/bin_hi, colas en ±inf) y
+    `cal_ps` la probabilidad por bin ya pasada por isotonic + blend_with_external
+    (o sea la salida de `_compute_final_our_p_per_bin`). Devuelve None si no hay
+    material suficiente.
+
+    Existe porque `our_pred_f` es la mediana del ENSEMBLE y no ve la calibracion:
+    la isotonica opera sobre probabilidades por bin, no sobre grados, asi que la
+    unica forma de expresar "que temperatura implica el modelo ya calibrado" es
+    invertir la CDF. Es telemetria — ningun gate la consume.
+
+    Dos decisiones que el lector debe conocer:
+      - **Se renormaliza.** isotonic.apply y blend_with_external actuan bin a bin
+        y no preservan la suma, asi que sin dividir por el total la CDF no
+        llegaria a 1 (o se pasaria) y el cruce en 0.5 no significaria nada.
+      - **Se interpola linealmente dentro del bin** que contiene el cruce. Los
+        bins Kalshi son de 1-2°F; tomar el centro meteria un escalon del ancho
+        del bin y esta columna existe justamente para comparar contra otra
+        prediccion en decimas.
+    """
+    if not bins or not cal_ps or len(cal_ps) < len(bins):
+        return None
+    pairs = [(b, p) for b, p in zip(bins, cal_ps) if p is not None]
+    if not pairs:
+        return None
+    total = sum(p for _, p in pairs)
+    if total <= 0:
+        return None
+
+    pairs.sort(key=lambda bp: bp[0].bin_lo)
+    acc = 0.0
+    for b, p in pairs:
+        w = p / total
+        if acc + w < 0.5:
+            acc += w
+            continue
+        # El cruce cae en este bin. Con una cola infinita no hay ancho sobre el
+        # que interpolar, asi que devolvemos el borde finito — es lo mas honesto
+        # que se puede decir sin inventarle una forma a la cola.
+        lo, hi = b.bin_lo, b.bin_hi
+        if lo == float("-inf"):
+            return hi
+        if hi == float("inf"):
+            return lo
+        if w <= 0:
+            return (lo + hi) / 2.0
+        frac = (0.5 - acc) / w          # en [0, 1] dentro del bin
+        return lo + frac * (hi - lo)
+    # La masa acumulada nunca llego a 0.5 (pasa si los bins no cubren la cola
+    # alta): la mediana esta por encima del ultimo bin.
+    return pairs[-1][0].bin_hi if pairs[-1][0].bin_hi != float("inf") else pairs[-1][0].bin_lo
+
+
 # === Clasificacion direccional ===
 
 def direction_of(side: str, bin_lo: float, bin_hi: float,
@@ -408,7 +465,7 @@ def evaluate_bin(*,
                  kalshi_yes_price: Optional[float],
                  model_p_calibrated: Optional[float],
                  model_p_raw: Optional[float] = None,
-                 pred_calibrated_f: Optional[float] = None,
+                 our_pred_f: Optional[float] = None,
                  bias_info: Optional[dict] = None,
                  ext_diff_f: Optional[float] = None,
                  difficulty_score: Optional[float] = None,
@@ -420,7 +477,7 @@ def evaluate_bin(*,
     Politicas:
       - Prefiere model_p_calibrated; cae a raw con prob_source='raw_fallback'.
       - Recommended side por signo del edge sobre el precio Kalshi.
-      - Direccion clasificada con pred_calibrated_f (mid bins) si esta disponible.
+      - Direccion clasificada con our_pred_f (mediana del ensemble) en mid bins.
       - actionable=False si HAY blocked_reasons o difficulty supera el umbral.
       - min_edge_required_pp aplica el debuff per-station (KPHX exige 30pp).
 
@@ -451,7 +508,7 @@ def evaluate_bin(*,
     side = "YES" if edge_signed >= 0 else "NO"
     edge_pp = abs(edge_signed)
 
-    direction = direction_of(side, bin_lo, bin_hi, pred_calibrated_f)
+    direction = direction_of(side, bin_lo, bin_hi, our_pred_f)
 
     if difficulty_score is not None and difficulty_score > DIFFICULTY_BLOCK_THRESHOLD:
         blocked.append(f"difficulty {difficulty_score:.0f} > {DIFFICULTY_BLOCK_THRESHOLD:.0f}")

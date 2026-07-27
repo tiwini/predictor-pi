@@ -192,7 +192,7 @@ def _gather_context() -> dict:
     # detectar columnas disponibles (fallback si poller no migró aún)
     ss_cols = {r[1] for r in db.execute("PRAGMA table_info(station_snapshots)").fetchall()}
     ks_cols = {r[1] for r in db.execute("PRAGMA table_info(kalshi_snapshots)").fetchall()}
-    has_signals = "pred_calibrated_f" in ss_cols
+    has_signals = "our_pred_f" in ss_cols
     has_cal_p = "our_p_calibrated" in ks_cols
 
     base_cols = ("s.station, s.ts, s.current_f, s.today_max_obs, "
@@ -208,7 +208,7 @@ def _gather_context() -> dict:
     dir_roi_cols = (", s.roi_cold_pct, s.trades_cold, "
                     "s.roi_hot_pct, s.trades_hot, "
                     "s.roi_mid_pct, s.trades_mid") if has_dir_roi else ""
-    sig_cols = (("", ", s.pred_calibrated_f, s.bias_f, s.bias_path, "
+    sig_cols = (("", ", s.our_pred_f, s.pred_iso_med_f, s.bias_f, s.bias_path, "
                      "s.ext_med_f, s.ext_spread_f, s.ext_diff_f, "
                      "s.difficulty_score, s.difficulty_label, "
                      "s.cold_bias_block, s.streak_block_hot, s.streak_block_cold, "
@@ -264,7 +264,8 @@ def _gather_context() -> dict:
         }
         if has_signals:
             st["signals"] = {
-                "pred_calibrated_f": _r(r["pred_calibrated_f"], 1),
+                "our_pred_f": _r(r["our_pred_f"], 1),
+                "pred_iso_med_f": _r(r["pred_iso_med_f"], 1),
                 "bias_f": _r(r["bias_f"], 2),
                 "bias_path": r["bias_path"],
                 "ext_med_f": _r(r["ext_med_f"], 1),
@@ -346,7 +347,7 @@ def _gather_context() -> dict:
                 kalshi_yes_price=yes_mid,
                 model_p_calibrated=cal_p,
                 model_p_raw=raw_p,
-                pred_calibrated_f=sig.get("pred_calibrated_f"),
+                our_pred_f=sig.get("our_pred_f"),
                 bias_info=bias_info,
                 ext_diff_f=sig.get("ext_diff_f"),
                 difficulty_score=sig.get("difficulty_score"),
@@ -457,8 +458,10 @@ def _build_user_prompt(ctx: dict) -> str:
         sig = s.get("signals") or {}
         if sig:
             parts = []
-            if sig.get("pred_calibrated_f") is not None:
-                parts.append(f"pred_cal={sig['pred_calibrated_f']}°F")
+            if sig.get("our_pred_f") is not None:
+                parts.append(f"our_pred={sig['our_pred_f']}°F")
+            if sig.get("pred_iso_med_f") is not None:
+                parts.append(f"pred_iso={sig['pred_iso_med_f']}°F")
             if sig.get("bias_f") is not None:
                 parts.append(f"bias={sig['bias_f']:+.2f}({sig.get('bias_path','?')})")
             if sig.get("ext_diff_f") is not None:

@@ -105,7 +105,7 @@ def analyze_station(conn, sid: str, settles: dict) -> list[dict]:
     # Load station snapshots grouped by (date_local, hour_local)
     ss_by_slot = defaultdict(list)
     ss_rows = conn.execute("""
-        SELECT ts, ens_p10, ens_p90, ext_diff_f, ext_med_f, pred_calibrated_f, ens_med
+        SELECT ts, ens_p10, ens_p90, ext_diff_f, ext_med_f, our_pred_f, ens_med
         FROM station_snapshots
         WHERE station = ? AND ts > datetime('now', '-21 days')
     """, (sid,)).fetchall()

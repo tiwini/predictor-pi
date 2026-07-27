@@ -105,9 +105,30 @@ def _conn() -> sqlite3.Connection:
                      ("today_max_cli_ts", "TEXT")]:
         if col not in existing:
             c.execute(f"ALTER TABLE station_snapshots ADD COLUMN {col} {typ}")
+    # 2026-07-27: `pred_calibrated_f` nunca estuvo calibrada — se poblaba con
+    # la mediana de snap.ensemble_daily_maxes, la misma operación con la que la
+    # línea de al lado calcula `ens_med`, y salieron idénticas en los 72910
+    # snapshots que tenían ambas. El valor es correcto para lo único que lo
+    # consume (`direction_of`, que quiere la mediana del ensemble y por eso
+    # `bets` le pasa `our_pred_f=pred_med`); el nombre era el que mentía.
+    # RENAME preserva el histórico — la serie no cambia de significado, sólo
+    # deja de prometer una calibración que no ocurría. La calibración de verdad
+    # vive ahora en `pred_iso_med_f`, más abajo.
+    if "pred_calibrated_f" in existing and "our_pred_f" not in existing:
+        c.execute("ALTER TABLE station_snapshots "
+                  "RENAME COLUMN pred_calibrated_f TO our_pred_f")
+        existing = {r[1] for r in c.execute(
+            "PRAGMA table_info(station_snapshots)").fetchall()}
+
     # Codex Round 5 (2026-06-29): señales para que agent_monitor las lea sin
     # tener que recomputar el pipeline ni hacer fetch a predictor_web.
-    for col, typ in [("pred_calibrated_f", "REAL"),
+    for col, typ in [("our_pred_f", "REAL"),
+                     # Mediana implícita de la distribución YA calibrada
+                     # (isotonic + blend), vía agent_signals.implied_median_f.
+                     # Telemetría: ningún gate la lee. Es la única forma de
+                     # expresar en °F lo que la calibración hace, porque la
+                     # isotónica opera sobre probabilidades por bin.
+                     ("pred_iso_med_f", "REAL"),
                      ("bias_f", "REAL"), ("bias_applied", "INTEGER"),
                      ("bias_path", "TEXT"),
                      ("ext_med_f", "REAL"), ("ext_spread_f", "REAL"),
@@ -163,7 +184,8 @@ def _compute_signals(station_id: str, snap) -> dict:
     error parcial, persiste lo que pueda y `signal_error` con la causa.
     """
     out: dict = {
-        "pred_calibrated_f": None, "bias_f": None, "bias_applied": None,
+        "our_pred_f": None, "pred_iso_med_f": None,
+        "bias_f": None, "bias_applied": None,
         "bias_path": None, "ext_med_f": None, "ext_spread_f": None,
         "ext_diff_f": None, "difficulty_score": None, "difficulty_label": None,
         "difficulty_reasons_json": None, "cold_bias_block": None,
@@ -179,7 +201,7 @@ def _compute_signals(station_id: str, snap) -> dict:
     try:
         maxes = sorted(snap.ensemble_daily_maxes or [])
         if maxes:
-            out["pred_calibrated_f"] = maxes[len(maxes) // 2]
+            out["our_pred_f"] = maxes[len(maxes) // 2]
     except Exception as e:
         errors.append(f"pred_calibrated:{e}")
 
@@ -195,8 +217,8 @@ def _compute_signals(station_id: str, snap) -> dict:
         info = snap.ext_shift_info or {}
         out["ext_med_f"] = info.get("ext_med")
         out["ext_spread_f"] = info.get("ext_spread")
-        if out["pred_calibrated_f"] is not None and out["ext_med_f"] is not None:
-            out["ext_diff_f"] = out["pred_calibrated_f"] - out["ext_med_f"]
+        if out["our_pred_f"] is not None and out["ext_med_f"] is not None:
+            out["ext_diff_f"] = out["our_pred_f"] - out["ext_med_f"]
     except Exception as e:
         errors.append(f"ext:{e}")
 
@@ -228,7 +250,7 @@ def _compute_signals(station_id: str, snap) -> dict:
 
     try:
         sb = A.streaks_by_direction(station_id, str(CALIBRATION_DB),
-                                    our_pred_f=out["pred_calibrated_f"])
+                                    our_pred_f=out["our_pred_f"])
         out["streak_block_hot"] = sb.get("hot", 0)
         out["streak_block_cold"] = sb.get("cold", 0)
     except Exception as e:
@@ -290,7 +312,30 @@ def poll_one(station_id: str, c: sqlite3.Connection) -> None:
         log.warning("  regime.classify %s failed: %s", station_id, e)
         regime_tag, regime_reason = None, None
 
+    # Los bins se fetchean acá arriba (antes iban después del INSERT) porque
+    # `pred_iso_med_f` se deriva de la distribución calibrada por bin y tiene
+    # que viajar en la misma fila que el resto de las señales.
+    today = snap.station_local.date()
+    try:
+        bins = kalshi.fetch_bins(station_id, today)
+    except Exception as e:
+        log.warning("  kalshi.fetch_bins %s failed: %s", station_id, e)
+        bins = []
+
+    # our_p_calibrated: full pipeline (isotonic + blend_with_external) — lo que
+    # ve el usuario en /comparison y debería ver el AI. raw `our_p` se mantiene
+    # por backwards-compat con código que asume conteo crudo.
+    try:
+        cal_ps = _compute_final_our_p_per_bin(station_id, snap, bins) if bins else []
+    except Exception as e:
+        log.warning("  _compute_final_our_p_per_bin %s failed: %s", station_id, e)
+        cal_ps = [None] * len(bins)
+
     sig = _compute_signals(station_id, snap)
+    try:
+        sig["pred_iso_med_f"] = A.implied_median_f(bins, cal_ps)
+    except Exception as e:
+        log.warning("  implied_median_f %s failed: %s", station_id, e)
 
     c.execute("""INSERT INTO station_snapshots
         (ts, station, current_f, today_max_obs, ens_med, ens_p10, ens_p90,
@@ -299,7 +344,7 @@ def poll_one(station_id: str, c: sqlite3.Connection) -> None:
          pressure_inhg, pressure_trend_3h, dewpoint_f, humidity_pct,
          today_min_obs, convective_ambient, narrative_line,
          obs_floor_n, obs_floor_delta_f, today_max_cli, today_max_cli_ts,
-         pred_calibrated_f, bias_f, bias_applied, bias_path,
+         our_pred_f, pred_iso_med_f, bias_f, bias_applied, bias_path,
          ext_med_f, ext_spread_f, ext_diff_f,
          difficulty_score, difficulty_label, difficulty_reasons_json,
          cold_bias_block, streak_block_hot, streak_block_cold,
@@ -323,7 +368,8 @@ def poll_one(station_id: str, c: sqlite3.Connection) -> None:
          snap.obs_floor_n, snap.obs_floor_delta_f,
          snap.today_max_cli,
          snap.today_max_cli_ts.isoformat() if snap.today_max_cli_ts else None,
-         sig["pred_calibrated_f"], sig["bias_f"], sig["bias_applied"], sig["bias_path"],
+         sig["our_pred_f"], sig["pred_iso_med_f"],
+         sig["bias_f"], sig["bias_applied"], sig["bias_path"],
          sig["ext_med_f"], sig["ext_spread_f"], sig["ext_diff_f"],
          sig["difficulty_score"], sig["difficulty_label"], sig["difficulty_reasons_json"],
          sig["cold_bias_block"], sig["streak_block_hot"], sig["streak_block_cold"],
@@ -333,23 +379,7 @@ def poll_one(station_id: str, c: sqlite3.Connection) -> None:
          sig["roi_mid_pct"], sig["trades_mid"],
          sig["brier_us_7d"], sig["brier_kalshi_7d"], sig["signal_error"]))
 
-    # Kalshi bins (puede que no haya mercado abierto = []).
-    today = snap.station_local.date()
-    try:
-        bins = kalshi.fetch_bins(station_id, today)
-    except Exception as e:
-        log.warning("  kalshi.fetch_bins %s failed: %s", station_id, e)
-        bins = []
-
-    # our_p_calibrated: full pipeline (isotonic + blend_with_external) — lo que
-    # ve el usuario en /comparison y debería ver el AI. raw `our_p` se mantiene
-    # por backwards-compat con código que asume conteo crudo.
-    try:
-        cal_ps = _compute_final_our_p_per_bin(station_id, snap, bins) if bins else []
-    except Exception as e:
-        log.warning("  _compute_final_our_p_per_bin %s failed: %s", station_id, e)
-        cal_ps = [None] * len(bins)
-
+    # bins y cal_ps ya vienen computados de arriba (los necesita pred_iso_med_f).
     for i, b in enumerate(bins):
         our_p = kalshi.our_p_for_bin(snap.ensemble_daily_maxes, b.bin_lo, b.bin_hi)
         our_p_cal = cal_ps[i] if i < len(cal_ps) else None
