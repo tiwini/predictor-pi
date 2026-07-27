@@ -56,6 +56,25 @@ EXCLUSIONES
 
 NOTA: quinto backtest sobre esta base hoy. Resultado positivo = candidato, no
 cambio de gate; exige repetirse sobre días frescos antes de tocar el path.
+
+============================ RESULTADO 2026-07-27 ===========================
+496 station-days · 3644 clasificaciones (bin × side)
+
+  accuracy contra la etiqueta ex-post del settle
+    our_pred_f     (ensemble crudo)   62.29%
+    pred_iso_med_f (calibrada)        63.56%
+    delta                             +1.26 pp   <- por debajo del corte de 2pp
+    difieren en                       15.5% de los casos
+
+  |ref - settle| mediano: crudo 1.80°F · iso 1.63°F
+
+VEREDICTO: DESCARTAR. `pred_iso` queda algo más cerca del settle y clasifica
+marginalmente mejor, pero el delta no llega al umbral y sólo cambiaría el 15.5%
+de las clasificaciones. **`direction_of` se queda con `our_pred_f`.**
+
+Dato de contexto que conviene recordar: ambas referencias aciertan la dirección
+en ~62-63% de los casos. Clasificar un bin como hot/cold respecto a un settle
+que aún no ha ocurrido es difícil, y ninguna de las dos lo resuelve.
 =============================================================================
 """
 from __future__ import annotations
