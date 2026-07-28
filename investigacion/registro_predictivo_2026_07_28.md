@@ -62,3 +62,64 @@ from datetime import date
 import nws_cli
 print(nws_cli.fetch_max_min_for('KPHX', date(2026,7,28)))"
 ```
+
+---
+
+# Casos 2 y 3 — KDFW y KATL (añadidos a las ~16:05 EDT)
+
+Anotados **después** de que el margen se estrechara respecto a cuando los
+sugerí. Los números son los del momento de escribir, no los de hace una hora.
+
+## Caso 2 — KDFW `102-103`
+
+```
+15:03 CDT · ↗ subiendo · ventana 2.0h · heatwave p96
+base 98.6 (current 98.6, max_obs 98.1 de las 13:53, sin moverse en 70 min)
+subida restante mediana a esta hora: +2.2°F  (min -0.4, max +5.1, N=27)
+
+  bin        empírico   mercado   EV/$1
+  100-101      55.6%      0.62    -0.064
+  102-103      37.0%      0.34    +0.030   <- anotado
+```
+
+**PREDICCIÓN: el settle cae en `102-103`.** El empírico lo pone en 37% contra
+un mercado de 0.34 — margen fino. Nótese que el empírico ya considera
+`100-101` MÁS probable (55.6%); la apuesta es de valor, no de resultado más
+probable.
+
+## Caso 3 — KATL `97-98`
+
+```
+16:03 EDT · ventana 1.1h · heatwave · CONVECTIVO
+base 93.9 (max_obs de las 14:52, sin moverse en 70 min)
+subida restante mediana a esta hora: +1.4°F  (min -0.0, max +4.0, N=27)
+
+  bin        empírico   mercado   EV/$1
+  93-94        11.1%      0.23    -0.119
+  95-96        74.1%      0.67    +0.071
+  97-98        14.8%      0.08    +0.068   <- anotado
+```
+
+**PREDICCIÓN: el settle cae en `97-98`.** ⚠ Con la salvedad de que **ya no es
+mejor que `95-96`**: los EV están empatados (+0.068 vs +0.071). Cuando lo
+sugerí, a las 15:22, el empírico daba 37% a `97-98` y 51.9% a `95-96`; en 40
+minutos pasó a 14.8% y 74.1%. Se anota por continuidad con lo que dije, no
+porque siga siendo la mejor elección.
+
+## ⚠ Las dos comparten el mismo supuesto
+
+Ambas apuestan a que el mercado sobrevalora el bin conservador e infravalora el
+siguiente escalón. **No son independientes**: si ese sesgo no existe hoy, fallan
+las dos a la vez. Contarlas como dos aciertos o dos fallos sería engañarse; a
+efectos de evidencia valen aproximadamente por una.
+
+## FALSACIÓN
+
+```
+KDFW settle en 102-103   -> acierto            <=101 o >=104 -> fallo
+KATL settle en 97-98     -> acierto            <=96  o >=99  -> fallo
+```
+
+Además, el dato que más informa no es el acierto sino **si el empírico batió al
+mercado**: comparar |empírico - resultado| contra |mercado - resultado| en los
+dos bins de cada estación.
