@@ -106,7 +106,13 @@ def _conn() -> sqlite3.Connection:
                      # 2026-07-28: sin la hora del max, un max_obs de madrugada
                      # se lee como progreso hacia el pico. KMDW hoy tenía 75.0
                      # de las 00:53 con la temperatura en 69 a las 09:30.
-                     ("today_max_obs_ts", "TEXT")]:
+                     ("today_max_obs_ts", "TEXT"),
+                     # Instrumentación 2026-07-28: corrector de nivel por
+                     # mediana histórica. TELEMETRÍA — no entra en la
+                     # distribución ni en ningún gate. Se compara en vivo
+                     # contra el EWMA antes de decidir si lo sustituye.
+                     ("bias_median_causal_f", "REAL"),
+                     ("bias_median_n", "INTEGER")]:
         if col not in existing:
             c.execute(f"ALTER TABLE station_snapshots ADD COLUMN {col} {typ}")
     # 2026-07-27: `pred_calibrated_f` nunca estuvo calibrada — se poblaba con
@@ -181,6 +187,77 @@ def _brier_7d(station_id: str) -> tuple[float | None, float | None]:
         return None, None
 
 
+# ── corrector de nivel por mediana (instrumentación 2026-07-28) ──
+#
+# TELEMETRÍA: no entra en la distribución ni en ningún gate. Se persiste para
+# comparar en vivo contra el EWMA del bias tracker antes de decidir si lo
+# sustituye.
+#
+# Medido sobre 426 station-days (investigacion/backtest_corrector_nivel.py):
+#   sin corrección 2.00°F · EWMA actual 1.92°F · mediana causal 1.35°F
+# El EWMA aporta 0.08 sobre no hacer nada; la mediana baja 0.57 más. Y la
+# versión causal iguala a la leave-one-out, o sea no necesita días futuros.
+#
+# CAUSAL a propósito: sólo usa días ANTERIORES, que es lo aplicable en
+# producción. El sesgo se mide 2h antes de que abra la ventana de pico, el mismo
+# momento del backtest.
+MEDIAN_BIAS_MIN_DAYS = 5
+MEDIAN_BIAS_HOURS_BEFORE_PEAK = 2
+_median_bias_cache: dict[tuple, tuple] = {}
+
+
+def _median_bias_causal(station_id: str, today, c: sqlite3.Connection):
+    """(mediana del sesgo histórico, n_días) usando sólo días anteriores."""
+    key = (station_id, today.isoformat())
+    if key in _median_bias_cache:
+        return _median_bias_cache[key]
+    try:
+        from zoneinfo import ZoneInfo
+        from stations import STATION_TZ, PEAK_HOURS
+        from datetime import timedelta
+        tz = ZoneInfo(STATION_TZ[station_id])
+        peak_lo = PEAK_HOURS[station_id][0]
+        cal = sqlite3.connect(f"file:{CALIBRATION_DB}?mode=ro", uri=True)
+        try:
+            settles = dict(cal.execute(
+                "SELECT date, max_obs_f FROM day_outcomes WHERE station_id=? "
+                "AND date < ?", (station_id, today.isoformat())).fetchall())
+        finally:
+            cal.close()
+        sesgos = []
+        for day, settle in sorted(settles.items()):
+            if settle is None:
+                continue
+            try:
+                d = datetime.strptime(day, "%Y-%m-%d").date()
+            except ValueError:
+                continue
+            ref = (datetime.combine(d, datetime.min.time(), tz)
+                   + timedelta(hours=peak_lo - MEDIAN_BIAS_HOURS_BEFORE_PEAK))
+            lo = (ref - timedelta(minutes=30)).astimezone(timezone.utc)
+            hi = (ref + timedelta(minutes=30)).astimezone(timezone.utc)
+            r = c.execute(
+                """SELECT ens_med, bias_f, bias_applied FROM station_snapshots
+                   WHERE station=? AND ts>=? AND ts<=? AND ens_med IS NOT NULL
+                   ORDER BY ts LIMIT 1""",
+                (station_id, lo.strftime("%Y-%m-%dT%H:%M:%S"),
+                 hi.strftime("%Y-%m-%dT%H:%M:%S"))).fetchone()
+            if r is None:
+                continue
+            b = r[1] if (r[2] and r[1] is not None) else 0.0
+            sesgos.append((r[0] + b) - settle)   # sesgo del ensemble CRUDO
+        if len(sesgos) < MEDIAN_BIAS_MIN_DAYS:
+            out = (None, len(sesgos))
+        else:
+            sesgos.sort()
+            out = (sesgos[len(sesgos) // 2], len(sesgos))
+    except Exception:
+        out = (None, 0)
+    _median_bias_cache.clear()        # una entrada basta: se recalcula al día
+    _median_bias_cache[key] = out
+    return out
+
+
 def _compute_signals(station_id: str, snap) -> dict:
     """Deriva todas las señales del snapshot + lookups a calibration.db.
 
@@ -189,6 +266,7 @@ def _compute_signals(station_id: str, snap) -> dict:
     """
     out: dict = {
         "our_pred_f": None, "pred_iso_med_f": None,
+        "bias_median_causal_f": None, "bias_median_n": None,
         "bias_f": None, "bias_applied": None,
         "bias_path": None, "ext_med_f": None, "ext_spread_f": None,
         "ext_diff_f": None, "difficulty_score": None, "difficulty_label": None,
@@ -340,6 +418,12 @@ def poll_one(station_id: str, c: sqlite3.Connection) -> None:
         sig["pred_iso_med_f"] = A.implied_median_f(bins, cal_ps)
     except Exception as e:
         log.warning("  implied_median_f %s failed: %s", station_id, e)
+    try:
+        mb, mn = _median_bias_causal(station_id, snap.station_local.date(), c)
+        sig["bias_median_causal_f"] = mb
+        sig["bias_median_n"] = mn
+    except Exception as e:
+        log.warning("  _median_bias_causal %s failed: %s", station_id, e)
 
     c.execute("""INSERT INTO station_snapshots
         (ts, station, current_f, today_max_obs, ens_med, ens_p10, ens_p90,
@@ -349,7 +433,8 @@ def poll_one(station_id: str, c: sqlite3.Connection) -> None:
          today_min_obs, convective_ambient, narrative_line,
          obs_floor_n, obs_floor_delta_f, today_max_cli, today_max_cli_ts,
          today_max_obs_ts,
-         our_pred_f, pred_iso_med_f, bias_f, bias_applied, bias_path,
+         our_pred_f, pred_iso_med_f, bias_median_causal_f, bias_median_n,
+         bias_f, bias_applied, bias_path,
          ext_med_f, ext_spread_f, ext_diff_f,
          difficulty_score, difficulty_label, difficulty_reasons_json,
          cold_bias_block, streak_block_hot, streak_block_cold,
@@ -359,7 +444,7 @@ def poll_one(station_id: str, c: sqlite3.Connection) -> None:
          brier_us_7d, brier_kalshi_7d, signal_error)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (ts, station_id, snap.current_temp_f, snap.today_max_obs,
          med, p10, p90, json.dumps(maxes), snap.peak_status,
@@ -375,6 +460,7 @@ def poll_one(station_id: str, c: sqlite3.Connection) -> None:
          snap.today_max_cli_ts.isoformat() if snap.today_max_cli_ts else None,
          snap.today_max_obs_ts.isoformat() if snap.today_max_obs_ts else None,
          sig["our_pred_f"], sig["pred_iso_med_f"],
+         sig["bias_median_causal_f"], sig["bias_median_n"],
          sig["bias_f"], sig["bias_applied"], sig["bias_path"],
          sig["ext_med_f"], sig["ext_spread_f"], sig["ext_diff_f"],
          sig["difficulty_score"], sig["difficulty_label"], sig["difficulty_reasons_json"],
