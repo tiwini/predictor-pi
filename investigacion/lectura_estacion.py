@@ -95,7 +95,40 @@ def main() -> int:
     print(f"  externos (mediana)  {f(r['ext_med_f'])}°F   ext_diff {f(ext_d, 5, 1)}{band}")
 
     print("\nOBSERVACIÓN")
-    print(f"  max obs hoy         {f(r['today_max_obs'])}°F   (METAR horario aceptado)")
+    # La HORA del max importa tanto como el valor. Un max de madrugada se lee
+    # como progreso hacia el pico y no lo es: KMDW el 2026-07-28 tenía max_obs
+    # 75.0 de las 00:53 con la temperatura en 69 a las 09:30 — leerlo como base
+    # de partida daba una predicción 6°F alta.
+    # `today_max_obs_ts` empezó a persistirse hoy, así que si falta se deriva
+    # del primer snapshot del día que alcanzó el valor actual (±10 min).
+    mx_ts_txt = ""
+    try:
+        mx_ts = r["today_max_obs_ts"]
+    except (IndexError, KeyError):
+        mx_ts = None
+    if mx_ts is None and r["today_max_obs"] is not None:
+        row = con.execute(
+            """SELECT MIN(ts) FROM station_snapshots
+               WHERE station=? AND ts>=? AND today_max_obs >= ?""",
+            (st,
+             datetime.combine(now_local.date(), datetime.min.time(), tz)
+             .astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"),
+             r["today_max_obs"] - 0.05)).fetchone()
+        mx_ts = row[0] if row else None
+        aprox = "~"
+    else:
+        aprox = ""
+    if mx_ts:
+        try:
+            mx_local = datetime.fromisoformat(mx_ts).astimezone(tz)
+            edad_h = (now_local - mx_local).total_seconds() / 3600
+            mx_ts_txt = f"  ·  {aprox}{mx_local:%H:%M} local"
+            if mx_local.hour < 6 or edad_h >= 6:
+                mx_ts_txt += "  ⚠ NO es de la tarde: no leerlo como avance hacia el pico"
+        except ValueError:
+            pass
+    print(f"  max obs hoy         {f(r['today_max_obs'])}°F   "
+          f"(METAR horario aceptado){mx_ts_txt}")
     # `current_f` sale del feed de 5 min y `today_max_obs` sólo de METARs
     # horarios. Si el actual supera al máximo del día, el máximo está
     # congelado: o falta el METAR de esta hora o el feed dejó de publicarlo.

@@ -102,7 +102,11 @@ def _conn() -> sqlite3.Connection:
                      # esa columna es la base de las mediciones de gap y no se
                      # le cambia la semántica a mitad de serie.
                      ("today_max_cli", "REAL"),
-                     ("today_max_cli_ts", "TEXT")]:
+                     ("today_max_cli_ts", "TEXT"),
+                     # 2026-07-28: sin la hora del max, un max_obs de madrugada
+                     # se lee como progreso hacia el pico. KMDW hoy tenía 75.0
+                     # de las 00:53 con la temperatura en 69 a las 09:30.
+                     ("today_max_obs_ts", "TEXT")]:
         if col not in existing:
             c.execute(f"ALTER TABLE station_snapshots ADD COLUMN {col} {typ}")
     # 2026-07-27: `pred_calibrated_f` nunca estuvo calibrada — se poblaba con
@@ -344,6 +348,7 @@ def poll_one(station_id: str, c: sqlite3.Connection) -> None:
          pressure_inhg, pressure_trend_3h, dewpoint_f, humidity_pct,
          today_min_obs, convective_ambient, narrative_line,
          obs_floor_n, obs_floor_delta_f, today_max_cli, today_max_cli_ts,
+         today_max_obs_ts,
          our_pred_f, pred_iso_med_f, bias_f, bias_applied, bias_path,
          ext_med_f, ext_spread_f, ext_diff_f,
          difficulty_score, difficulty_label, difficulty_reasons_json,
@@ -353,7 +358,7 @@ def poll_one(station_id: str, c: sqlite3.Connection) -> None:
          roi_mid_pct, trades_mid,
          brier_us_7d, brier_kalshi_7d, signal_error)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?,
+                ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (ts, station_id, snap.current_temp_f, snap.today_max_obs,
@@ -368,6 +373,7 @@ def poll_one(station_id: str, c: sqlite3.Connection) -> None:
          snap.obs_floor_n, snap.obs_floor_delta_f,
          snap.today_max_cli,
          snap.today_max_cli_ts.isoformat() if snap.today_max_cli_ts else None,
+         snap.today_max_obs_ts.isoformat() if snap.today_max_obs_ts else None,
          sig["our_pred_f"], sig["pred_iso_med_f"],
          sig["bias_f"], sig["bias_applied"], sig["bias_path"],
          sig["ext_med_f"], sig["ext_spread_f"], sig["ext_diff_f"],
