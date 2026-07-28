@@ -146,7 +146,16 @@ def main() -> int:
     # saltar el aviso casi siempre. El discriminador real es cuánto lleva
     # `today_max_obs` sin moverse: >= STALE_MIN con el feed por encima es el
     # incidente del 2026-07-27 (142 min); 60-65 min es el ciclo normal.
+    # TERCER ajuste de este aviso, y el que le faltaba. Los 100 min sin moverse
+    # no distinguen "falta el METAR" de "el METAR llega puntual pero la
+    # temperatura no supera el máximo". KDCA el 2026-07-28: max 80.06 desde las
+    # 09:18, METAR de hace 60 min, `current` 78.8 y BAJANDO — nada congelado, y
+    # el aviso saltaba igual.
+    # Lo que sí los separa es el tamaño del gap: hoy era +0.5°F, dentro del
+    # redondeo del feed; en el incidente real del 07-27 iba de +4.9 a +12.6.
+    # Un escalón completo de °C (1.8°F) es el corte natural.
     STALE_MIN = 100
+    STALE_GAP_F = 1.8
     mx = r["today_max_obs"]
     day_start = datetime.combine(now_local.date(), datetime.min.time(), tz)
     serie = con.execute(
@@ -166,7 +175,7 @@ def main() -> int:
             last_val, since = v, ts
         stalled_min = (ts - since).total_seconds() / 60 if since else 0.0
     if (peak_5min is not None and mx is not None and mx > -900
-            and peak_5min > mx + 0.5 and stalled_min >= STALE_MIN):
+            and peak_5min > mx + STALE_GAP_F and stalled_min >= STALE_MIN):
         print(f"  ⚠ MAX OBS CONGELADO  lleva {stalled_min:.0f} min sin moverse "
               f"y el feed de 5-min llegó a {peak_5min:.1f}°F "
               f"({peak_5min - mx:+.1f})")
