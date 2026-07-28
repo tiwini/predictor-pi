@@ -80,3 +80,50 @@ for st in ('KATL','KPHX'):
                         'WHERE station_id=? AND date=?',
                         (st,'2026-07-27')).fetchone())"
 ```
+
+---
+
+# RESULTADO (verificado 2026-07-28 contra el CLI final del NWS)
+
+```
+KATL   settle  91.0    →  bin 90-91
+KPHX   settle 113.0    →  bin 113-114
+```
+
+## Caso 1 — KATL: ✅ ACERTADO
+
+Predije **91°F** con ~72-80%. Settle **91.0**. El CLI parcial de las 16:40 ya
+traía el número final, con el pico confirmado y la ventana cerrada.
+
+El mercado pagaba **0.36** por `90-91` y **0.61** por `92-93`. El bin favorito
+del mercado perdió.
+
+**Primer punto a favor del CLI-first como señal.** Un solo día: hace falta
+N≥20 antes de tratarlo como edge.
+
+## Caso 2 — KPHX: ✅ ACERTADO (la predicción), y el bias queda señalado
+
+Predije **≥111, con 112-114 como rango más probable**. Settle **113.0**.
+
+Lo que importa es la descomposición:
+
+```
+SIN bias              113.35   error +0.35°F   → bin 113-114  ✓
+bias winsorizado      111.17   error -1.83°F   → bin 111-112  ✗
+bias condicional      110.06   error -2.94°F   → bin 109-110  ✗
+```
+
+**El ensemble post-reweight acertó con 0.35°F.** El bias lo estropeó en las dos
+versiones. La winsorización aplicada esa misma tarde (cap p95 = 6.5°F) redujo el
+daño de -2.94 a -1.83 pero **no fue suficiente**: la predicción seguía cayendo
+en el bin equivocado. El bias óptimo del día era ~+0.35, o sea ninguno.
+
+Nota de limpieza: el bias se modificó a media tarde, **después** de sellar este
+registro. La predicción del sistema pasó de 110.1 a 111.9 durante el día. Mi
+predicción (≥111) era independiente del sistema y no se tocó.
+
+## Qué queda abierto
+
+Un caso no basta para desactivar el bias, pero sí para plantear la pregunta
+correcta: **¿el bias tracker mejora o empeora el error, medido sobre el
+histórico?** Con `pred_pre_bias` persistido se puede responder directamente.
