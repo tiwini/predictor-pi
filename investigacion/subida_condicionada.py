@@ -32,7 +32,20 @@ sys.path.insert(0, str(BASE))
 from stations import STATION_TZ   # noqa: E402
 
 UTC = ZoneInfo("UTC")
-PLANO_MAX = 0.5      # °F en la última hora: por debajo, la estación está plana
+# Tres categorías, no dos. La versión binaria (plano / subiendo) metía en
+# "PLANO" a KMIA el 2026-07-29 con una pendiente de -9.0°F/h: un desplome por
+# outflow convectivo no es comparable con una estación estancada, y mezclarlos
+# contamina la muestra justo cuando más falta hace distinguirlos.
+CAYENDO_MAX = -0.5
+PLANO_MAX = 0.5
+
+
+def _regimen(p: float) -> str:
+    if p < CAYENDO_MAX:
+        return "CAYENDO"
+    if p < PLANO_MAX:
+        return "PLANO"
+    return "SUBIENDO"
 TOL_MIN = 25
 
 
@@ -100,12 +113,16 @@ def main() -> int:
     base_hoy = max(a[0], a[1] or -999)
     pend_hoy = a[0] - b[0]
 
-    plano = pend_hoy < PLANO_MAX
+    reg = _regimen(pend_hoy)
     print(f"{st} — {hoy} a las {int(h):02d}:{int(h % 1 * 60):02d} local")
     print(f"  base {base_hoy:.1f}   pendiente última hora {pend_hoy:+.1f}°F/h"
-          f"   -> {'PLANO' if plano else 'SUBIENDO'}")
+          f"   -> {reg}")
+    if reg == "CAYENDO" and pend_hoy < -3:
+        print("  ⚠ desplome fuerte: probable outflow convectivo. La memoria de")
+        print("    KMIA 07-19 dice que la temperatura puede REBOTAR al pasar la")
+        print("    celda, así que ni los comparables lo capturan bien.")
 
-    comp = [d for d, p in datos if (p < PLANO_MAX) == plano]
+    comp = [d for d, p in datos if _regimen(p) == reg]
     todos = [d for d, _ in datos]
     print(f"\n  días históricos: {len(todos)}   comparables (misma pendiente): "
           f"{len(comp)}")
