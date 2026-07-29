@@ -123,3 +123,59 @@ KATL settle en 97-98     -> acierto            <=96  o >=99  -> fallo
 Además, el dato que más informa no es el acierto sino **si el empírico batió al
 mercado**: comparar |empírico - resultado| contra |mercado - resultado| en los
 dos bins de cada estación.
+
+---
+
+# RESULTADO (verificado 2026-07-29 contra el CLI final)
+
+```
+KPHX   107.0    KDFW   100.0    KATL   94.0
+```
+
+## Caso 1 — KPHX ✅ ACERTADO
+
+Predije **≥107**, con `107-108` como bin más probable. Settle **107.0**.
+
+```
+sin bias        107.38   error +0.38°F   -> bin 107-108   ✓
+con bias        105.20   error -1.80°F   -> bin "106 or below"   ✗
+```
+
+**Segundo día consecutivo** en que la predicción sin bias acierta con menos de
+0.5°F y la que publica el sistema falla de bin. Ayer: 113.35 vs settle 113.0.
+
+⚠ **Pero el corrector nuevo habría fallado también.** Su mediana causal para
+KPHX era −2.25, o sea corregido = 107.38 + 2.25 = **109.63**, error **+2.63°F**:
+peor que no corregir nada. Primer dato en vivo, y va en contra del corrector.
+
+## Casos 2 y 3 — KDFW y KATL ❌ AMBOS FALLADOS
+
+```
+KDFW  predije 102-103   settle 100.0 -> 100-101   (mercado 0.62, tenía razón)
+KATL  predije  97-98    settle  94.0 ->  93-94    (mercado 0.23; el favorito
+                                                   del mercado, 95-96 a 0.67,
+                                                   también falló)
+```
+
+El supuesto compartido —que el mercado sobrevalora el bin conservador— queda
+**refutado**: en KDFW ganó el conservador y en KATL ganó uno **aún más**
+conservador. Como estaba anotado, esto cuenta como **una** refutación, no como
+dos errores.
+
+## El error de método, confirmado
+
+Las obs de ayer por la tarde ya lo anticipaban:
+
+```
+KDFW  14:53 -> 99.0   settle 100.0   (+1.0 en el resto de la tarde)
+KATL  14:52 -> 93.9   settle  94.0   (+0.1)
+```
+
+Ambas estaban **aplanando**, y mi empírico usaba una mediana de subida restante
+que **no condiciona por la pendiente reciente**: mezcla días en pleno ascenso con
+días ya estancados. Con la temperatura plana durante una hora, la mediana
+histórica seguía prometiendo +1.4 (KATL) y +2.2 (KDFW).
+
+**Corrección concreta para la próxima**: condicionar la subida restante por la
+pendiente de la última hora. Si lleva ≥45 min sin subir, usar sólo los días
+históricos que también estaban planos a esa hora.
