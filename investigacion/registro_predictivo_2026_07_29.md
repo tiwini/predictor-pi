@@ -70,3 +70,53 @@ from datetime import date
 import nws_cli
 print('KATL', nws_cli.fetch_max_min_for('KATL', date(2026,7,29)))"
 ```
+
+---
+
+# RESULTADO (verificado 2026-07-31)
+
+**KATL settle 89.0** (CF6 y day_outcomes coinciden).
+
+```
+mi empírico (15:03)      86.5    error -2.5    -> bin 86-87   FALLO
+mi predicción escrita    ">=90"                               FALLO
+mercado 90-91 a 0.66             error +1.5    -> bin 90-91   FALLO
+nuestro modelo (17:01)   94.7    error +5.7    -> bin 94-95   FALLO
+CLI parcial (16:39)      88.0    se quedó 1°F corto (nunca sobreestima)
+feed 5-min (17:12)       89.6    -> redondea 90, pero el settle fue 89
+```
+
+Ganó `88-89`, que cotizaba a **0.29**. No lo tenía nadie.
+
+## Balance final del método empírico: 0 de 3
+
+```
+07-28 KDFW  102-103  ->  100.0   FALLO (caliente)
+07-28 KATL   97-98   ->   94.0   FALLO (caliente)
+07-29 KATL   ~86.5   ->   89.0   FALLO (frío)
+```
+
+**Se aplica el criterio escrito de antemano: el empírico NO se usa para llamar
+bins concretos.** Tres de tres, con el error cambiando de signo — varianza de un
+método con N entre 9 y 27, no un sesgo corregible.
+
+## Lo que SÍ sobrevive, 3 de 3
+
+Las tres veces dije que **nuestro modelo era el menos creíble de los
+estimadores**, y las tres veces lo fue:
+
+```
+07-28 KATL  modelo pedía 97-98    settle 94.0    error del modelo +3.5
+07-28 KDFW  modelo pedía 102.1    settle 100.0   error +2.1
+07-29 KATL  modelo pedía 94.7     settle  89.0   error +5.7
+```
+
+El uso válido del empírico es **detectar cuándo el modelo se está yendo**, no
+elegir bin. Son cosas distintas: la primera sólo pide orden de magnitud, la
+segunda pide precisión de 1-2°F que el método no tiene con este N.
+
+## Segunda lección, del mismo día
+
+El mercado también falló, y por más margen que en los otros dos casos. Su
+favorito (`90-91` a 0.66) perdió contra un bin de 0.29. Que Kalshi gane el Brier
+7 de 9 no lo hace infalible en un día concreto — sólo mejor en agregado.
