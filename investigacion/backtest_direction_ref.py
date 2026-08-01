@@ -115,8 +115,14 @@ def main() -> int:
     err_crudo: list[float] = []
     err_iso: list[float] = []
 
+    desde = None
+    if len(sys.argv) > 1 and sys.argv[1].startswith("--desde="):
+        desde = sys.argv[1].split("=", 1)[1]
+        print(f"[réplica out-of-sample: sólo station-days >= {desde}]\n")
     for (st, day), settle in settles.items():
         if st not in STATION_TZ or settle is None:
+            continue
+        if desde and day < desde:
             continue
         try:
             d = datetime.strptime(day, "%Y-%m-%d").date()
