@@ -60,6 +60,36 @@ SUBGRUPO COSTERO — declarado ANTES de mirar, no elegido después
 COSTE
   20 llamadas de archive (multi-punto, 5 puntos cada una).
 =============================================================================
+
+RESULTADO (2026-08-01, N=540 días-estación, 19 estaciones)
+
+  TODAS — las tres descartadas, dentro de estación no queda nada:
+    adv_manana    rho mediano -0.008   signos 10/19  p=1.000   [pool -0.227]
+    adv_pico      rho mediano -0.069   signos 11/19  p=0.648   [pool -0.144]
+    adv_pico_min  rho mediano -0.054   signos 10/19  p=1.000   [pool -0.111]
+
+  COSTERO — adv_pico y adv_pico_min quedan en zona gris (5/6 con signo
+  negativo, pero p=0.219 con 6 estaciones: no es evidencia).
+
+  LO INTERESANTE ESTÁ EN LA TABLA POR ESTACIÓN, no en los tests:
+    KLAX  adv_pico -1.878  error mediano +3.00
+    KSFO  adv_pico -1.744  error mediano +3.80
+    el resto entre -0.32 y +0.23 de advección.
+
+  Las dos estaciones con advección fría fuerte —brisa marina, confirmada
+  físicamente por el probe— son las dos con mayor sobre-predicción. Pero el
+  pool costero (-0.397) está conducido ENTERAMENTE por esos dos puntos: quitando
+  KSFO y KLAX no queda patrón (KOKC tiene +3.49 de error con advección nula,
+  KMIA -2.14 también con advección nula). N=2 estaciones NO prueba nada.
+
+  CONCLUSIÓN: la advección no explica QUÉ DÍA fallamos — que es lo que se
+  preguntaba. A lo sumo sugiere por qué fallamos MÁS EN CIERTAS ESTACIONES, y
+  eso es un offset constante que un corrector de nivel por estación ya absorbe
+  sin necesidad de instrumentar nada. Encaja con backtest_subida_restante
+  (2026-07-28): el sesgo es POR estación (±4°F) y se cancela en la mediana.
+
+  DECISIÓN: no instrumentar. H0 no se rechaza.
+=============================================================================
 """
 from __future__ import annotations
 
