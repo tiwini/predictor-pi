@@ -103,7 +103,9 @@ def spearman(xs, ys):
     return rho, p
 
 
-def main() -> int:
+def recoger_filas() -> list[dict]:
+    """Extraída de main() sin cambios de lógica, para que el control de
+    robustez (backtest_sky_control.py) reuse exactamente los mismos datos."""
     an = sqlite3.connect(f"file:{BASE / 'analysis.db'}?mode=ro", uri=True)
     an.row_factory = sqlite3.Row
     cal = sqlite3.connect(f"file:{BASE / 'calibration.db'}?mode=ro", uri=True)
@@ -174,6 +176,11 @@ def main() -> int:
                 "nubes_bajas": agg("cloud_cover_low", lo_p, hi_p, True),
             })
 
+    return filas
+
+
+def main() -> int:
+    filas = recoger_filas()
     if not filas:
         print("sin datos")
         return 1
