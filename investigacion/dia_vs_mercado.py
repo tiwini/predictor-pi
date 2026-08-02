@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 """Cierre del día: ¿quién estuvo más cerca, el modelo o el mercado?
 
-Referencia = CLI parcial (piso duro, iguala el settle el 91% de los días). Se
-compara contra `ens_med` y contra el centro del bin favorito del mercado.
+⚠ DEFECTO DE LA PRIMERA VERSIÓN, corregido el 2026-08-01
+   Comparaba `ens_med` del último snapshot contra el CLI parcial. Pero el CLI
+   **es el piso de `ens_med`**: cuando entra, la predicción queda clavada en él.
+   El resultado era 14-1 a nuestro favor con |error| 0.00, y en 11 de 15 casos
+   `modelo == ref` exactamente. No medía acierto, medía el clamp.
 
-Pensado para correrlo al final de la tarde, cuando ya hay CLI en buena parte del
-roster. Con `--settle` usa `day_outcomes` en vez del CLI, para días ya cerrados.
+   Ahora compara la predicción del MEDIODÍA local —antes de que exista CLI— con
+   el settle real del día. Eso sí es una pregunta legítima: con la información
+   de mediodía, ¿quién estaba más cerca de lo que acabó pasando?
 
-Uso:  ./venv/bin/python3 investigacion/dia_vs_mercado.py
-      ... --settle 2026-07-31
+Uso:  ./venv/bin/python3 investigacion/dia_vs_mercado.py --settle 2026-07-31
 """
 from __future__ import annotations
 
@@ -25,8 +28,8 @@ from stations import STATION_TZ   # noqa: E402
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--settle", default=None,
-                    help="YYYY-MM-DD: usa el settle real en vez del CLI parcial")
+    ap.add_argument("--settle", required=True,
+                    help="YYYY-MM-DD del día a evaluar (usa el settle real)")
     args = ap.parse_args()
 
     an = sqlite3.connect(f"file:{BASE / 'analysis.db'}?mode=ro", uri=True)
@@ -38,10 +41,26 @@ def main() -> int:
             "SELECT station_id, max_obs_f FROM day_outcomes WHERE date=?",
             (args.settle,))}
 
-    rows = an.execute(
-        """SELECT * FROM station_snapshots s
-           WHERE ts = (SELECT MAX(ts) FROM station_snapshots
-                       WHERE station = s.station)""").fetchall()
+    # snapshot del MEDIODÍA local, antes de que exista CLI parcial
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+    UTC = ZoneInfo("UTC")
+    d = datetime.strptime(args.settle, "%Y-%m-%d").date()
+    rows = []
+    for st in STATION_TZ:
+        tz = ZoneInfo(STATION_TZ[st])
+        noon = datetime.combine(d, datetime.min.time(), tz) + timedelta(hours=12)
+        lo = (noon - timedelta(minutes=90)).astimezone(UTC)
+        hi = (noon + timedelta(minutes=90)).astimezone(UTC)
+        r = an.execute(
+            """SELECT * FROM station_snapshots
+               WHERE station=? AND ts>=? AND ts<=? AND ens_med IS NOT NULL
+               ORDER BY ABS(JULIANDAY(ts) - JULIANDAY(?)) LIMIT 1""",
+            (st, lo.strftime("%Y-%m-%dT%H:%M:%S"),
+             hi.strftime("%Y-%m-%dT%H:%M:%S"),
+             noon.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S"))).fetchone()
+        if r is not None:
+            rows.append(r)
 
     print(f"{'st':6s} {'ref':>7s} {'fnt':>7s} {'maxobs':>7s} {'modelo':>7s} "
           f"{'mercado':>8s} {'Δnos':>6s} {'Δmk':>6s}  mejor")
@@ -50,17 +69,16 @@ def main() -> int:
         st = r["station"]
         if st not in STATION_TZ:
             continue
-        if args.settle:
-            ref, fnt = ref_map.get(st), "settle"
-        else:
-            ref, fnt = r["today_max_cli"], "CLI"
+        ref, fnt = ref_map.get(st), "settle"
         if ref is None:
             continue
         bins = an.execute(
             """SELECT bin_lo, bin_hi, yes_mid FROM kalshi_snapshots
-               WHERE station=? AND ts=(SELECT MAX(ts) FROM kalshi_snapshots
-                                       WHERE station=?) AND yes_mid IS NOT NULL""",
-            (st, st)).fetchall()
+               WHERE station=? AND ts=(SELECT ts FROM kalshi_snapshots
+                                       WHERE station=? AND ts<=?
+                                       ORDER BY ts DESC LIMIT 1)
+                 AND yes_mid IS NOT NULL""",
+            (st, st, r["ts"])).fetchall()
         if not bins:
             continue
         b = max(bins, key=lambda x: x["yes_mid"])
@@ -89,9 +107,7 @@ def main() -> int:
     print(f"\n  con referencia: {len(us)}/20   mejor: nosotros {gu} · mercado {gm}")
     print(f"  |error| mediano   nosotros {statistics.median(us):.2f}"
           f"   mercado {statistics.median(mk_e):.2f}")
-    sobre = sum(1 for x in us if x > 0)
-    print(f"  ⚠ ojo: donde el clamp del piso ata la predicción a la observación,"
-          f" Δnos sale 0.0 por construcción, no por acierto")
+    print("  (predicción y precios del mediodía local; referencia = settle NWS)")
     return 0
 
 
