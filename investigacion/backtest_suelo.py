@@ -57,6 +57,30 @@ AVISO SOBRE AUTOCORRELACIÓN
 COSTE
   20 llamadas de archive.
 =============================================================================
+
+RESULTADO (2026-08-01, N=428 días-estación, 15 estaciones tras el filtro)
+
+  Excluidas por IQR <= 0.02: KLAX (0.0033), KSEA (0.0113), KSFO (0.0147),
+  KDEN (0.0168).
+
+    sm_superficial  rho mediano -0.003   8/15 neg  p=1.00   [pool +0.088]
+    sm_profundo     rho mediano +0.042   9/15 pos  p=0.61   [pool +0.031]
+    lluvia_72h      rho mediano -0.124  10/15 neg  p=0.30   [pool -0.197]
+
+  Por terciles dentro de cada estación, húmedo-menos-seco mediano -0.33°F, con
+  signo positivo en sólo 5/15. La hipótesis predecía POSITIVO (suelo húmedo =>
+  sobre-predecir). Sale al revés y sin significancia: el GFS aparentemente sí
+  incorpora la humedad del suelo.
+
+  ANOTACIÓN POST-HOC — no pre-registrada, NO actuar sobre ella: en lluvia_72h
+  las cuatro estaciones con |rho| mayor son del mismo cluster (KSAT -0.48,
+  KDFW -0.46, KAUS -0.37, KMSY -0.30: Texas y Golfo) y todas del mismo signo,
+  o sea que tras lluvia nos quedamos CORTOS. Patrón coherente pero elegido
+  después de mirar y con 4 estaciones. Queda escrito como hipótesis para un
+  pre-registro propio, nunca como hallazgo.
+
+  DECISIÓN: no instrumentar. H0 no se rechaza.
+=============================================================================
 """
 from __future__ import annotations
 
