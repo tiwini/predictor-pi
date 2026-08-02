@@ -49,6 +49,31 @@ CRITERIO DE DECISIÓN
 COSTE
   1 llamada de archive por estación (20 en total). Cuota actual 1703/10000.
 =============================================================================
+
+RESULTADO (2026-08-01, N=584 días-estación, 20 estaciones)
+  sw_manana    -0.191  zona gris -> MUERTA por el control (ver abajo)
+  sw_pico      +0.015  descartar
+  nubes_pico   +0.090  descartar
+  nubes_bajas  +0.169  zona gris
+
+  Por cuartil de nubosidad en la ventana de pico, ir de 5.8% a 95.2% de cielo
+  cubierto mueve el error mediano de +0.53 a +1.06°F: medio grado entre los
+  extremos del rango.
+
+  backtest_sky_control.py mató sw_manana: dentro de estación el rho mediano es
+  -0.048 con signo negativo en 11/19 (ruido puro daría ~10). El -0.191 del pool
+  medía diferencias ENTRE estaciones (rho=-0.323), no efecto del día.
+
+  EXPLICACIÓN PROBABLE, no probada: el GFS ya incorpora la nubosidad
+  pronosticada al predecir temperatura, así que no es información nueva. El
+  +0.015 de sw_pico es la evidencia más limpia — la energía que entra justo
+  durante el pico no guarda NINGUNA relación con nuestro error, que es lo
+  esperable si el modelo ya la usó.
+
+  DECISIÓN: no instrumentar. H0 no se rechaza. El error de la subida de la
+  tarde hay que buscarlo en otro sitio (advección, mezcla vertical, humedad del
+  suelo) o aceptarlo como ruido irreducible.
+=============================================================================
 """
 from __future__ import annotations
 
