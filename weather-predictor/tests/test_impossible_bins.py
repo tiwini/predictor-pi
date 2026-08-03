@@ -73,10 +73,13 @@ def test_no_revienta_si_todos_son_imposibles():
 
 
 def test_none_en_ps_no_rompe():
-    bins = [B(float("-inf"), 80), B(81, 82)]
-    out, n, _ = zero_impossible_bins(bins, [None, 0.5], floor=95.0)
-    assert out[1] == 0.5   # sin vivos con masa, no se escala nada
-    assert n == 1
+    """Un bin sin probabilidad calculada se deja intacto y no arrastra al resto."""
+    bins = [B(float("-inf"), 80), B(96, 97), B(98, 99)]
+    out, n, liberada = zero_impossible_bins(bins, [0.1, None, 0.5], floor=95.0)
+    assert n == 1 and out[0] == 0.0
+    assert out[1] is None                      # se respeta tal cual
+    assert abs(liberada - 0.1) < 1e-9
+    assert abs(out[2] - 0.6) < 1e-9            # recibe toda la masa liberada
 
 
 def test_piso_desde_snapshot_toma_el_mayor_de_los_tres():
