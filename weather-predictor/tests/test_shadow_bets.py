@@ -13,10 +13,22 @@ o ≥0.99, y IntegrityError por bet duplicada — son casos donde no hay
 información que registrar.
 """
 import sqlite3
-from datetime import date
+from datetime import date, timedelta
 
 import bets
 import agent_signals as sig
+
+
+def _fecha_racha(i: int) -> str:
+    """Fecha de siembra dentro de la ventana de racha, RELATIVA a hoy.
+
+    Antes era "2026-06-20"+i hardcoded. `bets._streak_losses` filtra por
+    `date >= utcnow() - STREAK_LOOKBACK_DAYS` (30 días), así que estos tests
+    caducaron solos alrededor del 2026-07-20 y pasaron dos semanas en rojo sin
+    que nadie lo mirara: la racha dejó de detectarse y los guards nunca se
+    disparaban. Relativo a hoy no puede repetirse.
+    """
+    return (date.today() - timedelta(days=3 - i)).isoformat()
 
 
 NEUTRAL_BIAS = {"bias": 0.0, "applied": False,
@@ -239,9 +251,9 @@ def test_guard_ev_excludes_retroactive_tags(tmp_path, monkeypatch):
              entered_at, outcome, won, payoff, pnl, settled_at, direction)
             VALUES ('KX', ?, ?, ?, ?, '', 'no', 0.2, 0.5, -30, 10, 0.5, 20,
                     ?, 1, 0, 0, -10, ?, 'cold')""",
-                  (f"2026-06-{20+i:02d}", f"S{i}", 108.0, 109.0,
-                   f"2026-06-{20+i:02d}T12:00:00",
-                   f"2026-06-{20+i:02d}T22:00:00"))
+                  (_fecha_racha(i), f"S{i}", 108.0, 109.0,
+                   f"{_fecha_racha(i)}T12:00:00",
+                   f"{_fecha_racha(i)}T22:00:00"))
     c.commit()
     c.close()
     # Segunda bet → streak fires → T_prior queda con streak:retroactive
@@ -366,10 +378,10 @@ def test_streak_marks_prior_bet_as_retroactive_shadow(tmp_path, monkeypatch):
              entered_at, outcome, won, payoff, pnl, settled_at, direction)
             VALUES ('KX', ?, ?, ?, ?, '', 'no', 0.2, 0.5, -30, 10, 0.5, 20,
                     ?, 1, 0, 0, -10, ?, 'cold')""",
-                  (f"2026-06-{20+i:02d}", f"S{i}",
+                  (_fecha_racha(i), f"S{i}",
                    108.0, 109.0,
-                   f"2026-06-{20+i:02d}T12:00:00",
-                   f"2026-06-{20+i:02d}T22:00:00"))
+                   f"{_fecha_racha(i)}T12:00:00",
+                   f"{_fecha_racha(i)}T22:00:00"))
     c.commit()
     c.close()
     # 3) Nueva bet: streak guard fire → T_new shadow, T_prior marcado retro.

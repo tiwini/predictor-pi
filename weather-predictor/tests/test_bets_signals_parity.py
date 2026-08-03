@@ -16,10 +16,22 @@ NO verifica edge min; solo los guards de estado (difficulty, cold_bias,
 streak, ext_diff) que sí deben coincidir.
 """
 import sqlite3
-from datetime import date
+from datetime import date, timedelta
 
 import bets
 import agent_signals as sig
+
+
+def _fecha_racha(i: int) -> str:
+    """Fecha de siembra dentro de la ventana de racha, RELATIVA a hoy.
+
+    Antes era "2026-06-20"+i hardcoded. `bets._streak_losses` filtra por
+    `date >= utcnow() - STREAK_LOOKBACK_DAYS` (30 días), así que estos tests
+    caducaron solos alrededor del 2026-07-20 y pasaron dos semanas en rojo sin
+    que nadie lo mirara: la racha dejó de detectarse y los guards nunca se
+    disparaban. Relativo a hoy no puede repetirse.
+    """
+    return (date.today() - timedelta(days=3 - i)).isoformat()
 
 # bias neutro compartido — evita que bets._cold_bias_blocks_yes caiga al
 # bias_tracker real (calibration.db no-monkeypatched) durante tests
@@ -178,8 +190,9 @@ def test_streak_block_parity_cold(tmp_path, monkeypatch):
              entered_at, outcome, won, payoff, pnl, settled_at)
             VALUES ('KX', ?, ?, ?, ?, '', 'no', 0.2, 0.5, -30, 10, 0.5, 20,
                     ?, 1, 0, 0, -10, ?)""",
-            (f"2026-06-{20+i:02d}", f"T{i}", 108.0, 109.0,
-             f"2026-06-{20+i:02d}T12:00:00", f"2026-06-{20+i:02d}T22:00:00"))
+            (_fecha_racha(i), f"T{i}", 108.0, 109.0,
+             f"{_fecha_racha(i)}T12:00:00",
+             f"{_fecha_racha(i)}T22:00:00"))
     c.commit()
     c.close()
 
