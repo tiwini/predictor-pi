@@ -18,7 +18,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from predictor import build_snapshot, fetch_station, _compute_final_our_p_per_bin
+from predictor import (build_snapshot, fetch_station,
+                       _compute_final_our_p_per_bin, obs_floor_from_snapshot)
 import kalshi
 import agent_signals as A
 
@@ -143,6 +144,9 @@ def _conn() -> sqlite3.Connection:
                      ("bias_path", "TEXT"),
                      ("ext_med_f", "REAL"), ("ext_spread_f", "REAL"),
                      ("ext_diff_f", "REAL"),
+                     # cuánto queda ext_med por debajo del piso ya
+                     # observado; NULL = no pasa (lo normal)
+                     ("ext_below_floor_f", "REAL"),
                      ("difficulty_score", "REAL"),
                      ("difficulty_label", "TEXT"),
                      ("difficulty_reasons_json", "TEXT"),
@@ -269,7 +273,8 @@ def _compute_signals(station_id: str, snap) -> dict:
         "bias_median_causal_f": None, "bias_median_n": None,
         "bias_f": None, "bias_applied": None,
         "bias_path": None, "ext_med_f": None, "ext_spread_f": None,
-        "ext_diff_f": None, "difficulty_score": None, "difficulty_label": None,
+        "ext_diff_f": None, "ext_below_floor_f": None,
+        "difficulty_score": None, "difficulty_label": None,
         "difficulty_reasons_json": None, "cold_bias_block": None,
         "streak_block_hot": None, "streak_block_cold": None,
         "roi_hist_pct": None, "trades_settled": None, "wins_settled": None,
@@ -297,10 +302,22 @@ def _compute_signals(station_id: str, snap) -> dict:
 
     try:
         info = snap.ext_shift_info or {}
-        out["ext_med_f"] = info.get("ext_med")
+        out["ext_med_f"] = info.get("ext_med")      # crudo, sin tocar
         out["ext_spread_f"] = info.get("ext_spread")
         if out["our_pred_f"] is not None and out["ext_med_f"] is not None:
-            out["ext_diff_f"] = out["our_pred_f"] - out["ext_med_f"]
+            # 2026-08-02: los externos a veces pronostican POR DEBAJO del
+            # máximo que el día ya alcanzó (KATL: ext 85.6 con 91.04 observado
+            # y CLI parcial 92.0). Ese ext_med no es una previsión discrepante,
+            # es información ya refutada, y ext_diff calculado contra él marca
+            # "sobre-predecimos" justo cuando el modelo va bien.
+            # Se clampea al piso para el diff; `ext_med_f` se guarda crudo y la
+            # distancia queda en `ext_below_floor_f` para poder auditarlo.
+            piso = obs_floor_from_snapshot(snap)
+            ext_eff = out["ext_med_f"]
+            if piso is not None and ext_eff < piso:
+                out["ext_below_floor_f"] = piso - ext_eff
+                ext_eff = piso
+            out["ext_diff_f"] = out["our_pred_f"] - ext_eff
     except Exception as e:
         errors.append(f"ext:{e}")
 
@@ -435,7 +452,7 @@ def poll_one(station_id: str, c: sqlite3.Connection) -> None:
          today_max_obs_ts,
          our_pred_f, pred_iso_med_f, bias_median_causal_f, bias_median_n,
          bias_f, bias_applied, bias_path,
-         ext_med_f, ext_spread_f, ext_diff_f,
+         ext_med_f, ext_spread_f, ext_diff_f, ext_below_floor_f,
          difficulty_score, difficulty_label, difficulty_reasons_json,
          cold_bias_block, streak_block_hot, streak_block_cold,
          roi_hist_pct, trades_settled, wins_settled,
@@ -445,7 +462,7 @@ def poll_one(station_id: str, c: sqlite3.Connection) -> None:
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (ts, station_id, snap.current_temp_f, snap.today_max_obs,
          med, p10, p90, json.dumps(maxes), snap.peak_status,
          regime_tag, regime_reason,
@@ -463,6 +480,7 @@ def poll_one(station_id: str, c: sqlite3.Connection) -> None:
          sig["bias_median_causal_f"], sig["bias_median_n"],
          sig["bias_f"], sig["bias_applied"], sig["bias_path"],
          sig["ext_med_f"], sig["ext_spread_f"], sig["ext_diff_f"],
+         sig["ext_below_floor_f"],
          sig["difficulty_score"], sig["difficulty_label"], sig["difficulty_reasons_json"],
          sig["cold_bias_block"], sig["streak_block_hot"], sig["streak_block_cold"],
          sig["roi_hist_pct"], sig["trades_settled"], sig["wins_settled"],

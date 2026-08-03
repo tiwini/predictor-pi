@@ -1915,6 +1915,75 @@ def record_kalshi(snap: Snapshot, station: Station) -> None:
         console.print(f"[yellow]kalshi fetch error:[/] {e}")
 
 
+def obs_floor_from_snapshot(snap: Snapshot) -> float | None:
+    """Piso de observación reconstruido desde un Snapshot ya construido.
+
+    Misma lógica que `build_snapshot` arma inline para `apply_obs_floor`, pero
+    accesible después. Se mantiene aquí en vez de guardarse como campo porque
+    `build_snapshot` lo calcula antes de existir el Snapshot.
+    """
+    floor = None
+    mo = getattr(snap, "today_max_obs", None)
+    if mo is not None and mo > -900:
+        floor = mo
+    cli = getattr(snap, "today_max_cli", None)
+    if cli is not None:
+        floor = cli if floor is None else max(floor, cli)
+    cur = getattr(snap, "current_temp_f", None)
+    if cur is not None and cur > -900:
+        cand = cur - CURRENT_FLOOR_MARGIN_F
+        floor = cand if floor is None else max(floor, cand)
+    return floor
+
+
+def zero_impossible_bins(bins: list, ps: list,
+                         floor: float | None) -> tuple[list, int, float]:
+    """Anula la masa de bins que el día ya dejó atrás y la redistribuye.
+
+    Por qué: el clamp de `apply_obs_floor` (2026-07-26) arregló la predicción
+    puntual pero nunca se propagó a la distribución por bin. Resultado medido el
+    2026-08-02: la isotónica levanta el piso `MIN_P` de 0.030 a ~0.090 en bins
+    ya imposibles, y en KAUS llegó a 0.346 — el bin favorito calibrado era
+    "98° or below" con el día ya por encima. Error garantizado.
+
+    CRITERIO DE IMPOSIBILIDAD, con el redondeo que usa el resto del sistema:
+    el settle del NWS es entero y `our_p_for_bin` cubre [lo-0.5, hi+0.5], así
+    que un bin sólo es imposible si `floor > hi + 0.5`. Usar `hi < floor` a
+    secas mata bins todavía vivos — con max_obs 98.06 el bin "98 or below"
+    sigue ganando si el día no sube más.
+
+    La masa liberada se redistribuye proporcionalmente entre los bins vivos,
+    preservando la suma total en vez de normalizar a 1: la suma calibrada no
+    vale 1 de todos modos (isotónica bin a bin), y tocarla sería un cambio
+    aparte y mucho mayor. Sin bins imposibles esto es exactamente identidad.
+
+    Devuelve (ps_corregidos, n_anulados, masa_redistribuida).
+    """
+    if floor is None or not bins:
+        return ps, 0, 0.0
+    vivos, muertos = [], []
+    for i, b in enumerate(bins):
+        hi = getattr(b, "bin_hi", None)
+        if (ps[i] is None or hi is None or hi != hi          # None / NaN
+                or hi > 1e8 or floor <= hi + 0.5):
+            vivos.append(i)
+        else:
+            muertos.append(i)
+    if not muertos:
+        return ps, 0, 0.0
+    liberada = sum(ps[i] or 0.0 for i in muertos)
+    suma_viva = sum(ps[i] or 0.0 for i in vivos)
+    out = list(ps)
+    for i in muertos:
+        out[i] = 0.0
+    if suma_viva > 0:
+        escala = (suma_viva + liberada) / suma_viva
+        for i in vivos:
+            if out[i] is not None:
+                out[i] = out[i] * escala
+    return out, len(muertos), liberada
+
+
 def _compute_final_our_p_per_bin(station_id: str, snap: Snapshot,
                                  bins: list) -> list:
     """Per-bin our_p después de isotonic + blend_with_external. Lo que el
@@ -1971,6 +2040,10 @@ def _compute_final_our_p_per_bin(station_id: str, snap: Snapshot,
                 p, ext_med, ext_spread, b.bin_lo, b.bin_hi, ext_diff, lam,
                 ext_used=nudge_ext_used)
         out[i] = p
+    # Al final del pipeline a propósito: así captura la masa imposible venga de
+    # donde venga. Una vía conocida es el propio blend — si `ext_med` cae por
+    # debajo del piso, su gaussiana reparte masa en bins ya muertos.
+    out, _n, _m = zero_impossible_bins(bins, out, obs_floor_from_snapshot(snap))
     return out
 
 

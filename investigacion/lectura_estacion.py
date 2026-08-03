@@ -83,8 +83,27 @@ def main() -> int:
     print(f"  pred_iso_med_f      {f(r['pred_iso_med_f'])}°F   <- post isotónica + blend")
     print(f"  banda p10-p90       {f(r['ens_p10'])} .. {f(r['ens_p90'])}")
     ext_d = r["ext_diff_f"]
+    # 2026-08-02: dos correcciones al aviso de ext_diff.
+    #
+    # (1) La regla se midió a las 08h LOCAL y sólo se validó ahí. Pasada la
+    #     mañana se estaba mostrando fuera del régimen donde tiene evidencia.
+    # (2) Cuando el externo pronostica por debajo del máximo que el día YA
+    #     alcanzó, no es una previsión discrepante: es información refutada.
+    #     KATL hoy tenía ext 85.6 con 91.04 observado y CLI parcial 92.0, y el
+    #     aviso decía "sobre-predecimos el 92%" con el modelo yendo bien.
+    #     El poller ya clampea ext_diff al piso; aquí se avisa de que pasó.
     band = ""
-    if ext_d is not None:
+    try:
+        below = r["ext_below_floor_f"]
+    except (IndexError, KeyError):
+        below = None
+
+    if below is not None and below > 0:
+        band = (f"  ⚠ externo {below:.1f}°F POR DEBAJO del máximo ya observado "
+                f"— refutado, no es señal (ext_diff va clampeado al piso)")
+    elif ext_d is not None and hour_f > 10:
+        band = "  (regla ext_diff validada sólo a las ~08h local — informativo a esta hora)"
+    elif ext_d is not None:
         # ext_diff_matinal_predice_error_2026_07_27 (N=483)
         if ext_d >= 3:
             band = "  ⚠ banda >+3: sobre-predecimos el 92% de los días (+3.76°F mediano)"
