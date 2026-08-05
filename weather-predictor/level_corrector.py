@@ -163,6 +163,10 @@ def bias_info_for(station_id: str, today: _date) -> Optional[dict]:
         "applied": True,
         "n": n,
         "mode": "median_level",
-        "path": "median_causal",
+        # OJO: la clave es `bias_path`, que es la que lee
+        # analysis_poller (bi.get("bias_path")). Con "path" a secas
+        # la columna queda NULL y luego no hay forma de saber qué
+        # días usaron el corrector.
+        "bias_path": "median_causal",
         "reason": f"mediana causal de {n} días previos",
     }

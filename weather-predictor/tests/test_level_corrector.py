@@ -136,3 +136,16 @@ def test_deshace_el_bias_aplicado_ese_dia(tmp_path, monkeypatch):
     assert n == 6
     assert med == pytest.approx(3.0, abs=0.01), \
         "debe medir el sesgo del ensemble crudo, no el residuo post-corrección"
+
+
+def test_bias_info_usa_la_clave_que_lee_el_poller(tmp_path, monkeypatch):
+    """`analysis_poller` hace bi.get("bias_path"). Con otra clave la telemetría
+    queda a NULL y dentro de una semana no se puede medir si el corrector
+    ayudó — que es justo para lo que se encendió."""
+    dias = [(f"2026-07-{d:02d}", 83.0, 80.0) for d in range(1, 7)]
+    _mk_dbs(tmp_path, monkeypatch, dias)
+    info = lc.bias_info_for(ST, date(2026, 7, 10))
+    assert info is not None
+    assert info["bias_path"] == "median_causal"
+    assert info["applied"] is True
+    assert info["bias"] == pytest.approx(3.0, abs=0.01)
