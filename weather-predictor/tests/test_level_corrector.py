@@ -97,8 +97,10 @@ def test_corrección_absurda_se_ignora(tmp_path, monkeypatch):
 
 
 def test_solo_estaciones_habilitadas():
+    """KDCA en particular NO debe entrar: es donde el backtest empeora."""
     assert lc.bias_info_for("KPHX", date(2026, 7, 10)) is None
-    assert "KLAX" in lc.ENABLED_STATIONS
+    assert lc.bias_info_for("KDCA", date(2026, 7, 10)) is None
+    assert lc.ENABLED_STATIONS == {"KLAX", "KSFO"}
 
 
 def test_deshace_el_bias_aplicado_ese_dia(tmp_path, monkeypatch):

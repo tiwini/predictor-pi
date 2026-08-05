@@ -24,11 +24,16 @@ signo coincidiendo en 15 de 19 estaciones.
 
 Alcance deliberadamente estrecho
 --------------------------------
-`ENABLED_STATIONS` arranca sólo con KLAX (EWMA 3.30 → causal 1.95°F). El
-backtest apoya extenderlo —14 de 20 estaciones mejoran, KSFO va de 4.70 a 1.37—
-pero el pre-registro pedía confirmar con días frescos antes de generalizar, así
-que se enciende una estación, se mide en vivo, y se amplía con datos.
-KDCA es el contraejemplo a vigilar: allí empeora (1.29 → 1.69).
+`ENABLED_STATIONS` cubre las dos estaciones con mayor sesgo medido, que son
+además las de brisa marina de [[adveccion_descartada_2026_08_01]]:
+
+    KSFO   EWMA 4.70 → causal 1.37°F   (la mayor mejora de las 20)
+    KLAX   EWMA 3.30 → causal 1.95°F
+
+El backtest apoya extenderlo más —14 de 20 estaciones mejoran— pero el
+pre-registro pedía confirmar con días frescos antes de generalizar, así que se
+amplía con datos y no de golpe. KDCA es el contraejemplo a vigilar: allí
+empeora (1.29 → 1.69), y por eso no entra.
 
 MISMA FUENTE QUE EL BACKTEST
 ----------------------------
@@ -56,7 +61,7 @@ HOURS_BEFORE_PEAK = 2
 MIN_PREV_DAYS = 5
 
 # Estaciones donde el corrector sustituye al EWMA.
-ENABLED_STATIONS: set[str] = {"KLAX"}
+ENABLED_STATIONS: set[str] = {"KLAX", "KSFO"}
 
 # Guarda de cordura: un corrector de nivel legítimo vive en pocos grados. Si
 # sale algo mayor es que la historia está contaminada, y es preferible caer al
