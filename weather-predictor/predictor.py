@@ -1310,7 +1310,9 @@ def build_snapshot(station: Station) -> Snapshot:
         bias_info = None
         try:
             import level_corrector as _lc
-            bias_info = _lc.bias_info_for(station.id, today)
+            # La hora local importa: el sesgo decae durante el día.
+            bias_info = _lc.bias_info_for(station.id, today,
+                                          local_hour=now_local.hour)
         except Exception:
             bias_info = None
 

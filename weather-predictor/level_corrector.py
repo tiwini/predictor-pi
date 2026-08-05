@@ -68,21 +68,35 @@ ENABLED_STATIONS: set[str] = {"KLAX", "KSFO"}
 # EWMA que aplicar una corrección enorme a ciegas.
 MAX_ABS_CORRECTION_F = 8.0
 
-_cache: dict[tuple[str, str], tuple[Optional[float], int]] = {}
+_cache: dict[tuple[str, str, Optional[int]],
+             tuple[Optional[float], int]] = {}
 
 
 def clear_cache() -> None:
     _cache.clear()
 
 
-def median_level_bias(station_id: str,
-                      today: _date) -> tuple[Optional[float], int]:
+def median_level_bias(station_id: str, today: _date,
+                      local_hour: Optional[int] = None
+                      ) -> tuple[Optional[float], int]:
     """(mediana de sesgos de días ANTERIORES, n_días). (None, n) si no aplica.
 
     Causal por construcción: `date < today` en la consulta de settles. Nunca
     puede ver el día que está prediciendo.
+
+    `local_hour` compara con la MISMA hora local de días anteriores. Importa
+    mucho: el sesgo del ensemble decae según avanza el día porque va
+    incorporando observaciones (medido 2026-08-05, N=30 días por hora):
+
+        KLAX  +3.45 (10h) → +2.40 (13h) → +1.30 (17h) → +0.08 (19h)
+        KSFO  +4.85 (10h) → +4.09 (13h) → +2.19 (17h) → +0.00 (19h)
+        KPHX  -2.33 (6h)  → -0.91 (14h) → -0.36 (19h)
+
+    Aplicar el sesgo matinal por la tarde sobre-corregía 2.3°F en KLAX y 2.7°F
+    en KSFO a las 17h. Con `local_hour=None` se usa la hora de referencia del
+    backtest (peak_lo - 2), que es lo que hay que pasar para reproducirlo.
     """
-    key = (station_id, today.isoformat())
+    key = (station_id, today.isoformat(), local_hour)
     if key in _cache:
         return _cache[key]
 
@@ -90,7 +104,8 @@ def median_level_bias(station_id: str,
     try:
         from stations import STATION_TZ, PEAK_HOURS
         tz = ZoneInfo(STATION_TZ[station_id])
-        peak_lo = PEAK_HOURS[station_id][0]
+        ref_hour = (PEAK_HOURS[station_id][0] - HOURS_BEFORE_PEAK
+                    if local_hour is None else local_hour)
 
         cal = sqlite3.connect(f"file:{CAL_DB_PATH}?mode=ro", uri=True)
         try:
@@ -113,7 +128,7 @@ def median_level_bias(station_id: str,
                 except ValueError:
                     continue
                 ref = (datetime.combine(d, datetime.min.time(), tz)
-                       + timedelta(hours=peak_lo - HOURS_BEFORE_PEAK))
+                       + timedelta(hours=ref_hour))
                 lo = (ref - timedelta(minutes=30)).astimezone(timezone.utc)
                 hi = (ref + timedelta(minutes=30)).astimezone(timezone.utc)
                 r = an.execute(
@@ -152,7 +167,8 @@ def median_level_bias(station_id: str,
     return out
 
 
-def bias_info_for(station_id: str, today: _date) -> Optional[dict]:
+def bias_info_for(station_id: str, today: _date,
+                  local_hour: Optional[int] = None) -> Optional[dict]:
     """`bias_info` compatible con el del tracker, o None si no aplica.
 
     Devolver None significa "usa el EWMA de siempre": estación no habilitada,
@@ -160,7 +176,7 @@ def bias_info_for(station_id: str, today: _date) -> Optional[dict]:
     """
     if station_id not in ENABLED_STATIONS:
         return None
-    med, n = median_level_bias(station_id, today)
+    med, n = median_level_bias(station_id, today, local_hour)
     if med is None:
         return None
     return {
@@ -173,5 +189,7 @@ def bias_info_for(station_id: str, today: _date) -> Optional[dict]:
         # la columna queda NULL y luego no hay forma de saber qué
         # días usaron el corrector.
         "bias_path": "median_causal",
-        "reason": f"mediana causal de {n} días previos",
+        "reason": (f"mediana causal de {n} días previos"
+                   + (f" a las {local_hour}h local" if local_hour is not None
+                      else "")),
     }

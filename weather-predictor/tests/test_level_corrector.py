@@ -21,8 +21,12 @@ from stations import STATION_TZ, PEAK_HOURS  # noqa: E402
 ST = "KLAX"
 
 
-def _mk_dbs(tmp_path, monkeypatch, dias):
-    """dias = [(date_str, ens_med, settle)] -> escribe ambas DBs."""
+def _mk_dbs(tmp_path, monkeypatch, dias, hora=None):
+    """dias = [(date_str, ens_med, settle)] -> escribe ambas DBs.
+
+    `hora` = hora local del snapshot sembrado; por defecto la de referencia
+    del backtest (peak_lo - HOURS_BEFORE_PEAK).
+    """
     an_p = tmp_path / "analysis.db"
     cal_p = tmp_path / "calibration.db"
     an = sqlite3.connect(an_p)
@@ -34,7 +38,7 @@ def _mk_dbs(tmp_path, monkeypatch, dias):
         station_id TEXT, date TEXT, max_obs_f REAL)""")
 
     tz = ZoneInfo(STATION_TZ[ST])
-    ref_h = PEAK_HOURS[ST][0] - lc.HOURS_BEFORE_PEAK
+    ref_h = (PEAK_HOURS[ST][0] - lc.HOURS_BEFORE_PEAK) if hora is None else hora
     for ds, ens, settle in dias:
         d = datetime.strptime(ds, "%Y-%m-%d").date()
         ts = (datetime.combine(d, datetime.min.time(), tz)
@@ -151,3 +155,42 @@ def test_bias_info_usa_la_clave_que_lee_el_poller(tmp_path, monkeypatch):
     assert info["bias_path"] == "median_causal"
     assert info["applied"] is True
     assert info["bias"] == pytest.approx(3.0, abs=0.01)
+
+
+def test_condiciona_por_hora_local(tmp_path, monkeypatch):
+    """El sesgo decae durante el día: pedir otra hora debe dar otro valor.
+
+    Se siembran dos horas con sesgos distintos (+6 por la mañana, +1 por la
+    tarde). Pedir la hora de tarde no puede devolver el sesgo matinal — aplicar
+    el de la mañana por la tarde sobre-corregía 2.3°F en KLAX.
+    """
+    an_p = tmp_path / "analysis.db"
+    cal_p = tmp_path / "calibration.db"
+    an = sqlite3.connect(an_p)
+    an.execute("""CREATE TABLE station_snapshots (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, station TEXT,
+        ens_med REAL, bias_f REAL, bias_applied INTEGER)""")
+    cal = sqlite3.connect(cal_p)
+    cal.execute("""CREATE TABLE day_outcomes (
+        station_id TEXT, date TEXT, max_obs_f REAL)""")
+    tz = ZoneInfo(STATION_TZ[ST])
+    for d in range(1, 7):
+        ds = f"2026-07-{d:02d}"
+        dd = datetime.strptime(ds, "%Y-%m-%d").date()
+        for h, ens in ((9, 86.0), (17, 81.0)):        # settle 80 -> +6 y +1
+            ts = (datetime.combine(dd, datetime.min.time(), tz)
+                  + timedelta(hours=h)).astimezone(timezone.utc)
+            an.execute("INSERT INTO station_snapshots (ts, station, ens_med, "
+                       "bias_f, bias_applied) VALUES (?,?,?,?,?)",
+                       (ts.strftime("%Y-%m-%dT%H:%M:%S"), ST, ens, 0.0, 0))
+        cal.execute("INSERT INTO day_outcomes VALUES (?,?,?)", (ST, ds, 80.0))
+    an.commit(); cal.commit(); an.close(); cal.close()
+    monkeypatch.setattr(lc, "DB_PATH", an_p)
+    monkeypatch.setattr(lc, "CAL_DB_PATH", cal_p)
+    lc.clear_cache()
+
+    manana, _ = lc.median_level_bias(ST, date(2026, 7, 10), local_hour=9)
+    tarde, _ = lc.median_level_bias(ST, date(2026, 7, 10), local_hour=17)
+    assert manana == pytest.approx(6.0, abs=0.01)
+    assert tarde == pytest.approx(1.0, abs=0.01), \
+        "la tarde no puede heredar el sesgo de la mañana"
