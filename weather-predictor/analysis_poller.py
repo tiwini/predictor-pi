@@ -38,7 +38,13 @@ log = logging.getLogger("analysis_poller")
 
 def _conn() -> sqlite3.Connection:
     c = sqlite3.connect(DB_PATH)
-    c.execute("PRAGMA busy_timeout=5000")  # race vs agent_monitor reads
+    # WAL + timeout largo (2026-08-05): en modo `delete` un lector bloquea al
+    # escritor, y los backtests que escanean cientos de miles de filas de
+    # kalshi_snapshots tardan más de 5 s. El poller murió con "database is
+    # locked" justo así. Con WAL los lectores no bloquean, y el timeout cubre
+    # el checkpoint.
+    c.execute("PRAGMA journal_mode=WAL")
+    c.execute("PRAGMA busy_timeout=30000")
     c.executescript("""
         CREATE TABLE IF NOT EXISTS station_snapshots (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
