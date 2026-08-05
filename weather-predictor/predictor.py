@@ -1303,18 +1303,30 @@ def build_snapshot(station: Station) -> Snapshot:
                 except Exception:
                     return None
 
-        if today_pct is not None and pct_lookup is not None:
-            bias_info = _bt.compute_bias_conditional(
-                station.id, predicted_max_f=pred_med,
-                today_percentile=today_pct,
-                percentile_for_pred=pct_lookup,
-                today=today,
-                ext_diff=pre_ext_diff,
-            )
-        else:
-            bias_info = _bt.compute_bias(station.id, today,
-                                         ext_diff=pre_ext_diff)
-            bias_info["mode"] = "global"
+        # Corrector de nivel por mediana causal (2026-08-05). SUSTITUYE al EWMA
+        # en las estaciones habilitadas — no se suma, o se corregiría dos veces.
+        # Devuelve None si la estación no está habilitada o falta historia, y
+        # entonces sigue el camino de siempre.
+        bias_info = None
+        try:
+            import level_corrector as _lc
+            bias_info = _lc.bias_info_for(station.id, today)
+        except Exception:
+            bias_info = None
+
+        if bias_info is None:
+            if today_pct is not None and pct_lookup is not None:
+                bias_info = _bt.compute_bias_conditional(
+                    station.id, predicted_max_f=pred_med,
+                    today_percentile=today_pct,
+                    percentile_for_pred=pct_lookup,
+                    today=today,
+                    ext_diff=pre_ext_diff,
+                )
+            else:
+                bias_info = _bt.compute_bias(station.id, today,
+                                             ext_diff=pre_ext_diff)
+                bias_info["mode"] = "global"
         if bias_info["applied"]:
             bias_correction_f = bias_info["bias"]
             daily_maxes = [v - bias_correction_f for v in daily_maxes]
