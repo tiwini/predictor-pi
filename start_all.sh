@@ -28,31 +28,50 @@ wait_dns() {
 # Espera reachability REAL vía HTTPS GET. Distinto de wait_dns: cachés DNS
 # pueden retornar sin que el host responda. Esta es la barrera antes de
 # lanzar predictor_web (que muere al primer request si NWS no está listo).
+#
+# 2026-08-09: el tope era 120s y al volver de un apagón (08-08) la red tardó
+# más. Los 3 intentos se agotaron en ~8 min y predictor_web quedó caído 12,5 h
+# mientras el poller sí funcionaba. Ahora espera hasta 30 min con sondeo
+# espaciado — un @reboot en background puede permitírselo, y quedarse sin web
+# medio día no.
 wait_api_reachable() {
   local url="${1:-https://api.weather.gov/}"
-  local max="${2:-120}"
-  local i=0
-  while ! curl -sf -o /dev/null -m 5 "$url"; do
-    i=$((i+5))
-    if [ "$i" -ge "$max" ]; then
-      log "$url no respondió tras ${max}s — sigo igual (weather puede morir)"
+  local max="${2:-1800}"
+  local waited=0 gap=5
+  while ! curl -sf -o /dev/null -m 10 "$url"; do
+    if [ "$waited" -ge "$max" ]; then
+      log "$url no respondió tras ${waited}s — abandono la espera"
       return 1
     fi
-    sleep 5
+    sleep "$gap"
+    waited=$((waited+gap))
+    [ "$gap" -lt 60 ] && gap=$((gap*2))
   done
-  log "$url reachable tras ${i}s"
+  log "$url reachable tras ${waited}s"
 }
 
 # Arranca weather con retry: si :8000 no responde tras 20s, mata proceso
-# zombie y reintenta hasta 3 veces con backoff 30s. Cubre el fallo post-reboot
-# donde NWS aún no está reachable al primer intento (Jul 5 2026).
+# zombie y reintenta con backoff CRECIENTE. Cubre el fallo post-reboot donde
+# NWS aún no está reachable al primer intento (Jul 5 2026) y el del apagón
+# (Ago 8 2026), donde el DNS tardó más que toda la secuencia de reintentos.
+#
+# Cambio clave: si la API no responde NO se lanza el proceso. Antes se lanzaba
+# igual ("sigo igual, weather puede morir") y cada intento se quemaba contra
+# una red que aún no estaba, agotando los 3 en minutos.
 start_weather_with_retry() {
   if is_up 8000; then log "weather :8000 ya está arriba"; return; fi
   cd "$SCRIPT_DIR/weather-predictor" || { log "no existe weather-predictor"; return; }
-  local attempt pid i
-  for attempt in 1 2 3; do
-    wait_api_reachable https://api.weather.gov/ 120
-    nohup ./venv/bin/python3 predictor_web.py > web.log 2>&1 &
+  local attempt pid i backoff=30
+  for attempt in 1 2 3 4 5; do
+    if ! wait_api_reachable https://api.weather.gov/ 1800; then
+      log "weather :8000 intento $attempt: API inalcanzable, no lanzo"
+      if [ "$attempt" -lt 5 ]; then
+        log "weather :8000 backoff ${backoff}s antes del intento $((attempt+1))"
+        sleep "$backoff"; backoff=$((backoff*2))
+      fi
+      continue
+    fi
+    nohup ./venv/bin/python3 predictor_web.py >> web.log 2>&1 &
     pid=$!
     log "weather :8000 intento $attempt (PID $pid)"
     # Espera hasta 20s por respuesta HTTP local
@@ -69,43 +88,43 @@ start_weather_with_retry() {
     done
     # Si sigue vivo pero no responde, matarlo antes de re-intentar
     kill "$pid" 2>/dev/null && log "weather :8000 zombie killed (intento $attempt)"
-    if [ "$attempt" -lt 3 ]; then
-      log "weather :8000 backoff 30s antes del intento $((attempt+1))"
-      sleep 30
+    if [ "$attempt" -lt 5 ]; then
+      log "weather :8000 backoff ${backoff}s antes del intento $((attempt+1))"
+      sleep "$backoff"; backoff=$((backoff*2))
     fi
   done
-  log "weather :8000 FALLÓ tras 3 intentos"
+  log "weather :8000 FALLÓ tras 5 intentos"
 }
 
 start_crypto() {
   if is_up 8001; then log "crypto :8001 ya está arriba"; return; fi
   cd "$SCRIPT_DIR/crypto-predictor" || { log "no existe crypto-predictor"; return; }
-  nohup ./venv/bin/python3 predictor_web.py 8001 > web.log 2>&1 &
+  nohup ./venv/bin/python3 predictor_web.py 8001 >> web.log 2>&1 &
   log "crypto :8001 lanzado (PID $!)"
 }
 
 start_dashboard() {
   if pgrep -f "python.*dashboard\.py" > /dev/null; then log "dashboard ya corre"; return; fi
   cd "$SCRIPT_DIR" || return
-  nohup ./weather-predictor/venv/bin/python3 dashboard.py > dashboard.log 2>&1 &
+  nohup ./weather-predictor/venv/bin/python3 dashboard.py >> dashboard.log 2>&1 &
   log "dashboard lanzado (PID $!)"
 }
 
 start_analysis_poller() {
   if pgrep -f "python.*analysis_poller\.py" > /dev/null; then log "analysis_poller ya corre"; return; fi
   cd "$SCRIPT_DIR/weather-predictor" || { log "no existe weather-predictor"; return; }
-  nohup ./venv/bin/python3 analysis_poller.py > analysis_poller.log 2>&1 &
+  nohup ./venv/bin/python3 analysis_poller.py >> analysis_poller.log 2>&1 &
   log "analysis_poller lanzado (PID $!)"
 }
 
 start_btc_quarter_poller() {
   if pgrep -f "python.*btc_quarter_poller\.py" > /dev/null; then log "btc_quarter_poller ya corre"; return; fi
   cd "$SCRIPT_DIR" || return
-  nohup ./weather-predictor/venv/bin/python3 btc_quarter_poller.py > btc_quarter_poller.log 2>&1 &
+  nohup ./weather-predictor/venv/bin/python3 btc_quarter_poller.py >> btc_quarter_poller.log 2>&1 &
   log "btc_quarter_poller lanzado (PID $!)"
 }
 
-wait_dns api.weather.gov 60
+wait_dns api.weather.gov 300
 start_weather_with_retry
 #start_crypto  # comentado 2026-07-08: crypto migrado a systemd (crypto-predictor.service)
 start_dashboard
