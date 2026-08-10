@@ -27,7 +27,7 @@ from zoneinfo import ZoneInfo
 
 BASE = Path("/home/popeye/predictor-pi/weather-predictor")
 sys.path.insert(0, str(BASE))
-from stations import STATION_TZ, PEAK_HOURS   # noqa: E402
+from stations import STATION_TZ, PEAK_HOURS, CLI_LATE_HOUR   # noqa: E402
 
 HORAS = list(range(8, 20))
 
@@ -122,6 +122,32 @@ def main() -> int:
                         else "  ▮" if p < .75 else "  █")
         lo, hi = PEAK_HOURS[st]
         print(f"  {st:6s} " + " ".join(fila) + f"   {lo}-{hi}h")
+
+    # ── El acierto DESPUÉS del CLI parcial es en parte tautológico ──
+    # El CLI entra como piso duro de la predicción (cli_first, 2026-07-26), así
+    # que a partir de esa hora el "acierto" mide el CLI, no el modelo. Es el
+    # mismo defecto que tuvo dia_vs_mercado.py comparando el modelo con su
+    # propio piso. Aquí se separa.
+    print("\n\nACIERTO **ANTES** DE QUE SALGA EL CLI PARCIAL (lo que mide el modelo)")
+    print(f"  {'st':6s} {'CLI sale':>9s} {'acierto pre-CLI':>16s} {'N':>5s}"
+          f"   {'mejor hora pre-CLI':>20s}")
+    pre = []
+    for st in sorted(detalle):
+        cli_h = CLI_LATE_HOUR.get(st)
+        if cli_h is None:
+            continue
+        hs = [h for h in sorted(detalle[st]) if h < cli_h]
+        tot_ok = sum(detalle[st][h][0] for h in hs)
+        tot_n = sum(detalle[st][h][1] for h in hs)
+        if tot_n < 10:
+            continue
+        mejor = max(hs, key=lambda h: (detalle[st][h][0] / detalle[st][h][1]
+                                       if detalle[st][h][1] >= 3 else -1))
+        mo, mn = detalle[st][mejor]
+        pre.append((st, cli_h, tot_ok / tot_n, tot_n, mejor, mo / mn))
+    for st, cli_h, acc, n, mh, mp in sorted(pre, key=lambda x: -x[2]):
+        print(f"  {st:6s} {cli_h:8.1f}h {100*acc:15.0f}% {n:5d}"
+              f"   {mh:2d}h con {100*mp:3.0f}%")
 
     print("\n\n¿DESDE QUÉ HORA es fiable cada estación? "
           "(primera hora con ≥70% y que se sostiene)")
