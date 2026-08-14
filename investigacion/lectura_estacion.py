@@ -174,8 +174,25 @@ def main() -> int:
     # Lo que sí los separa es el tamaño del gap: hoy era +0.5°F, dentro del
     # redondeo del feed; en el incidente real del 07-27 iba de +4.9 a +12.6.
     # Un escalón completo de °C (1.8°F) es el corte natural.
-    STALE_MIN = 100
+    # CUARTO ajuste (2026-08-14). Dos cambios, por dos fallos distintos:
+    #
+    # (a) El umbral de 100 min es absoluto y no mira cuánta ventana queda. 70
+    #     min ciegos a media mañana son inocuos; con 1.2 h de ventana y el pico
+    #     ocurriendo son graves. Ahora el corte baja a la mitad de la ventana
+    #     restante, con un suelo de 65 min porque los METAR son horarios y su
+    #     edad oscila entre 0 y ~65 min por diseño.
+    #
+    # (b) Este aviso compara el feed de 5 min contra el METAR horario, así que
+    #     sólo ve "falta el METAR pero el feed sigue". Si la estación calla POR
+    #     COMPLETO —KNYC el 2026-08-14, 70 min sin publicar nada con el pico en
+    #     curso— el gap es 0 y no salta nadie. Para eso está el aviso de
+    #     OBSERVACIÓN VIEJA de más abajo, que mira la edad real del dato.
+    STALE_MIN_ABS = 100
+    STALE_MIN_PISO = 65
     STALE_GAP_F = 1.8
+    _queda_min = max(0.0, (PEAK_HOURS[st][1] - hour_f) * 60)
+    STALE_MIN = (min(STALE_MIN_ABS, max(STALE_MIN_PISO, _queda_min / 2))
+                 if _queda_min > 0 else STALE_MIN_ABS)
     mx = r["today_max_obs"]
     day_start = datetime.combine(now_local.date(), datetime.min.time(), tz)
     serie = con.execute(
@@ -204,6 +221,29 @@ def main() -> int:
     elif peak_5min is not None and mx is not None and peak_5min > mx + 0.5:
         print(f"    (el feed de 5-min va {peak_5min - mx:+.1f}°F por delante; "
               f"normal a mitad de ciclo horario, {stalled_min:.0f} min)")
+    # ── OBSERVACIÓN VIEJA: la estación dejó de reportar ──────────────
+    # Distinto del aviso de arriba: aquí no hay con qué comparar porque no
+    # llega NADA. Se mira la edad del dato que produjo `current`. Sin este
+    # aviso, KNYC el 2026-08-14 mostraba una lectura de aspecto normal con 70
+    # min de silencio, el pico ocurriendo y LaGuardia ya 2°F por encima.
+    try:
+        _obs_ts = r["current_obs_ts"]
+    except (IndexError, KeyError):
+        _obs_ts = None
+    if _obs_ts:
+        try:
+            _edad = (datetime.now(timezone.utc)
+                     - datetime.fromisoformat(_obs_ts)).total_seconds() / 60
+            _lim = max(STALE_MIN_PISO, _queda_min / 2) if _queda_min > 0 else 90
+            if _edad >= _lim:
+                print(f"  ⚠ OBSERVACIÓN VIEJA  el último dato es de hace "
+                      f"{_edad:.0f} min y quedan {_queda_min:.0f} min de ventana")
+                print("    la estación no está reportando: max_obs, el piso y "
+                      "la distribución van con datos muertos.")
+                print("    contrastar con una estación vecina antes de operar.")
+        except (ValueError, TypeError):
+            pass
+
     cli_h = CLI_LATE_HOUR[st]
     if r["today_max_cli"] is not None:
         print(f"  CLI parcial         {f(r['today_max_cli'])}°F   ← piso duro, "
