@@ -471,7 +471,8 @@ def evaluate_bin(*,
                  difficulty_score: Optional[float] = None,
                  streak_hot_n: int = 0,
                  streak_cold_n: int = 0,
-                 cold_bias_block: Optional[bool] = None) -> dict:
+                 cold_bias_block: Optional[bool] = None,
+                 physical_ceiling_f: Optional[float] = None) -> dict:
     """Per-bin decision: recommended_side, edge, blocked_reasons, actionable.
 
     Politicas:
@@ -528,6 +529,19 @@ def evaluate_bin(*,
         blocked.append(f"streak cold-side {streak_cold_n} losses")
     if direction == "hot" and streak_hot_n >= STREAK_BLOCK_AT:
         blocked.append(f"streak hot-side {streak_hot_n} losses")
+
+    # Guarda física (2026-08-14): el ensemble no mira el termómetro, así que
+    # `our_p` puede dar edges enormes sobre bins que el día ya no alcanza.
+    # Cuatro casos perdidos así — ver physical_gate.py. None = no acotable, y
+    # entonces no bloquea nada.
+    if physical_ceiling_f is not None:
+        try:
+            import physical_gate as _pg
+            _veto = _pg.blocks_bin(side, bin_lo, bin_hi, physical_ceiling_f)
+            if _veto:
+                blocked.append(_veto)
+        except Exception:
+            pass
 
     min_edge = EDGE_MIN_BY_STATION.get(station_id, EDGE_MIN_DEFAULT)
     if edge_pp < min_edge:
