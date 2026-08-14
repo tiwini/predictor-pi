@@ -119,7 +119,13 @@ def _conn() -> sqlite3.Connection:
                      # distribución ni en ningún gate. Se compara en vivo
                      # contra el EWMA antes de decidir si lo sustituye.
                      ("bias_median_causal_f", "REAL"),
-                     ("bias_median_n", "INTEGER")]:
+                     ("bias_median_n", "INTEGER"),
+                     # 2026-08-14: minutos que current lleva sin cambiar, de la
+                     # serie METAR aceptada. Se persiste porque physical_gate lo
+                     # necesita y derivarlo de los snapshots del poller pierde
+                     # resolución: con cadencia de 10 min, una meseta de 67 min
+                     # se veía como 35 (KNYC 08-12) y la guarda no disparaba.
+                     ("current_stable_min", "INTEGER")]:
         if col not in existing:
             c.execute(f"ALTER TABLE station_snapshots ADD COLUMN {col} {typ}")
     # 2026-07-27: `pred_calibrated_f` nunca estuvo calibrada — se poblaba con
@@ -454,6 +460,7 @@ def poll_one(station_id: str, c: sqlite3.Connection) -> None:
          wind_mph, wind_dir_deg, wind_dir_card, wind_gust_mph, wind_chill_f,
          pressure_inhg, pressure_trend_3h, dewpoint_f, humidity_pct,
          today_min_obs, convective_ambient, narrative_line,
+         current_stable_min,
          obs_floor_n, obs_floor_delta_f, today_max_cli, today_max_cli_ts,
          today_max_obs_ts,
          our_pred_f, pred_iso_med_f, bias_median_causal_f, bias_median_n,
@@ -468,7 +475,7 @@ def poll_one(station_id: str, c: sqlite3.Connection) -> None:
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (ts, station_id, snap.current_temp_f, snap.today_max_obs,
          med, p10, p90, json.dumps(maxes), snap.peak_status,
          regime_tag, regime_reason,
@@ -478,6 +485,7 @@ def poll_one(station_id: str, c: sqlite3.Connection) -> None:
          snap.dewpoint_f, snap.humidity_pct,
          snap.today_min_obs, 1 if snap.convective_ambient else 0,
          snap.narrative_line or None,
+         getattr(snap, "current_temp_stable_min", None),
          snap.obs_floor_n, snap.obs_floor_delta_f,
          snap.today_max_cli,
          snap.today_max_cli_ts.isoformat() if snap.today_max_cli_ts else None,

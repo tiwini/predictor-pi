@@ -227,6 +227,9 @@ def ceiling_from_db(station_id: str, con, row) -> tuple[Optional[float], str]:
             except (IndexError, KeyError):
                 return None
         cur = g("current_f")
+        # Preferir el valor persistido (serie METAR); el derivado de los
+        # snapshots del poller pierde resolución por la cadencia de 10 min.
+        estable = g("current_stable_min")
         local = datetime.now(ZoneInfo(STATION_TZ[station_id]))
         # `peak_status` es el texto de display; CONFIRMED se muestra con 🔒.
         ps = (g("peak_status") or "")
@@ -235,7 +238,9 @@ def ceiling_from_db(station_id: str, con, row) -> tuple[Optional[float], str]:
             "today_max_obs": g("today_max_obs"),
             "current_temp_f": cur,
             "peak_state": peak,
-            "current_temp_stable_min": _estable_min_desde_db(con, station_id, cur),
+            "current_temp_stable_min": (
+                estable if estable is not None
+                else _estable_min_desde_db(con, station_id, cur)),
             "station_local": local,
         })()
         return ceiling_f(station_id, snap)
