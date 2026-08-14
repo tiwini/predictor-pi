@@ -194,3 +194,58 @@ def test_condiciona_por_hora_local(tmp_path, monkeypatch):
     assert manana == pytest.approx(6.0, abs=0.01)
     assert tarde == pytest.approx(1.0, abs=0.01), \
         "la tarde no puede heredar el sesgo de la mañana"
+
+
+# ─── guard: no hundir la mediana bajo el piso observado ──────────────────
+
+def _ahora(st, hora, minuto=0):
+    from datetime import datetime as _dt
+    return _dt(2026, 8, 14, hora, minuto, tzinfo=ZoneInfo(STATION_TZ[st]))
+
+
+def test_recorta_si_hunde_la_mediana_bajo_el_piso():
+    """KLAX 08-14: mediana 76.9, piso 75.2, corrección +2.90 -> quedaría 74.0.
+
+    Se recorta a 1.7 para dejar la mediana justo en el piso, en vez de aplicar
+    la corrección entera y que el clamp la rescate.
+    """
+    maxes = [76.0, 76.5, 76.9, 77.5, 78.0]
+    b, why = lc.cap_by_floor(2.90, maxes, 75.2, "KLAX", _ahora("KLAX", 13))
+    assert b == pytest.approx(76.9 - 75.2, abs=0.01)
+    assert why is not None and "piso" in why
+
+
+def test_no_toca_nada_pasado_el_pico():
+    """Tras el pico, clavar en el piso da error 0.00° medido. No se toca."""
+    maxes = [76.0, 76.5, 76.9, 77.5, 78.0]
+    # ventana de KLAX es 12-15h; a las 16h ya cerró
+    b, why = lc.cap_by_floor(2.90, maxes, 75.2, "KLAX", _ahora("KLAX", 16))
+    assert b == pytest.approx(2.90)
+    assert why is None
+
+
+def test_no_recorta_si_no_hunde():
+    maxes = [80.0, 81.0, 82.0, 83.0, 84.0]
+    b, why = lc.cap_by_floor(2.0, maxes, 75.0, "KLAX", _ahora("KLAX", 13))
+    assert b == pytest.approx(2.0) and why is None
+
+
+def test_correccion_fria_no_se_toca():
+    """Un bias negativo SUMA a la predicción; nunca la hunde bajo el piso."""
+    maxes = [76.0, 76.9, 78.0]
+    b, why = lc.cap_by_floor(-2.0, maxes, 75.2, "KLAX", _ahora("KLAX", 13))
+    assert b == pytest.approx(-2.0) and why is None
+
+
+def test_sin_piso_no_se_toca():
+    maxes = [76.0, 76.9, 78.0]
+    b, why = lc.cap_by_floor(2.9, maxes, None, "KLAX", _ahora("KLAX", 13))
+    assert b == pytest.approx(2.9) and why is None
+
+
+def test_nunca_devuelve_correccion_negativa():
+    """Si la mediana ya está bajo el piso, el recorte es 0, no negativo:
+    el guard limita el corrector, no lo convierte en su contrario."""
+    maxes = [70.0, 71.0, 72.0]
+    b, why = lc.cap_by_floor(2.9, maxes, 75.2, "KLAX", _ahora("KLAX", 13))
+    assert b == 0.0 and why is not None

@@ -1331,6 +1331,20 @@ def build_snapshot(station: Station) -> Snapshot:
                 bias_info["mode"] = "global"
         if bias_info["applied"]:
             bias_correction_f = bias_info["bias"]
+            # Guard 2026-08-14: dentro de la ventana de pico, no dejar que la
+            # corrección hunda la mediana bajo el piso ya observado — eso
+            # afirma "no sube más" cuando el día aún sube +1.9°F de mediana.
+            # Pasado el pico no toca nada: allí clavar es correcto.
+            try:
+                import level_corrector as _lc2
+                bias_correction_f, _cap_why = _lc2.cap_by_floor(
+                    bias_correction_f, daily_maxes, floor_f, station.id,
+                    now_local)
+                if _cap_why:
+                    bias_info["bias_capped_by_floor"] = _cap_why
+                    bias_info["bias"] = bias_correction_f
+            except Exception:
+                pass
             daily_maxes = [v - bias_correction_f for v in daily_maxes]
     except Exception:
         bias_info = None

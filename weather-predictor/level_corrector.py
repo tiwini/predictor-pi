@@ -193,3 +193,49 @@ def bias_info_for(station_id: str, today: _date,
                    + (f" a las {local_hour}h local" if local_hour is not None
                       else "")),
     }
+
+
+def cap_by_floor(bias_f: float, daily_maxes: list, floor_f: Optional[float],
+                 station_id: str, now_local) -> tuple[float, Optional[str]]:
+    """Recorta la corrección para que no hunda la mediana bajo el piso observado.
+
+    Por qué
+    -------
+    Medido el 2026-08-14 (`investigacion/clavado_acertaba.py`): el corrector
+    disparó la "clavada prematura" de KLAX del 0.1% al 8.4% de los snapshots, y
+    pasó a ocurrir 10 de 10 días. En esas horas la predicción deja de ser un
+    pronóstico y es literalmente el termómetro.
+
+    Y la afirmación implícita es falsa: tras quedar clavado **el día siguió
+    subiendo +1.90°F de mediana** (p90 +3.70). En KLAX, dentro de la ventana,
+    no corregir habría dado |err| 1.22° frente a 1.90° del clavado (N=53).
+
+    **Sólo actúa con la ventana de pico ABIERTA.** Pasado el pico, clavar en el
+    piso es exactamente correcto — error 0.00° medido sobre cientos de casos en
+    las 20 estaciones — y ahí no se toca nada.
+
+    Nota: la evidencia es mixta. KSFO apunta al revés (clavado 1.80° contra
+    2.30° sin corregir), pero con N=10 frente a los 53 de KLAX. Por eso el guard
+    **recorta** en vez de anular: aplica toda la corrección que quepa por encima
+    del piso, no cero.
+
+    Devuelve (bias_efectivo, razón_del_recorte o None).
+    """
+    if bias_f is None or bias_f <= 0 or floor_f is None or not daily_maxes:
+        return bias_f, None
+    try:
+        from stations import PEAK_HOURS
+        _lo, hi_p = PEAK_HOURS[station_id]
+        hora = now_local.hour + now_local.minute / 60.0
+        if hora >= hi_p:
+            return bias_f, None          # pasado el pico: clavar es correcto
+        sm = sorted(daily_maxes)
+        med = sm[len(sm) // 2]
+        if med - bias_f >= floor_f - 1e-9:
+            return bias_f, None          # no hunde la mediana
+        permitido = max(0.0, med - floor_f)
+        return permitido, (f"recortado {bias_f:.2f}->{permitido:.2f} "
+                           f"(hundía la mediana bajo el piso {floor_f:.1f})")
+    except Exception as e:
+        log.warning("cap_by_floor %s falló: %s", station_id, e)
+        return bias_f, None
