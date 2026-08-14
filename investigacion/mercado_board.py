@@ -15,7 +15,8 @@ from zoneinfo import ZoneInfo
 
 BASE = Path("/home/popeye/predictor-pi/weather-predictor")
 sys.path.insert(0, str(BASE))
-import agent_signals as A                      # noqa: E402
+import agent_signals as A
+import physical_gate as PG                      # noqa: E402
 from stations import STATION_TZ, PEAK_HOURS    # noqa: E402
 
 an = sqlite3.connect(f"file:{BASE / 'analysis.db'}?mode=ro", uri=True)
@@ -49,6 +50,7 @@ for r in rows:
     local = datetime.now(ZoneInfo(STATION_TZ[st]))
     lo_h, hi_h = PEAK_HOURS[st]
     # mayor edge accionable (excluye colas <=2c, donde el edge es piso del calibrador)
+    _techo, _ = PG.ceiling_from_db(st, an, r)
     best_edge, best_lab, best_side = 0.0, "", ""
     for b in bins:
         if b["yes_mid"] <= 0.02:
@@ -61,7 +63,8 @@ for r in rows:
             difficulty_score=r["difficulty_score"],
             streak_hot_n=r["streak_block_hot"] or 0,
             streak_cold_n=r["streak_block_cold"] or 0,
-            cold_bias_block=bool(r["cold_bias_block"]))
+            cold_bias_block=bool(r["cold_bias_block"]),
+            physical_ceiling_f=_techo)
         if ev["edge_pp"] and ev["edge_pp"] > best_edge:
             best_edge = ev["edge_pp"]
             best_lab = (b["label"] or "")[:11]

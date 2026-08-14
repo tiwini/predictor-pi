@@ -20,6 +20,7 @@ from zoneinfo import ZoneInfo
 BASE = Path("/home/popeye/predictor-pi/weather-predictor")
 sys.path.insert(0, str(BASE))
 import agent_signals as A                                    # noqa: E402
+import physical_gate as PG                                   # noqa: E402
 from stations import STATION_TZ, CLI_LATE_HOUR, PEAK_HOURS   # noqa: E402
 
 ANALYSIS_DB = BASE / "analysis.db"
@@ -287,6 +288,13 @@ def main() -> int:
         """SELECT * FROM kalshi_snapshots WHERE station=? AND ts=(
                SELECT MAX(ts) FROM kalshi_snapshots WHERE station=?)
            ORDER BY bin_lo""", (st, st)).fetchall()
+    # Techo físico: lo que el termómetro ya no permite alcanzar hoy. None si el
+    # día aún no se puede acotar — entonces no veta nada. Ver physical_gate.py.
+    _techo, _techo_why = PG.ceiling_from_db(st, con, r)
+    if _techo is not None:
+        print(f"\n  TECHO FÍSICO {_techo:.1f}°F — {_techo_why}")
+    else:
+        print(f"\n  techo físico: no acotable ({_techo_why})")
     if not bins:
         print("  (sin bins — mercado cerrado o sin datos)")
     else:
@@ -301,7 +309,8 @@ def main() -> int:
                 difficulty_score=diff,
                 streak_hot_n=r["streak_block_hot"] or 0,
                 streak_cold_n=r["streak_block_cold"] or 0,
-                cold_bias_block=bool(r["cold_bias_block"]))
+                cold_bias_block=bool(r["cold_bias_block"]),
+                physical_ceiling_f=_techo)
             edge = ev["edge_pp"]
             # A.DIFFICULTY_BLOCK_THRESHOLD está en 999 desde el 2026-07-06, así
             # que evaluate_bin NO bloquea por difficulty y marcaría ACTIONABLE

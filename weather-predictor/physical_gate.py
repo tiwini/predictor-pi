@@ -184,3 +184,61 @@ def blocks_bin(side: str, bin_lo: float, bin_hi: float,
         if dentro:
             return f"techo físico {ceiling:.1f}°F cae DENTRO del bin"
     return None
+
+
+def _estable_min_desde_db(con, station_id: str, cur: Optional[float]) -> Optional[int]:
+    """Minutos que `current_f` lleva sin cambiar, leídos de la serie guardada.
+
+    Se calcula de los datos en vez de parsear `narrative_line`, que es texto de
+    presentación y puede cambiar de formato.
+    """
+    if cur is None:
+        return None
+    try:
+        filas = con.execute(
+            """SELECT ts, current_f FROM station_snapshots
+               WHERE station=? AND current_f IS NOT NULL
+               ORDER BY ts DESC LIMIT 40""", (station_id,)).fetchall()
+        if not filas:
+            return None
+        ult = datetime.fromisoformat(filas[0][0])
+        desde = ult
+        for ts, c in filas:
+            if abs((c or 0) - cur) > 0.05:
+                break
+            desde = datetime.fromisoformat(ts)
+        return int((ult - desde).total_seconds() / 60)
+    except Exception:
+        return None
+
+
+def ceiling_from_db(station_id: str, con, row) -> tuple[Optional[float], str]:
+    """Igual que `ceiling_f` pero desde una fila de `station_snapshots`.
+
+    Lo usan las herramientas de lectura, que trabajan sobre la DB en vez de
+    construir un Snapshot. `row` debe traer today_max_obs, current_f y
+    peak_status.
+    """
+    try:
+        from stations import STATION_TZ
+        def g(k):
+            try:
+                return row[k]
+            except (IndexError, KeyError):
+                return None
+        cur = g("current_f")
+        local = datetime.now(ZoneInfo(STATION_TZ[station_id]))
+        # `peak_status` es el texto de display; CONFIRMED se muestra con 🔒.
+        ps = (g("peak_status") or "")
+        peak = "PeakState.CONFIRMED" if ("confirmado" in ps or "🔒" in ps) else ps
+        snap = type("_S", (), {
+            "today_max_obs": g("today_max_obs"),
+            "current_temp_f": cur,
+            "peak_state": peak,
+            "current_temp_stable_min": _estable_min_desde_db(con, station_id, cur),
+            "station_local": local,
+        })()
+        return ceiling_f(station_id, snap)
+    except Exception as e:
+        log.warning("ceiling_from_db %s falló: %s", station_id, e)
+        return None, f"error: {e}"
