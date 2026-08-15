@@ -249,3 +249,25 @@ def test_nunca_devuelve_correccion_negativa():
     maxes = [70.0, 71.0, 72.0]
     b, why = lc.cap_by_floor(2.9, maxes, 75.2, "KLAX", _ahora("KLAX", 13))
     assert b == 0.0 and why is not None
+
+
+# ─── EWMA jubilado, corrector vivo ───────────────────────────────────────
+
+def test_ewma_jubilado_pero_el_calculo_se_conserva():
+    """El flag no apaga `compute_bias` — la lógica sigue cubierta por sus
+    propios tests y el valor sirve de telemetría. Lo que se corta es que
+    `predictor` lo aplique."""
+    import bias_tracker as bt
+    assert bt.EWMA_RETIRED is True
+    assert hasattr(bt, "compute_bias")
+
+
+def test_el_corrector_de_nivel_no_queda_afectado(tmp_path, monkeypatch):
+    """La jubilación del EWMA no puede llevarse por delante el corrector, que
+    llega por otra vía y sí está validado."""
+    dias = [(f"2026-07-{d:02d}", 83.0, 80.0) for d in range(1, 7)]
+    _mk_dbs(tmp_path, monkeypatch, dias)
+    info = lc.bias_info_for(ST, date(2026, 7, 10))
+    assert info is not None
+    assert info["applied"] is True
+    assert info["bias_path"] == "median_causal"

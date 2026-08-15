@@ -29,6 +29,28 @@ ALPHA = 0.4              # weight on most recent day; older = (1-α)^k * α
 MIN_DAYS = 3             # need ≥ this many settled days with early prediction
 APPLY_THRESHOLD = 0.7    # only apply correction if |bias| ≥ this (skip noise)
 
+# ── EWMA JUBILADO el 2026-08-14 ──────────────────────────────────────────
+# No se aplica en producción; el cálculo se conserva para telemetría y para no
+# perder los tests que cubren la lógica.
+#
+# Por qué. `_early_pred` lee `prediction_snapshots`, tabla que llena
+# `predictor_web` — y el web tiene UNA estación activa a la vez, ~12 filas por
+# hora, no 20. El `analysis_poller` escribe a `analysis.db`, otra base. Medido
+# el 2026-08-13: estaciones con alguna fila en su ventana matinal local →
+# **KPHX 47, las otras 19 a CERO**.
+#
+# O sea que el EWMA sólo podía corregir la estación que casualmente estuviera
+# seleccionada en el web. Nunca fue una corrección del roster, y llevaba semanas
+# sin aplicarse sin que nadie lo notara — coherente con que acertara la
+# dirección el 49.7% de los días (azar) en el backtest del 2026-07-28.
+#
+# Lo sustituye `level_corrector` (mediana causal), que lee `analysis.db`, cubre
+# las 20 estaciones y está validado en vivo.
+#
+# Para revivirlo NO basta con poner esto en False: hay que arreglar antes la
+# fuente, o seguirá muerto igual.
+EWMA_RETIRED = True
+
 # Ventana LOCAL de la que sale early_pred, y cuántos snapshots se medianizan.
 # El borde superior no es arbitrario: 12h es la apertura de ventana de pico más
 # temprana del roster (KLAX/KBOS/KSFO), o sea "antes de que el pico influya".

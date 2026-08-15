@@ -1329,6 +1329,15 @@ def build_snapshot(station: Station) -> Snapshot:
                 bias_info = _bt.compute_bias(station.id, today,
                                              ext_diff=pre_ext_diff)
                 bias_info["mode"] = "global"
+        # EWMA jubilado 2026-08-14: su fuente sólo se llenaba para la estación
+        # activa del web (19 de 20 a cero). El corrector de nivel llega por
+        # `level_corrector` y NO pasa por aquí, así que sigue aplicándose.
+        if bias_info.get("bias_path") != "median_causal" and getattr(
+                _bt, "EWMA_RETIRED", False):
+            bias_info["applied"] = False
+            bias_info["reason"] = ("EWMA jubilado 2026-08-14 — fuente vacía en "
+                                   "19/20 estaciones")
+
         if bias_info["applied"]:
             bias_correction_f = bias_info["bias"]
             # Guard 2026-08-14: dentro de la ventana de pico, no dejar que la
