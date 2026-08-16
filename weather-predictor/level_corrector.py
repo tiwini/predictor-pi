@@ -35,6 +35,20 @@ pre-registro pedía confirmar con días frescos antes de generalizar, así que s
 amplía con datos y no de golpe. KDCA es el contraejemplo a vigilar: allí
 empeora (1.29 → 1.69), y por eso no entra.
 
+KNYC se añade el 2026-08-15, primera estación en entrar por esa vía
+(`investigacion/backtest_corrector_knyc.py`, pre-registro en 6258a2d). Sobre 16
+días frescos a las 11h local:
+
+    publicado 3.21 → causal 1.72°F   acerca 13/16 (p=0.011)
+    acierto de bin  0/16 → 5/16   (a las 14h, 2/16 → 10/16)
+
+Lo que decidió el caso no fue la media sino el signo: los 16 días sobre-predice,
+de +0.5 a +7.7°F. Eso es offset de nivel, no dispersión. Probablemente Central
+Park corriendo más frío que el punto de rejilla del ensemble — pero toda su
+historia cabe en julio-agosto, así que el sesgo NO está verificado fuera del
+verano. Si en otoño el corrector empieza a alejar, ésa es la causa a mirar
+primero.
+
 MISMA FUENTE QUE EL BACKTEST
 ----------------------------
 Lee `analysis.db.station_snapshots` con las mismas constantes (2 h antes del
@@ -60,8 +74,9 @@ CAL_DB_PATH = Path(__file__).parent / "calibration.db"
 HOURS_BEFORE_PEAK = 2
 MIN_PREV_DAYS = 5
 
-# Estaciones donde el corrector sustituye al EWMA.
-ENABLED_STATIONS: set[str] = {"KLAX", "KSFO"}
+# Estaciones donde el corrector sustituye al EWMA. Cada una entra con su propio
+# backtest pre-registrado, nunca por extrapolación del pool.
+ENABLED_STATIONS: set[str] = {"KLAX", "KSFO", "KNYC"}
 
 # Guarda de cordura: un corrector de nivel legítimo vive en pocos grados. Si
 # sale algo mayor es que la historia está contaminada, y es preferible caer al

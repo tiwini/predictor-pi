@@ -101,10 +101,16 @@ def test_corrección_absurda_se_ignora(tmp_path, monkeypatch):
 
 
 def test_solo_estaciones_habilitadas():
-    """KDCA en particular NO debe entrar: es donde el backtest empeora."""
+    """KDCA en particular NO debe entrar: es donde el backtest empeora.
+
+    El roster se asserta entero a propósito: cada estación entra con su propio
+    backtest pre-registrado, así que añadir una sin tocar este test —y sin la
+    corrida que lo justifique— debe romper.
+    """
     assert lc.bias_info_for("KPHX", date(2026, 7, 10)) is None
     assert lc.bias_info_for("KDCA", date(2026, 7, 10)) is None
-    assert lc.ENABLED_STATIONS == {"KLAX", "KSFO"}
+    # KNYC añadida 2026-08-15: backtest_corrector_knyc.py, N=16 frescos.
+    assert lc.ENABLED_STATIONS == {"KLAX", "KSFO", "KNYC"}
 
 
 def test_deshace_el_bias_aplicado_ese_dia(tmp_path, monkeypatch):
