@@ -2,7 +2,9 @@
 """F1 radar backfill — 3 semanas × 5 estaciones convectivas.
 
 Spec Fable (memoria f1_radar_design_closed_2026_07_20):
-- Estaciones: KMIA, KIAH, KAUS, KATL, KMSY (las 5 convectivas)
+- Estaciones: KMIA, KHOU, KAUS, KATL, KMSY (las 5 convectivas)
+  (KIAH→KHOU el 2026-07-25: el mercado de Houston liquida con Hobby, y es
+   KHOU la que existe en station_snapshots — con KIAH el join sale vacío)
 - Ventana temporal: peak 14-17 local. Cover 18:00-23:00 UTC (ET & CT juntas)
 - Cadencia: 5-min (N0R)
 - Ventanas espaciales: dbz_5x5 + dbz_9x9 (separadas — D1)
@@ -33,7 +35,7 @@ UA = "predictor-pi-f1-backfill/0.1"
 # Las 5 estaciones convectivas según spec Fable
 STATIONS = {
     "KMIA": (25.79, -80.29),   # Miami
-    "KIAH": (29.99, -95.34),   # Houston Intercontinental
+    "KHOU": (29.65, -95.28),   # Houston Hobby (settle de Kalshi)
     "KAUS": (30.19, -97.67),   # Austin
     "KATL": (33.64, -84.43),   # Atlanta
     "KMSY": (29.99, -90.26),   # New Orleans

@@ -118,7 +118,7 @@ if __name__ == "__main__":
     from pathlib import Path
     db = Path(__file__).resolve().parent.parent.parent / "weather-predictor" / "analysis.db"
     conn = sqlite3.connect(str(db))
-    for sid in ["KMIA", "KIAH", "KAUS", "KATL", "KMSY"]:
+    for sid in ["KMIA", "KHOU", "KAUS", "KATL", "KMSY"]:
         rows = join_radar_obs(conn, sid, ("2026-07-03", "2026-07-24"))
         s = summary_stats(rows)
         print(f"{sid}: {s}")

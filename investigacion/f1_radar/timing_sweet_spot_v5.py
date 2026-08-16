@@ -37,12 +37,12 @@ from stations import PEAK_HOURS
 AN_DB = BASE / "weather-predictor" / "analysis.db"
 CAL_DB = BASE / "weather-predictor" / "calibration.db"
 
-STATIONS = ["KMIA", "KIAH", "KAUS", "KATL", "KMSY",
+STATIONS = ["KMIA", "KHOU", "KAUS", "KATL", "KMSY",
             "KNYC", "KBOS", "KDCA", "KPHL", "KPHX"]
 
 TZ_MAP = {
     "KMIA": "America/New_York", "KATL": "America/New_York",
-    "KIAH": "America/Chicago", "KAUS": "America/Chicago", "KMSY": "America/Chicago",
+    "KHOU": "America/Chicago", "KAUS": "America/Chicago", "KMSY": "America/Chicago",
     "KNYC": "America/New_York", "KBOS": "America/New_York",
     "KDCA": "America/New_York", "KPHL": "America/New_York",
     "KPHX": "America/Phoenix",

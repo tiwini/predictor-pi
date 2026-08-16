@@ -10,7 +10,7 @@ Fable spec (memoria fable_session_2026_07_20_post_r5_decisions):
 Corre como script (imprime resultados) o adapta a notebook Jupyter.
 
 Datos: ~100 días-estación en 3 semanas × 20 stations = 420 días-estación.
-Del backfill radar: 5 estaciones convectivas KMIA/KIAH/KAUS/KATL/KMSY.
+Del backfill radar: 5 estaciones convectivas KMIA/KHOU/KAUS/KATL/KMSY.
 
 Doctrina "el número lo firma la data" — NO pre-fijar thresholds.
 """
@@ -25,9 +25,9 @@ from join_radar_obs import join_radar_obs, summary_stats
 
 DB_PATH = Path(__file__).resolve().parent.parent.parent / "weather-predictor" / "analysis.db"
 
-CONVECTIVE = ["KMIA", "KIAH", "KAUS", "KATL", "KMSY"]
+CONVECTIVE = ["KMIA", "KHOU", "KAUS", "KATL", "KMSY"]
 ALL_STATIONS = ["KPHX", "KLAX", "KLAS", "KNYC", "KBOS",
-                "KMIA", "KMDW", "KIAH", "KSFO", "KAUS",
+                "KMIA", "KMDW", "KHOU", "KSFO", "KAUS",
                 "KDEN", "KSAT", "KDCA", "KDFW", "KPHL",
                 "KSEA", "KATL", "KMSY", "KOKC", "KMSP"]
 DATE_RANGE = ("2026-07-03", "2026-07-23")
