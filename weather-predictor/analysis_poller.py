@@ -1,4 +1,4 @@
-"""Background cycler que recorre las 5 estaciones cada N min y guarda
+"""Background cycler que recorre las 20 estaciones cada N min y guarda
 snapshots a analysis.db para alimentar el tab /analysis del dashboard.
 
 Reusa predictor.build_snapshot y kalshi.fetch_bins (que internamente
