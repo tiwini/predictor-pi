@@ -30,3 +30,4 @@ weather-predictor/om_quota.json
 # Weekly digest outputs (generated)
 brier_watchdog/
 guard_reviews/
+corrector_watchdog/
