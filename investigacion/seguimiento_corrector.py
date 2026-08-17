@@ -77,6 +77,13 @@ def fila_del_dia(an, cal, st: str, dia: str) -> dict | None:
          ref.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S"))).fetchone()
     if r is None:
         return None
+    # Sólo cuentan los días en que el corrector estaba aplicado A ESA HORA. El
+    # día en que se habilita la estación tiene snapshots de ambos tipos: los de
+    # antes del deploy salen con bias_applied=0 y compararlos contra sí mismos
+    # mete un día de delta cero que diluye la métrica. Ojo: `bias_f` = 0.00 con
+    # applied=1 sí es un día válido — es el corrector diciendo "no corrijo".
+    if not r["bias_applied"]:
+        return None
     settle = cal.execute(
         "SELECT max_obs_f FROM day_outcomes WHERE station_id=? AND date=?",
         (st, dia)).fetchone()
