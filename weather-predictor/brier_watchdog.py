@@ -38,10 +38,17 @@ def _load_ntfy_topic() -> str:
     return ""
 
 
-def _push_ntfy(title: str, msg: str) -> None:
+def _push_ntfy(title: str, msg: str) -> bool:
+    """True sólo si el push salió de verdad.
+
+    Devolvía None y el caller imprimía "ntfy pushed" pase lo que pase, así que
+    el log afirmaba envíos que no ocurrían: sin `~/.config/ntfy.env` esta
+    función retorna en la primera línea y nadie se enteraba.
+    """
     topic = _load_ntfy_topic()
     if not topic:
-        return
+        print(f"[brier_watchdog] sin NTFY_TOPIC ({NTFY_ENV}), NO se empuja")
+        return False
     try:
         req = urllib.request.Request(
             f"https://ntfy.sh/{topic}",
@@ -53,8 +60,10 @@ def _push_ntfy(title: str, msg: str) -> None:
             },
         )
         urllib.request.urlopen(req, timeout=10)
+        return True
     except urllib.error.URLError as e:
         print(f"[brier_watchdog] ntfy push failed: {e}", file=sys.stderr)
+        return False
 
 
 def _ensure_brier_weekly_table(conn: sqlite3.Connection) -> None:
@@ -209,8 +218,10 @@ def main(dry_run: bool = False) -> None:
         if dry_run:
             print(f"[brier_watchdog] --dry-run: would push ntfy → {title}: {body}")
         else:
-            _push_ntfy(title, body)
-            print(f"[brier_watchdog] ntfy pushed for {alerted}")
+            if _push_ntfy(title, body):
+                print(f"[brier_watchdog] ntfy pushed for {alerted}")
+            else:
+                print(f"[brier_watchdog] alerta NO entregada para {alerted}")
     else:
         print("[brier_watchdog] no alert this week")
 
