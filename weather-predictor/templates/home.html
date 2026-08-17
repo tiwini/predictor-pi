@@ -344,10 +344,6 @@
       <div class="clock">local {{ local_time }} · PR {{ pr_time }}</div>
     </div>
     <div style="display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;justify-content:flex-end">
-      <a href="/stations" title="Dashboard de todas las estaciones"
-         style="background:#313244;color:#cba6f7;border:1px solid #45475a;
-                border-radius:4px;padding:.3rem .55rem;font-size:.85rem;
-                font-weight:600;text-decoration:none;white-space:nowrap">⊞ Dashboard</a>
       <form method="post" action="/api/station" style="margin:0">
         <select name="id" onchange="this.form.submit()"
                 style="background:#181825;color:#cdd6f4;border:1px solid #313244;
@@ -860,16 +856,12 @@
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
                 gap:.35rem;font-size:13px;margin-top:.3rem">
       <a href="/comparison" style="color:#f5c2e7">{{market_name}} vs nuestro modelo →</a>
-      <a href="/table" style="color:#89dceb">Tabla curadas (live) →</a>
       <a href="/ladder" style="color:#a6e3a1">Threshold ladder →</a>
       <a href="/calibration" style="color:#89b4fa">Reliability diagram →</a>
       <a href="/intraday" style="color:#fab387">Intraday (peak timing + movement) →</a>
       <a href="/comparison?sort=edge" style="color:#94e2d5">Edge tracking →</a>
-      <a href="/cross" style="color:#cba6f7">Cross-station →</a>
-      <a href="/grid" style="color:#fab387">Grid 20 estaciones (heatmap) →</a>
       <a href="/bets?view=history" style="color:#b4befe">Historial Brier diario →</a>
       <a href="/bets" style="color:#f5c2e7">Simulador P&amp;L →</a>
-      <a href="/notify" style="color:#f38ba8">Push notifications →</a>
       <a href="/alerts" style="color:#f38ba8">Alertas NWS →</a>
       <a href="/export" style="color:#fab387">Export CSV →</a>
       <a href="/status" style="color:#94e2d5">Status / poll health →</a>
