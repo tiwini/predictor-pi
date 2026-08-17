@@ -1,0 +1,65 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Precipitación ensemble</title>
+<link rel="stylesheet" href="/static/app.css">
+<style>
+  body{background:#11111b;color:#cdd6f4;font-family:system-ui,sans-serif;padding:1rem;max-width:900px;margin:0 auto}
+  h1{color:#89dceb;margin:0 0 .4rem} a{color:#89b4fa}
+  .card{background:#1e1e2e;border-radius:8px;padding:1rem;margin:.8rem 0}
+  .kpi{display:inline-block;margin-right:1.2rem}
+  .kpi b{color:#89dceb;font-size:20px;display:block}
+  .dim{color:#6c7086;font-size:12px}
+  table{width:100%;border-collapse:collapse;font-family:monospace;font-size:13px}
+  th,td{padding:4px 8px;text-align:right;border-bottom:1px solid #313244}
+  th{color:#a6adc8;font-weight:normal}
+  th:first-child,td:first-child{text-align:left}
+  .bar{position:relative;height:10px;background:#313244;border-radius:2px;overflow:hidden;width:100px}
+  .bar-f{position:absolute;top:0;left:0;height:100%;background:#89dceb}
+</style></head><body>
+<p><a href="/">&larr; volver</a></p>
+<h1>Precipitación ensemble — {{station}}</h1>
+<p class="dim">
+  Agregado por día sobre los 31 miembros del ensemble GFS. Umbrales:
+  <b>any</b> = cualquier traza (>0.1mm) · <b>notable</b> ≈ 0.1in (2.5mm) ·
+  <b>heavy</b> ≈ 0.4in (10mm). Snow: cm.
+</p>
+{% if past %}
+<div class="card" style="border-left:3px solid #89dceb">
+  <h2 style="margin:.2rem 0;color:#89dceb;font-size:16px">Observada — últimas horas</h2>
+  <div class="kpi"><span class="dim">1h</span><b>{{'%.2f'|format(past[1])}}"</b></div>
+  <div class="kpi"><span class="dim">2h</span><b>{{'%.2f'|format(past[2])}}"</b></div>
+  <div class="kpi"><span class="dim">4h</span><b>{{'%.2f'|format(past[4])}}"</b></div>
+  <div class="kpi"><span class="dim">8h</span><b>{{'%.2f'|format(past[8])}}"</b></div>
+  <div class="dim" style="margin-top:.4rem">
+    Fuente: Open-Meteo forecast (past_hours). Cache 20 min.
+  </div>
+</div>
+{% endif %}
+{% for d in days %}
+<div class="card">
+  <h2 style="margin:.2rem 0;color:#cba6f7;font-size:16px">
+    {{d.label}} — {{d.target}}
+  </h2>
+  <div class="kpi"><span class="dim">n miembros</span><b>{{d.n_members}}</b></div>
+  <div class="kpi"><span class="dim">P(any)</span><b>{{d.p_any}}</b></div>
+  <div class="kpi"><span class="dim">P(notable)</span><b>{{d.p_notable}}</b></div>
+  <div class="kpi"><span class="dim">P(heavy)</span><b>{{d.p_heavy}}</b></div>
+  <div class="kpi"><span class="dim">Esperado</span><b>{{d.expected_mm}}</b></div>
+  <div class="kpi"><span class="dim">p10 / p50 / p90</span><b>{{d.p_pct_mm}}</b></div>
+  {% if d.p_any_snow and d.p_any_snow != '0%' %}
+    <div style="margin-top:.6rem;color:#b4befe">
+      Nieve: P(any)={{d.p_any_snow}} · P(notable)={{d.p_notable_snow}} ·
+      esperado {{d.expected_snow_cm}} cm
+    </div>
+  {% endif %}
+  <div style="margin-top:.6rem">
+    {% for t, p in d.bar_items %}
+      <div style="display:flex;align-items:center;gap:.5rem;font-size:12px">
+        <span style="width:80px" class="dim">{{t}}</span>
+        <div class="bar"><div class="bar-f" style="width:{{p*100}}%"></div></div>
+        <span class="dim">{{'%.0f'|format(p*100)}}%</span>
+      </div>
+    {% endfor %}
+  </div>
+</div>
+{% endfor %}
+</body></html>

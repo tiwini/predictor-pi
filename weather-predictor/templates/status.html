@@ -1,0 +1,47 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Status</title>
+<link rel="stylesheet" href="/static/app.css">
+<style>
+  body{background:#11111b;color:#cdd6f4;font-family:system-ui,sans-serif;padding:1rem;max-width:720px;margin:0 auto}
+  h1{color:#94e2d5;margin:0 0 .4rem} h2{color:#cba6f7;margin:.8rem 0 .3rem;font-size:16px}
+  a{color:#89b4fa}
+  .card{background:#1e1e2e;border-radius:8px;padding:1rem;margin:.8rem 0}
+  .badge{display:inline-block;padding:.2rem .6rem;border-radius:4px;font-weight:600;font-size:13px}
+  .ok{background:#2a4a32;color:#a6e3a1} .warn{background:#4a3a24;color:#f9e2af}
+  .bad{background:#4a2a32;color:#f38ba8}
+  .kv{display:flex;justify-content:space-between;padding:.2rem 0;border-bottom:1px solid #313244;font-family:monospace;font-size:13px}
+  .kv:last-child{border:none}
+  .kv-k{color:#a6adc8}
+  .err{color:#f38ba8;font-family:monospace;font-size:12px;word-break:break-word}
+  .dim{color:#6c7086;font-size:12px}
+</style></head><body>
+{{ system_tabs_html|safe }}
+<h1>Status
+  <span class="badge {{health_class}}">{{health_label}}</span>
+</h1>
+<div class="card">
+  <div class="kv"><span class="kv-k">Uptime</span><span>{{uptime}}</span></div>
+  <div class="kv"><span class="kv-k">Último poll OK</span><span>{{last_ok}}</span></div>
+  <div class="kv"><span class="kv-k">Último error</span><span>{{last_err}}</span></div>
+  <div class="kv"><span class="kv-k">Polls OK / error</span><span>{{ok_count}} / {{err_count}}</span></div>
+  <div class="kv"><span class="kv-k">Error rate</span><span>{{err_rate}}</span></div>
+  <div class="kv"><span class="kv-k">Intervalo poll</span><span>{{poll_sec}}s</span></div>
+  <div class="kv"><span class="kv-k">Cache TTL</span><span>{{cache_ttl}}s</span></div>
+  <div class="kv"><span class="kv-k">Estación activa</span><span>{{station}}</span></div>
+</div>
+{% if recent_errors %}
+<div class="card">
+  <h2>Errores recientes</h2>
+  {% for ts, msg in recent_errors %}
+    <div class="kv"><span class="kv-k">{{ts}}</span><span class="err">{{msg}}</span></div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="card"><p class="dim">Sin errores recientes — todo limpio.</p></div>
+{% endif %}
+<p class="dim">
+  <b>OK</b> = último poll hace &lt; 2× intervalo ·
+  <b>WARN</b> = entre 2× y 5× ·
+  <b>BAD</b> = &gt; 5× o nunca.
+</p>
+</body></html>

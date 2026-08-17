@@ -1,0 +1,934 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>{{ station.id }} — Weather</title>
+<link rel="stylesheet" href="/static/app.css">
+<style>
+  :root {
+    --bg:#0a0e14; --surface:#1e2030; --surface2:#2a2e42;
+    --text:#cdd6f4; --muted:#a6adc8; --accent:#89b4fa;
+    --yellow:#f9e2af; --green:#a6e3a1; --red:#f38ba8; --cyan:#89dceb;
+  }
+  * { box-sizing: border-box; }
+  body { font-family:-apple-system,system-ui,sans-serif; background:var(--bg);
+         color:var(--text); margin:0; padding:max(1rem,env(safe-area-inset-top)) 1rem 1rem;
+         -webkit-text-size-adjust:100%; }
+  .container { max-width: 900px; margin: 0 auto; }
+  .header { display:flex; justify-content:space-between; align-items:baseline;
+            margin-bottom:1rem; flex-wrap:wrap; gap:0.5rem; }
+  .station-name { font-size:1.2rem; color:var(--cyan); font-weight:600; }
+  .clock, .age { color: var(--muted); font-size: 0.85rem; }
+  .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem; }
+  .card { background: var(--surface); padding: 1rem; border-radius: 14px;
+          border: 1px solid var(--surface2); }
+  .card h3 { margin: 0 0 0.5rem; font-size: 0.75rem; color: var(--muted);
+             text-transform: uppercase; letter-spacing: 0.05em; }
+  .temp-big { font-size: 2.8rem; font-weight: 200; color: var(--yellow); line-height: 1; }
+  .desc { color: var(--muted); margin-top: 0.25rem; margin-bottom: 0.5rem; }
+  .feels { color: var(--accent); font-size: 0.9rem; margin-left: 0.5rem; }
+  .kv { display: flex; justify-content: space-between; padding: 0.35rem 0;
+        border-bottom: 1px solid var(--surface2); }
+  .kv:last-child { border-bottom: none; }
+  .kv-k { color: var(--muted); }
+  .assertion { display: grid; grid-template-columns: 24px 1fr 70px 70px 110px;
+               gap: 0.4rem; align-items: center; padding: 0.6rem 0;
+               border-bottom: 1px solid var(--surface2); font-size: 0.95rem; }
+  .assertion:last-child { border-bottom: none; }
+  .cents { text-align: right; font-variant-numeric: tabular-nums; font-weight: 700;
+           font-size: 1.1rem; }
+  .mv-up { color: var(--green); text-align: right; font-size: 0.85rem; }
+  .mv-down { color: var(--red); text-align: right; font-size: 0.85rem; }
+  .mv-flat { color: var(--muted); text-align: right; font-size: 0.85rem; }
+  .stat { text-align: right; font-size: 0.85rem; }
+  .live { color: var(--cyan); }
+  .resuelta { color: var(--green); font-weight: 600; }
+  .fallida { color: var(--red); }
+  .peak-green { color: var(--green); }
+  .peak-yellow { color: var(--yellow); }
+  .peak-cyan { color: var(--cyan); }
+  .peak-dim { color: var(--muted); }
+  .diff-badge { padding: .65rem .8rem; border-radius: 10px; margin-bottom: .9rem;
+                border: 1px solid var(--surface2); font-size: .92rem; }
+  .diff-label { font-weight: 600; font-size: .85rem; }
+  .diff-reasons { color: var(--muted); font-size: .8rem; margin-top: .25rem; }
+  .diff-skip { color: var(--red); font-weight: 600; font-size: .82rem; margin-top: .35rem; }
+  .diff-easy  { border-color: #2e4e3a; background: rgba(166,227,161,0.08); }
+  .diff-easy strong, .diff-easy .diff-label { color: var(--green); }
+  .diff-normal { border-color: #2e3e4e; background: rgba(137,180,250,0.08); }
+  .diff-normal strong, .diff-normal .diff-label { color: var(--cyan); }
+  .diff-hard  { border-color: #5e4a2a; background: rgba(250,179,135,0.10); }
+  .diff-hard strong, .diff-hard .diff-label { color: var(--yellow); }
+  .diff-veryhard { border-color: #5e2e3a; background: rgba(243,139,168,0.12); }
+  .diff-veryhard strong, .diff-veryhard .diff-label { color: var(--red); }
+  .hero { background: var(--surface); border: 1px solid var(--surface2);
+          border-radius: 14px; padding: 1rem 1.1rem; margin-bottom: 1rem;
+          display: flex; flex-direction: column; gap: .3rem; }
+  .hero-label { font-size: .72rem; color: var(--muted); text-transform: uppercase;
+                letter-spacing: .06em; }
+  .hero-row { display: flex; align-items: baseline; flex-wrap: wrap; gap: .7rem; }
+  .hero-val { font-size: 3.2rem; font-weight: 300; line-height: 1;
+              font-variant-numeric: tabular-nums; }
+  .hero-unit { font-size: 1.4rem; color: var(--muted); margin-left: -0.35rem; }
+  .hero-trend { font-size: .95rem; font-variant-numeric: tabular-nums;
+                padding: .15rem .5rem; border-radius: 8px;
+                background: var(--surface2); }
+  .hero-trend-up { color: var(--red); }
+  .hero-trend-down { color: var(--cyan); }
+  .hero-trend-flat { color: var(--muted); }
+  .hero-conf { font-size: .85rem; color: var(--muted); }
+  .hero-conf-badge { display: inline-block; padding: .1rem .45rem;
+                     border-radius: 6px; font-size: .72rem; font-weight: 600;
+                     margin-left: .3rem; letter-spacing: .04em; text-transform: uppercase; }
+  .conf-high { background: rgba(166,227,161,0.15); color: var(--green); }
+  .conf-mid  { background: rgba(249,226,175,0.15); color: var(--yellow); }
+  .conf-low  { background: rgba(243,139,168,0.15); color: var(--red); }
+  .hero-hint { color: var(--muted); font-size: .78rem; margin-top: .15rem; }
+  .hero .val-color-hot { color: var(--red); }
+  .hero .val-color-warm { color: var(--yellow); }
+  .hero .val-color-cool { color: var(--cyan); }
+  form { display: flex; gap: 0.5rem; margin-top: 0.75rem; }
+  input, select, button { font-size: 1rem; padding: 0.65rem;
+                          border-radius: 10px; border: 1px solid var(--surface2);
+                          background: var(--surface); color: var(--text); }
+  button { background: var(--accent); color: var(--bg); border: none;
+           font-weight: 600; min-width: 70px; }
+  button:active { opacity: 0.7; }
+  button.danger { background: var(--red); }
+  .forecast-hour { display: grid; grid-template-columns: 60px 60px 1fr;
+                   padding: 0.3rem 0; font-size: 0.9rem; border-bottom: 1px solid var(--surface2); }
+  .forecast-hour:last-child { border: none; }
+  .spark { font-family: ui-monospace, monospace; color: var(--muted); letter-spacing: -1px; }
+  .topmax-row { display: grid; grid-template-columns: 56px 1fr 56px;
+                gap: .5rem; align-items: center; padding: .25rem 0;
+                font-size: .9rem; }
+  .topmax-deg { font-variant-numeric: tabular-nums; font-weight: 600;
+                color: var(--text); text-align: right; }
+  .topmax-deg.modal { color: var(--yellow); }
+  .topmax-bar-wrap { background: var(--surface2); height: 14px;
+                     border-radius: 7px; overflow: hidden; position: relative; }
+  .topmax-bar { height: 100%; background: linear-gradient(90deg,
+                rgba(137,180,250,0.8), rgba(137,180,250,0.5));
+                border-radius: 7px; }
+  .topmax-bar.modal { background: linear-gradient(90deg,
+                      rgba(249,226,175,0.95), rgba(249,226,175,0.6)); }
+  .topmax-pct { font-variant-numeric: tabular-nums; color: var(--muted);
+                font-size: .85rem; text-align: right; }
+  .topmax-hint { font-size: .75rem; color: var(--muted); margin-top: .5rem; }
+  .ext-narr { color: var(--text); font-size: .92rem; line-height: 1.4;
+              padding: .5rem .7rem; background: var(--surface2);
+              border-radius: 8px; margin-bottom: .7rem; }
+  .ext-models { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+                gap: .4rem; }
+  .ext-model { background: var(--surface2); border-radius: 8px;
+               padding: .45rem .55rem; display: flex; flex-direction: column;
+               gap: .15rem; }
+  .ext-model-label { font-size: .7rem; color: var(--muted);
+                     text-transform: uppercase; letter-spacing: .05em; }
+  .ext-model-val { font-size: 1.15rem; font-weight: 600;
+                   font-variant-numeric: tabular-nums; }
+  .ext-model-val.ours { color: var(--yellow); }
+  .ext-model-val.muted { color: var(--muted); font-weight: 400; }
+  .ext-summary { font-size: .8rem; color: var(--muted); margin-top: .55rem;
+                 display: flex; justify-content: space-between; gap: .5rem;
+                 flex-wrap: wrap; }
+  .ext-delta-warn { color: var(--yellow); font-weight: 600; }
+  .ext-delta-ok { color: var(--green); }
+  @media (max-width: 600px) { .cards { grid-template-columns: 1fr; } }
+  .signals { display: flex; flex-wrap: wrap; gap: .4rem; margin: -.5rem 0 1rem; }
+  .signal-pill { display: inline-flex; align-items: center; gap: .35rem;
+                 padding: .3rem .65rem; border-radius: 999px; font-size: .8rem;
+                 background: var(--surface); border: 1px solid var(--surface2); }
+  .signal-pill .k { color: var(--muted); font-size: .68rem; text-transform: uppercase;
+                    letter-spacing: .05em; }
+  .signal-pill .v { font-weight: 600; }
+  .signal-pill.ok    { border-color: rgba(166,227,161,.45); }
+  .signal-pill.ok    .v { color: var(--green); }
+  .signal-pill.warn  { border-color: rgba(249,226,175,.45); }
+  .signal-pill.warn  .v { color: var(--yellow); }
+  .signal-pill.alert { border-color: rgba(243,139,168,.55); background: rgba(243,139,168,0.08); }
+  .signal-pill.alert .v { color: var(--red); }
+  details.tools { background: var(--surface); border: 1px solid var(--surface2);
+                  border-radius: 12px; padding: .55rem .9rem; margin-top: 1rem; }
+  details.tools > summary { cursor: pointer; font-weight: 600; color: var(--muted);
+                            list-style: none; }
+  details.tools[open] > summary { color: var(--text); margin-bottom: .4rem; }
+  details.tools > summary::after { content: " ▸"; color: var(--muted); }
+  details.tools[open] > summary::after { content: " ▾"; }
+  .clock-wrap { background: #1e2030; border-radius: 12px; padding: .7rem .9rem;
+                margin-top: 1rem; }
+  .clock-title { font-weight: 600; color: var(--muted); font-size: 12px;
+                 margin-bottom: .45rem; letter-spacing: .03em; text-transform: uppercase; }
+  .clock-bar { position: relative; height: 24px; background: #313244;
+               border-radius: 6px; overflow: visible; }
+  .clock-bar > .zone { position: absolute; top: 0; bottom: 0; }
+  .zone-pre  { background: rgba(108,112,134,.25); border-radius: 6px 0 0 6px; }
+  .zone-conf { background: rgba(166,227,161,.28); }
+  .zone-dec  { background: rgba(249,226,175,.32); }
+  .zone-post { background: rgba(108,112,134,.25); border-radius: 0 6px 6px 0; }
+  .modal-mark { position: absolute; top: -3px; bottom: -3px; width: 4px;
+                background: #f38ba8; transform: translateX(-50%); border-radius: 2px;
+                box-shadow: 0 0 6px rgba(243,139,168,.6); }
+  .now-mark { position: absolute; top: -4px; bottom: -4px; width: 2px;
+              background: #cdd6f4; transform: translateX(-50%);
+              box-shadow: 0 0 0 1px #0a0e14; }
+  .now-mark::after { content: "▼"; position: absolute; top: -11px; left: 50%;
+                     transform: translateX(-50%); font-size: 10px; color: #cdd6f4; }
+  .clock-axis { display: flex; justify-content: space-between; color: var(--muted);
+                font-size: 10px; margin-top: .3rem; padding: 0 1px; }
+  .clock-legend { display: flex; flex-wrap: wrap; gap: .7rem .9rem; margin-top: .5rem;
+                  color: var(--muted); font-size: 11px; }
+  .clock-legend i.dot { display: inline-block; width: 10px; height: 10px;
+                        border-radius: 2px; vertical-align: middle; margin-right: .3rem; }
+  .clock-legend i.pre  { background: rgba(108,112,134,.6); }
+  .clock-legend i.conf { background: rgba(166,227,161,.6); }
+  .clock-legend i.dec  { background: rgba(249,226,175,.7); }
+  .clock-legend i.peak { background: #f38ba8; }
+  .clock-now-text { margin-top: .5rem; color: var(--text); font-size: 13px; }
+  .clock-now-text b { color: #fab387; }
+  /* F2b.1 — DECISIÓN HOY pill (top-level active-station rec) */
+  .decision-pill { padding: .75rem 1rem; border-radius: 14px; margin-bottom: 1rem;
+                   border: 1px solid var(--surface2); background: var(--surface); }
+  .decision-label { font-size: .68rem; color: var(--muted); text-transform: uppercase;
+                    letter-spacing: .08em; margin-bottom: .25rem; }
+  .decision-text { font-size: 1.1rem; font-weight: 700; letter-spacing: .02em; }
+  .decision-detail { font-size: .85rem; color: var(--muted); margin-top: .3rem;
+                     font-variant-numeric: tabular-nums; }
+  .decision-bet   { background: rgba(166,227,161,0.08); border-color: #2e4e3a; }
+  .decision-bet   .decision-text { color: var(--green); }
+  .decision-skip  { background: rgba(243,139,168,0.10); border-color: #5e2e3a; }
+  .decision-skip  .decision-text { color: var(--red); }
+  .decision-wait  { background: rgba(249,226,175,0.06); border-color: #5e4a2a; }
+  .decision-wait  .decision-text { color: var(--yellow); }
+  /* F2b.2 — RACHA ACTIVA card (top-3 global streaks) */
+  .streak-card { padding: .75rem 1rem; border-radius: 14px; margin-bottom: 1rem;
+                 border: 1px solid var(--surface2); background: var(--surface); }
+  .streak-title { font-size: .68rem; color: var(--muted); text-transform: uppercase;
+                  letter-spacing: .08em; margin-bottom: .4rem;
+                  display:flex; justify-content:space-between; align-items:baseline; }
+  .streak-title a { color: var(--accent); text-decoration: none; font-size: .78rem;
+                    text-transform: none; letter-spacing: 0; }
+  .streak-row { display: flex; justify-content: space-between; align-items: baseline;
+                padding: .3rem 0; border-bottom: 1px solid var(--surface2);
+                font-size: .95rem; }
+  .streak-row:last-child { border-bottom: none; }
+  .streak-w { color: var(--muted); font-variant-numeric: tabular-nums;
+              min-width: 3.2rem; }
+  .streak-sid { color: var(--cyan); font-weight: 600; }
+  .streak-days { font-variant-numeric: tabular-nums; color: var(--yellow); font-weight: 600; }
+  .streak-empty { color: var(--muted); font-size: .85rem; padding: .3rem 0; }
+  /* F2b.2 compact (M2 2026-07-10) — one-line racha activa */
+  .streak-line { display: flex; flex-wrap: wrap; align-items: baseline;
+                 gap: .35rem; padding: .35rem .7rem; margin-bottom: .55rem;
+                 border-radius: 10px; background: var(--surface);
+                 border: 1px solid var(--surface2); font-size: .82rem; }
+  .streak-line-icon { font-size: .95rem; }
+  .streak-line-item { color: var(--muted); }
+  .streak-line-item b { color: var(--cyan); font-weight: 600; }
+  .streak-line-sep { color: var(--surface2); }
+  .streak-line-more { color: var(--accent); font-size: .72rem;
+                      text-decoration: none; margin-left: auto; }
+  /* E.1 — BRIER WATCHDOG (snapshot semanal) */
+  .brier-card { padding: .75rem 1rem; border-radius: 14px; margin-bottom: 1rem;
+                border: 1px solid var(--surface2); background: var(--surface); }
+  .brier-title { font-size: .68rem; color: var(--muted); text-transform: uppercase;
+                 letter-spacing: .08em; margin-bottom: .35rem; }
+  .brier-title b { color: var(--text); }
+  .brier-alert { background: rgba(243,139,168,0.15); color: var(--red);
+                 padding: .1rem .4rem; border-radius: 5px; font-size: .7rem;
+                 font-weight: 600; margin-left: .3rem; }
+  .brier-ok { background: rgba(166,227,161,0.15); color: var(--green);
+              padding: .1rem .4rem; border-radius: 5px; font-size: .7rem;
+              font-weight: 600; margin-left: .3rem; }
+  .brier-row { display: flex; justify-content: space-between; padding: .25rem 0;
+               border-bottom: 1px solid var(--surface2); font-size: .88rem;
+               font-variant-numeric: tabular-nums; }
+  .brier-row:last-child { border-bottom: none; }
+  .brier-sid { color: var(--cyan); font-weight: 600; min-width: 3.8rem; }
+  .brier-ratio.hot { color: var(--red); font-weight: 600; }
+  .brier-ratio.ok { color: var(--green); }
+  .brier-meta { font-size: .7rem; color: var(--muted); margin-top: .35rem; }
+  /* E.1 compact (M2 2026-07-10) — worst-ratio one-liner */
+  .brier-line { display: flex; flex-wrap: wrap; align-items: baseline;
+                gap: .4rem; padding: .35rem .7rem; margin-bottom: .55rem;
+                border-radius: 10px; background: var(--surface);
+                border: 1px solid var(--surface2); font-size: .82rem; }
+  .brier-line-icon { font-size: .95rem; }
+  .brier-line-body { color: var(--muted); }
+  .brier-line-body b { color: var(--cyan); font-weight: 600; }
+  .brier-line .brier-ratio { padding: 0 .3rem; border-radius: 4px;
+                             font-variant-numeric: tabular-nums; }
+  .brier-line .brier-ratio.hot { color: var(--red); font-weight: 600;
+                                 background: rgba(243,139,168,0.10); }
+  .brier-line .brier-ratio.ok { color: var(--green);
+                                background: rgba(166,227,161,0.10); }
+  .brier-line-meta { color: var(--muted); font-size: .72rem; }
+  /* F2b.3 — QUICK ASKS (canned prompts globales) */
+  .quickask { padding: .75rem 1rem; border-radius: 14px; margin-bottom: 1rem;
+              border: 1px solid var(--surface2); background: var(--surface); }
+  .quickask-title { font-size: .68rem; color: var(--muted); text-transform: uppercase;
+                    letter-spacing: .08em; margin-bottom: .5rem; }
+  .quickask-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: .4rem;
+                   margin-bottom: .5rem; }
+  .quickask-grid form { margin: 0; display: block; }
+  .quickask-grid button { width: 100%; background: var(--surface2); color: var(--text);
+                          border: 1px solid #45475a; border-radius: 10px;
+                          padding: .55rem .4rem; font-size: .82rem;
+                          font-weight: 500; text-align: left; }
+  .quickask-grid button:active { background: var(--accent); color: var(--bg); }
+  .quickask-last { margin-top: .5rem; padding-top: .55rem;
+                   border-top: 1px solid var(--surface2); position: relative; }
+  .quickask-last-hdr { font-size: .72rem; color: var(--muted); margin-bottom: .3rem; }
+  .quickask-last-hdr b { color: var(--cyan); }
+  .quickask-last-txt { font-size: .88rem; color: var(--text); line-height: 1.45;
+                       white-space: pre-wrap; }
+  .quickask-meta { color: var(--muted); font-size: .72rem; margin-top: .35rem;
+                   font-variant-numeric: tabular-nums; }
+  .quickask-clear { position: absolute; top: .3rem; right: .1rem;
+                    background: transparent; border: none; color: var(--muted);
+                    font-size: 1rem; padding: .1rem .3rem; cursor: pointer; }
+  .quickask-clear:hover { color: var(--red); }
+  /* F2b.4 — Station strip (horizontal scroll, click swaps active station) */
+  .stationstrip { margin-bottom: 1rem; }
+  .stationstrip-title { font-size: .68rem; color: var(--muted); text-transform: uppercase;
+                        letter-spacing: .08em; margin-bottom: .4rem; }
+  .stationstrip-scroll { display: flex; gap: .5rem; overflow-x: auto;
+                         padding-bottom: .3rem; scroll-snap-type: x mandatory;
+                         -webkit-overflow-scrolling: touch; }
+  .stcard { flex: 0 0 auto; scroll-snap-align: start; min-width: 128px;
+            background: var(--surface); border: 1px solid var(--surface2);
+            border-radius: 12px; padding: .55rem .7rem; margin: 0; display: block; }
+  .stcard:hover { border-color: var(--cyan); }
+  .stcard-active { border-color: var(--cyan); background: rgba(137,220,235,0.05); }
+  .stcard-sid { font-size: .95rem; font-weight: 700; color: var(--cyan);
+                letter-spacing: .02em; }
+  .stcard-max { font-size: 1.15rem; font-variant-numeric: tabular-nums;
+                color: var(--yellow); font-weight: 600; margin: .1rem 0 .05rem; }
+  .stcard-band { font-size: .72rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .stcard-diff { font-size: .68rem; font-weight: 600; margin-top: .35rem;
+                 padding: .1rem .35rem; border-radius: 5px; display: inline-block;
+                 text-transform: uppercase; letter-spacing: .04em; }
+  .stcard-diff.easy     { background: rgba(166,227,161,0.15); color: var(--green); }
+  .stcard-diff.normal   { background: rgba(137,180,250,0.15); color: var(--cyan); }
+  .stcard-diff.hard     { background: rgba(249,226,175,0.15); color: var(--yellow); }
+  .stcard-diff.veryhard { background: rgba(243,139,168,0.15); color: var(--red); }
+  .stcard-edge { font-size: .7rem; margin-top: .3rem;
+                 font-variant-numeric: tabular-nums; color: var(--muted); }
+  .stcard-edge.pos { color: var(--green); }
+  .stcard-edge.neg { color: var(--red); }
+  /* F4 — Peak status badge (5 curadas, on-demand) */
+  .stcard-peak { font-size: .68rem; margin-top: .3rem; padding: .1rem .35rem;
+                 border-radius: 5px; display: inline-block;
+                 font-variant-numeric: tabular-nums; font-weight: 600; }
+  .stcard-peak.peak-pre    { background: rgba(137,180,250,0.15); color: var(--cyan); }
+  .stcard-peak.peak-window { background: rgba(249,226,175,0.20); color: var(--yellow); }
+  .stcard-peak.peak-post   { background: rgba(166,227,161,0.15); color: var(--green); }
+  .stcard-peak.peak-err,
+  .stcard-peak.peak-unknown { background: rgba(108,112,134,0.15); color: var(--muted); }
+  /* M4 — SKIP mode conditional collapse (2026-07-10) */
+  body.decision-skip .signal-pill.hide-on-skip { display: none; }
+  body.decision-skip details.skip-collapse { opacity: .65; }
+  body.decision-skip details.skip-collapse[open] { opacity: 1; }
+  body.decision-skip details.skip-collapse > summary::after { content: " ▸"; color: var(--muted); }
+  body.decision-skip details.skip-collapse[open] > summary::after { content: " ▾"; }
+</style>
+</head>
+<body class="{% if decision and decision.action == 'skip' %}decision-skip{% endif %}">
+<div class="container">
+  <div class="header">
+    <div>
+      <div class="station-name">{{ station.id }} — {{ station.name }}</div>
+      <div class="clock">local {{ local_time }} · PR {{ pr_time }}</div>
+    </div>
+    <div style="display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;justify-content:flex-end">
+      <a href="/stations" title="Dashboard de todas las estaciones"
+         style="background:#313244;color:#cba6f7;border:1px solid #45475a;
+                border-radius:4px;padding:.3rem .55rem;font-size:.85rem;
+                font-weight:600;text-decoration:none;white-space:nowrap">⊞ Dashboard</a>
+      <form method="post" action="/api/station" style="margin:0">
+        <select name="id" onchange="this.form.submit()"
+                style="background:#181825;color:#cdd6f4;border:1px solid #313244;
+                       border-radius:4px;padding:.3rem .5rem;font-size:.9rem">
+          {% for sid, sname in station_options %}
+            <option value="{{sid}}" {% if sid == station.id %}selected{% endif %}>{{sid}} — {{sname}}</option>
+          {% endfor %}
+        </select>
+      </form>
+      <div class="age">actualizado hace <span id="age">0</span>s</div>
+    </div>
+  </div>
+  {% if decision %}
+  <div class="decision-pill decision-{{ decision.action }}">
+    <div class="decision-label">Decisión hoy · {{ station.id }}</div>
+    <div class="decision-text">{{ decision.text }}</div>
+    {% if decision.detail %}<div class="decision-detail">{{ decision.detail }}</div>{% endif %}
+  </div>
+  {% endif %}
+  {% if streak_top3 %}
+  <div class="streak-line">
+    <span class="streak-line-icon">🔥</span>
+    {% for s in streak_top3 %}<span class="streak-line-item"><b>{{ s.station_id }}</b> {{ '%02d'|format(s.window) }}h · {{ s.streak_days }}d{% if s.streak_days >= 3 %} 🔥{% endif %}</span>{% if not loop.last %}<span class="streak-line-sep">·</span>{% endif %}{% endfor %}
+    <a class="streak-line-more" href="/comparison">ver más ↗</a>
+  </div>
+  {% endif %}
+  {% if brier_watchdog and brier_watchdog.stations %}
+  {% set worst = brier_watchdog.stations[0] %}
+  <div class="brier-line">
+    <span class="brier-line-icon">🎯</span>
+    <span class="brier-line-body">
+      Brier · <b>{{ worst.sid }}</b>
+      {% if worst.ratio %}<span class="brier-ratio {% if worst.alerted %}hot{% else %}ok{% endif %}">{{ '%.2f'|format(worst.ratio) }}×</span>{% else %}<span class="brier-ratio">—</span>{% endif %}
+      <span class="brier-line-meta">n={{ worst.n }} · {{ brier_watchdog.week_iso }} · lookback {{ brier_watchdog.lookback_days }}d</span>
+    </span>
+    {% if brier_watchdog.n_alert %}
+      <span class="brier-alert">🔴 {{ brier_watchdog.n_alert }} over</span>
+    {% else %}
+      <span class="brier-ok">🟢 OK</span>
+    {% endif %}
+  </div>
+  {% endif %}
+  {% if station_strip %}
+  <div class="stationstrip">
+    <div class="stationstrip-title" style="display:flex;justify-content:space-between;align-items:center">
+      <span>Estaciones · tap para drill-down</span>
+      <form method="POST" action="/api/peak-status/refresh" style="margin:0">
+        <input type="hidden" name="next" value="/">
+        <button type="submit" class="btn-small"
+                title="Recomputa peak status para las 5 curadas (Open-Meteo × 5). TTL 20 min."
+                style="padding:2px 8px;font-size:11px;background:transparent;border:1px solid var(--border);border-radius:4px;color:var(--muted);cursor:pointer">
+          {% if peak_status_age is not none %}↻ peak {{ peak_status_age }}s{% else %}↻ peak{% endif %}
+        </button>
+      </form>
+    </div>
+    <div class="stationstrip-scroll">
+      {% for c in station_strip %}
+      <a href="/station/{{ c.sid }}"
+         class="stcard {% if c.is_active %}stcard-active{% endif %}"
+         style="text-decoration:none;color:inherit">
+        <div class="stcard-sid">{{ c.sid }}</div>
+        {% if c.p50 is not none %}
+        <div class="stcard-max">{{ '%.0f'|format(c.p50) }}°F</div>
+        <div class="stcard-band">±{{ '%.1f'|format(c.band or 0) }}</div>
+        {% else %}
+        <div class="stcard-max">—</div>
+        {% endif %}
+        <div class="stcard-diff {{ c.diff_klass }}">{{ c.diff_label }}</div>
+        {% if c.edge_pp is not none %}
+        <div class="stcard-edge {% if c.edge_pp > 0 %}pos{% elif c.edge_pp < 0 %}neg{% endif %}">
+          {{ '%+.1f'|format(c.edge_pp) }}pp{% if c.modal_lbl %} · {{ c.modal_lbl }}{% endif %}
+        </div>
+        {% endif %}
+        {% if c.peak_badge %}
+        <div class="stcard-peak peak-{{ c.peak_kind }}">{{ c.peak_badge }}</div>
+        {% endif %}
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="hero">
+    <div class="hero-label">Máxima esperada hoy · se ajusta cada poll</div>
+    <div class="hero-row">
+      <span class="hero-val {{ hero.val_color }}">{{ hero.value }}<span class="hero-unit">°F</span></span>
+      <span class="hero-trend {{ hero.trend_class }}" title="cambio vs snapshot anterior">{{ hero.trend_str }}</span>
+    </div>
+    <div class="hero-conf">
+      {{ hero.conf_str }}
+      <span class="hero-conf-badge {{ hero.conf_class }}">{{ hero.conf_label }}</span>
+    </div>
+    {% if hero.hint %}
+    <div class="hero-hint">{{ hero.hint }}</div>
+    {% endif %}
+  </div>
+
+  {% if signals %}
+  <div class="signals">
+    {% for s in signals %}
+    {% if s.href %}<a href="{{s.href}}" style="text-decoration:none">{% endif %}
+    <span class="signal-pill {{s.kls}}{% if s.hide_on_skip %} hide-on-skip{% endif %}">
+      <span class="k">{{s.k}}</span>
+      <span class="v">{{s.v}}</span>
+    </span>
+    {% if s.href %}</a>{% endif %}
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <div class="card" style="margin-bottom:1rem;padding:.6rem .9rem">
+    <div style="display:flex;flex-wrap:wrap;gap:1rem;align-items:center;font-size:.9rem">
+      <a href="/status" style="text-decoration:none">
+        <span class="badge {{dash.health_class}}" style="display:inline-block;padding:.15rem .5rem;border-radius:4px;font-weight:600;font-size:12px;background:{% if dash.health_class=='ok' %}#2a4a32;color:#a6e3a1{% elif dash.health_class=='warn' %}#4a3a24;color:#f9e2af{% else %}#4a2a32;color:#f38ba8{% endif %}">{{dash.health_label}}</span>
+        <span style="color:var(--muted);margin-left:.3rem">{{dash.health_age}}</span>
+      </a>
+      <span style="color:var(--muted)">·</span>
+      <a href="/bets" style="color:inherit;text-decoration:none">
+        <span style="color:var(--muted)">P&amp;L</span>
+        <span style="color:{% if dash.pnl > 0 %}#a6e3a1{% elif dash.pnl < 0 %}#f38ba8{% else %}#cdd6f4{% endif %};font-weight:600">${{ '%.2f'|format(dash.pnl) }}</span>
+        <span style="color:var(--muted);font-size:.8rem">({{dash.bets_settled}}/{{dash.bets_total}}{% if dash.roi is not none %} · ROI {{'%+.1f'|format(dash.roi*100)}}%{% endif %})</span>
+      </a>
+      {% if dash.brier_n %}
+      <span style="color:var(--muted)">·</span>
+      <a href="/bets?view=history" style="color:inherit;text-decoration:none">
+        <span style="color:var(--muted)">Brier {{dash.brier_n}}d</span>
+        <span style="font-weight:600;color:{% if dash.brier_ours < dash.brier_kalshi %}#a6e3a1{% elif dash.brier_ours > dash.brier_kalshi %}#f38ba8{% else %}#cdd6f4{% endif %}">{{'%.4f'|format(dash.brier_ours)}}</span>
+        <span style="color:var(--muted);font-size:.8rem">vs K {{'%.4f'|format(dash.brier_kalshi)}}</span>
+      </a>
+      {% endif %}
+      {% if dash.iso_days %}
+      <span style="color:var(--muted)">·</span>
+      <span style="color:var(--muted);font-size:.8rem">iso {{dash.iso_days}}/7d</span>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if market or timing or precip %}
+  {% if decision and decision.action == 'skip' %}
+  <details class="card skip-collapse" style="margin-bottom:1rem;border-left:4px solid {% if market and market.top_alert %}#f38ba8{% else %}#89b4fa{% endif %}">
+    <summary style="cursor:pointer;color:var(--muted);font-size:.85rem;font-weight:600">
+      Mercado / timing / precip · dim en SKIP
+    </summary>
+    <div style="display:flex;flex-wrap:wrap;gap:1.5rem;align-items:flex-start;margin-top:.6rem">
+  {% else %}
+  <div class="card" style="margin-bottom:1rem;border-left:4px solid {% if market and market.top_alert %}#f38ba8{% else %}#89b4fa{% endif %}">
+    <div style="display:flex;flex-wrap:wrap;gap:1.5rem;align-items:flex-start">
+  {% endif %}
+      {% if market %}
+      <div style="flex:1;min-width:220px">
+        <h3 style="margin:0 0 .3rem">Mercado {{market_name}}</h3>
+        <div class="kv"><span class="kv-k">Bin modal</span>
+          <span>{{market.modal_label}} @ {{'%.0f'|format(market.modal_mid*100)}}%</span></div>
+        <div class="kv"><span class="kv-k">Nuestro P (modal)</span>
+          <span>{{'%.0f'|format(market.modal_ourp*100)}}%</span></div>
+        <div class="kv"><span class="kv-k">Edge máx</span>
+          <span style="color:{% if market.top_alert %}{% if market.top_edge > 0 %}#a6e3a1{% else %}#f38ba8{% endif %}{% else %}#cdd6f4{% endif %}">
+            {{market.top_label}}: {{'%+.1f'|format(market.top_edge*100)}}pp
+            {% if market.top_alert %}{% if market.top_edge > 0 %}· buy YES{% else %}· buy NO{% endif %}{% endif %}
+          </span></div>
+      </div>
+      {% endif %}
+      {% if timing %}
+      <div style="flex:1;min-width:220px">
+        <h3 style="margin:0 0 .3rem">Peak timing</h3>
+        <div class="kv"><span class="kv-k">Hora modal</span>
+          <span>{{'%02d'|format(timing.modal_hour)}}:00</span></div>
+        <div class="kv"><span class="kv-k">p10 – p90</span>
+          <span>{{'%02d'|format(timing.p10)}}:00 – {{'%02d'|format(timing.p90)}}:00</span></div>
+        <div class="kv"><span class="kv-k">P(ya ocurrió)</span>
+          <span>{{'%.0f'|format(timing.prob_already*100)}}%</span></div>
+      </div>
+      {% endif %}
+      {% if precip %}
+      <div style="flex:1;min-width:220px">
+        <h3 style="margin:0 0 .3rem"><a href="/precip" style="color:#89dceb;text-decoration:none">Precipitación →</a></h3>
+        <div class="kv"><span class="kv-k">P(any)</span>
+          <span>{{'%.0f'|format(precip.p_any*100)}}%</span></div>
+        <div class="kv"><span class="kv-k">P(&gt;0.1in)</span>
+          <span>{{'%.0f'|format(precip.p_notable*100)}}%</span></div>
+        <div class="kv"><span class="kv-k">Esperado hoy</span>
+          <span>{{'%.2f'|format(precip.expected_mm)}} mm{% if precip.p_any_snow and precip.p_any_snow > 0.05 %} · nieve {{'%.0f'|format(precip.p_any_snow*100)}}%{% endif %}</span></div>
+      </div>
+      {% endif %}
+    </div>
+  {% if decision and decision.action == 'skip' %}
+  </details>
+  {% else %}
+  </div>
+  {% endif %}
+  {% endif %}
+
+  <div class="cards">
+    <div class="card">
+      <h3>Ahora</h3>
+      <div>
+        <span class="temp-big">{{ '%.1f' % snap.current_temp_f }}°F</span>
+        {% if snap.current_temp_stable_min is not none and snap.current_temp_stable_min >= 5 %}
+        <span class="muted" style="font-size:.75em;margin-left:.3rem"
+              title="Tiempo sin cambio en la serie de METARs aceptados + dirección del último cambio">
+          [{% if snap.current_temp_stable_min >= 60 %}{{ (snap.current_temp_stable_min // 60) }}h {{ (snap.current_temp_stable_min % 60) }}m{% else %}{{ snap.current_temp_stable_min }}min{% endif %}{% if snap.current_temp_last_direction == 'up' %} ↑{% elif snap.current_temp_last_direction == 'down' %} ↓{% endif %}]
+        </span>
+        {% endif %}
+        {% if feels_line %}<span class="feels">{{ feels_line }}</span>{% endif %}
+      </div>
+      {% if current_over_max_note %}
+      <div class="muted" style="font-size:.75em;margin-top:.15rem"
+           title="El feed 5-min de NWS reporta la lectura instantánea con redondeo a °C entero (~±0.5°F). Kalshi settle usa NWS CLI que se computa del feed 1-min (ASOS), no el 5-min. Ver max obs / ASOS 1-min / CLI proyectado en la card Hoy.">
+        {{ current_over_max_note }}
+      </div>
+      {% endif %}
+      <div class="desc">{{ snap.current_desc }}</div>
+      {% if snap.humidity_pct is not none %}
+      <div class="kv"><span class="kv-k">Humedad</span>
+        <span>{{ '%.0f' % snap.humidity_pct }}%{% if snap.dewpoint_f is not none %} · dp {{ '%.0f' % snap.dewpoint_f }}°F{% endif %}</span></div>
+      {% endif %}
+      {% if snap.wind_mph is not none %}
+      <div class="kv"><span class="kv-k">Viento</span>
+        <span>{{ '%.0f' % snap.wind_mph }} mph {{ snap.wind_dir_card or '' }}{% if snap.wind_gust_mph %} · gust {{ '%.0f' % snap.wind_gust_mph }}{% endif %}</span></div>
+      {% endif %}
+      {% if snap.pressure_inhg is not none %}
+      <div class="kv"><span class="kv-k">Presión</span>
+        <span>{{ '%.2f' % snap.pressure_inhg }} inHg {{ pressure_arrow }}</span></div>
+      {% endif %}
+      {% if snap.visibility_mi is not none %}
+      <div class="kv"><span class="kv-k">Visibilidad</span><span>{{ '%.0f' % snap.visibility_mi }} mi</span></div>
+      {% endif %}
+    </div>
+
+    <div class="card">
+      {% if decision and decision.action == 'skip' %}
+      <div class="diff-badge diff-hard">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <strong>Estado del modelo</strong>
+          <span class="diff-label">SKIP recomendado</span>
+        </div>
+        <div class="diff-reasons">
+          {% if difficulty %}{{ difficulty.label }} · {{ '%.0f' % difficulty.score }}/100{% if difficulty.reasons %} · {{ difficulty.reasons|join(' · ') }}{% endif %}{% endif %}
+          {% if regime_tag and regime_tag.tag != 'stable' %}{% if difficulty %} · {% endif %}régimen: {{ regime_tag.tag }} — {{ regime_tag.reason }}{% endif %}
+        </div>
+      </div>
+      {% else %}
+      {% if difficulty %}
+      <div class="diff-badge diff-{{ difficulty.klass }}">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <strong>Dificultad del día</strong>
+          <span class="diff-label">{{ difficulty.label }} · {{ '%.0f' % difficulty.score }}/100</span>
+        </div>
+        {% if difficulty.reasons %}
+        <div class="diff-reasons">{{ difficulty.reasons|join(' · ') }}</div>
+        {% endif %}
+        {% if difficulty.recommend_skip %}
+        <div class="diff-skip">⚠ considera saltar hoy — alta incertidumbre</div>
+        {% endif %}
+      </div>
+      {% endif %}
+      {% if regime_tag and regime_tag.tag != 'stable' %}
+      <div class="diff-badge diff-{% if regime_tag.bet_action == 'skip' %}hard{% elif regime_tag.bet_action == 'soft_warn' %}medium{% else %}easy{% endif %}"
+           style="margin-top:.4rem">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <strong>Régimen</strong>
+          <span class="diff-label">{{ regime_tag.tag }}</span>
+        </div>
+        <div class="diff-reasons">{{ regime_tag.reason }}</div>
+        {% if regime_tag.bet_action == 'skip' %}
+        <div class="diff-skip">⚠ saltar bets — modelo blown</div>
+        {% elif regime_tag.bet_action == 'soft_warn' %}
+        <div class="diff-reasons" style="font-style:italic">cautela en bets de cola</div>
+        {% endif %}
+      </div>
+      {% endif %}
+      {% endif %}
+      <h3>Hoy</h3>
+      <div class="kv"><span class="kv-k">Max obs</span>
+        <span>{{ '%.1f' % snap.today_max_obs }}°F
+          {% if max_obs_ts_local %}
+          <span class="muted" style="font-size:.8em;margin-left:.4rem"
+                title="Timestamp del METAR aceptado que produjo el max (hora local AST)">
+            · {{ max_obs_ts_local }}</span>
+          {% endif %}
+          <span class="muted" style="font-size:.8em;margin-left:.4rem"
+                title="Kalshi liquida contra CLI redondeado al entero (half-up); usa el max del feed 5-min o del grupo ASOS 6h si supera al feed">
+            CLI: {{ ((settle_hint_f + 0.5)|round(0, 'floor'))|int }}°F</span>
+          {% if asos_6h_display %}
+          <span class="muted" style="font-size:.8em;margin-top:.2rem;display:block"
+                title="Grupo `1sTTT` del METAR remarks — max 6h computado por ASOS a partir del feed 1-minute (misma fuente que NWS CLI settle). Supera nuestro max del feed 5-min: captura un spike <5min.">
+            · ASOS 1-min: {{ asos_6h_display }}</span>
+          {% endif %}
+          {% if cli_display %}
+          <span class="muted" style="font-size:.8em;margin-top:.2rem;display:block"
+                title="CLI parcial de la tarde del propio WFO — el mismo producto con el que Kalshi liquida, leído antes del cierre. Trae ya el max final en 91% de los días y en el 9% restante se queda corto, nunca largo: es un piso.">
+            · CLI parcial: {{ cli_display }}</span>
+          {% endif %}
+        </span></div>
+      <div class="kv"><span class="kv-k">Min obs</span><span>{{ '%.1f' % snap.today_min_obs }}°F</span></div>
+      <div class="kv"><span class="kv-k">Pico</span>
+        <span class="{{ peak_class }}">{{ snap.peak_status }}</span></div>
+      {% if snap.narrative_line %}
+      <div class="kv" style="align-items:flex-start"><span class="kv-k">Estado</span>
+        <span style="font-family:monospace;font-size:.9em">{{ snap.narrative_line }}</span></div>
+      {% endif %}
+      <div class="kv"><span class="kv-k">P(sube más)</span>
+        <span>{{ '%.0f' % (snap.prob_rising * 100) }}%</span></div>
+      <h3 style="margin-top:1rem">Distribución Max (ensemble 31m)</h3>
+      <div class="kv"><span class="kv-k">Mediana</span><span>{{ '%.1f' % dist_med }}°F</span></div>
+      <div class="kv"><span class="kv-k">p10–p90</span><span>{{ '%.1f' % dist_p10 }}–{{ '%.1f' % dist_p90 }}°F</span></div>
+      <div class="kv"><span class="kv-k">Más probable</span><span>{{ ml_display }}</span></div>
+      {% if snap.ensemble_residual_hours > 0 and snap.ensemble_eff_n %}
+      <div class="kv"><span class="kv-k">Reweight bayesiano</span>
+        <span>eff N = {{ '%.1f' % snap.ensemble_eff_n }} / 31 · {{ snap.ensemble_residual_hours }}h obs</span></div>
+      {% endif %}
+      {% if climate %}
+      <h3 style="margin-top:1rem">Climatología <span style="font-weight:400">{{ climate.year_span }}</span></h3>
+      <div class="kv"><span class="kv-k">{{ '%.1f' % snap.climatology_target_f }}°F vs histórico</span>
+        <span class="{{ climate_class }}">p{{ '%.0f' % climate.percentile }} · {{ climate_word }}</span></div>
+      <div class="kv"><span class="kv-k">Normal (p50)</span><span>{{ '%.0f' % climate.p50 }}°F</span></div>
+      <div class="kv"><span class="kv-k">p10 – p90</span><span>{{ '%.0f' % climate.p10 }} – {{ '%.0f' % climate.p90 }}°F</span></div>
+      <div class="kv"><span class="kv-k">Record alto / bajo</span><span>{{ '%.0f' % climate.record }}°F / {{ '%.0f' % climate.record_low }}°F</span></div>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if decision and decision.action == 'skip' %}
+  <details class="card skip-collapse">
+    <summary style="cursor:pointer;color:var(--muted);font-size:.85rem;font-weight:600">
+      Aserciones · auto modo: {{ auto_mode }} · dim en SKIP
+    </summary>
+  {% else %}
+  <div class="card">
+    <h3>Aserciones · auto modo: {{ auto_mode }}</h3>
+  {% endif %}
+    {% for slot in [1, 2, 3] %}
+    {% set a = assertions[slot] %}
+    <div class="assertion">
+      <span>{{ slot }}</span>
+      <span>{{ a.label }}</span>
+      <span class="cents {{ a.class }}">{% if a.label != '—' %}{{ a.cents }}¢{% endif %}</span>
+      <span class="{{ a.mv_class }}">{{ a.mv_str }}</span>
+      <span class="stat {{ a.class }}">{{ a.status }}</span>
+    </div>
+    {% endfor %}
+    <form method="POST" action="/api/set">
+      <select name="slot"><option value="1">Slot 1</option><option value="2">Slot 2</option></select>
+      <input name="expr" placeholder=">89F · =80F · 79-81" autocapitalize="off" autocomplete="off">
+      <button type="submit">Set</button>
+    </form>
+    <form method="POST" action="/api/clear">
+      <select name="slot"><option value="1">Slot 1</option><option value="2">Slot 2</option></select>
+      <button type="submit" class="danger">Borrar</button>
+    </form>
+  {% if decision and decision.action == 'skip' %}
+  </details>
+  {% else %}
+  </div>
+  {% endif %}
+
+  <div class="card" style="margin-top:1rem">
+    <h3>Temperatura hoy · observado + ensemble</h3>
+    {{ day_chart_svg|safe }}
+  </div>
+
+  {% if external %}
+  <div class="card" style="margin-top:1rem">
+    <h3>Qué dicen los demás</h3>
+    {% if external.narrative %}
+    <div class="ext-narr">{{ external.narrative }}</div>
+    {% endif %}
+    {% if external.models %}
+    <div class="ext-models">
+      <div class="ext-model">
+        <div class="ext-model-label">nuestra</div>
+        <div class="ext-model-val ours">{{ '%.1f' % external.ours }}°</div>
+      </div>
+      {% for label, val in external.models %}
+      <div class="ext-model">
+        <div class="ext-model-label">{{ label }}</div>
+        <div class="ext-model-val {% if val is none %}muted{% endif %}">
+          {% if val is not none %}{{ '%.1f' % val }}°{% else %}—{% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    <div class="ext-summary">
+      <span>mediana modelos: <strong>{{ '%.1f' % external.median }}°</strong>
+            · spread: {{ '%.1f' % external.spread }}°</span>
+      <span class="{{ external.delta_class }}">
+        nuestra vs mediana: {{ external.delta_str }}
+      </span>
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {% if top_max_bars %}
+  <div class="card" style="margin-top:1rem">
+    <h3>Máximas más probables (°F enteros)</h3>
+    {% for b in top_max_bars %}
+    <div class="topmax-row">
+      <div class="topmax-deg {% if b.is_modal %}modal{% endif %}">{{ b.deg }}°</div>
+      <div class="topmax-bar-wrap">
+        <div class="topmax-bar {% if b.is_modal %}modal{% endif %}"
+             style="width: {{ '%.1f' % b.bar_pct }}%"></div>
+      </div>
+      <div class="topmax-pct">{{ '%.0f' % b.p_pct }}%</div>
+    </div>
+    {% endfor %}
+    <div class="topmax-hint">Probabilidad por entero (redondeo al más cercano) sobre el ensemble actual.</div>
+    {% if dist_divergence_note %}
+    <div class="muted" style="font-size:.75em;margin-top:.4rem;color:var(--red)"
+         title="Divergencia entre la mediana del ensemble (dist_med) y el bin modal del histograma. Ambos deberían venir del mismo `dist`. Si difieren ≥3°F hay un consumidor leyendo una distribución pre/post-bias/shift diferente.">
+      {{ dist_divergence_note }}
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <div class="card" style="margin-top:1rem">
+    <h3>Pronóstico próximas horas</h3>
+    {% for ts, med, p10, p90 in snap.forecast_next_hours %}
+    <div class="forecast-hour">
+      <span class="kv-k">{{ ts.strftime('%H:%M') }}</span>
+      <span>{{ '%.0f' % med }}°F</span>
+      <span class="kv-k" style="text-align:right">p10-p90 {{ '%.0f' % p10 }}–{{ '%.0f' % p90 }}°F</span>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="card" style="margin-top:1rem">
+    <h3>Refrescar</h3>
+    <form method="POST" action="/api/refresh" id="refresh-form">
+      <button type="submit" style="width:100%" id="refresh-btn">Refrescar ahora</button>
+    </form>
+    <div id="refresh-msg" style="font-size:.8em;color:#89b4fa;margin-top:.4rem;display:none"></div>
+  </div>
+  <script>
+  (function(){
+    var form = document.getElementById('refresh-form');
+    var btn = document.getElementById('refresh-btn');
+    var msg = document.getElementById('refresh-msg');
+    if (!form) return;
+    var pollTimer = null;
+    var pollStart = 0;
+    var MAX_POLL_MS = 45000;
+    function stopPoll(){ if(pollTimer){ clearInterval(pollTimer); pollTimer=null; } }
+    function poll(){
+      fetch('/api/refresh-status', {cache: 'no-store'})
+        .then(function(r){ return r.json(); })
+        .then(function(d){
+          if (!d.busy) { stopPoll(); window.location.reload(); return; }
+          if (Date.now() - pollStart > MAX_POLL_MS) {
+            stopPoll();
+            btn.disabled = false;
+            btn.textContent = 'Refrescar ahora';
+            msg.textContent = '⚠ timeout — recarga manual';
+          }
+        })
+        .catch(function(){ /* silently retry next tick */ });
+    }
+    form.addEventListener('submit', function(ev){
+      ev.preventDefault();
+      btn.disabled = true;
+      btn.textContent = 'Refrescando…';
+      msg.style.display = 'block';
+      msg.textContent = 'Consultando NWS + rebuild snapshot (~5-30s)…';
+      pollStart = Date.now();
+      fetch('/api/refresh', {method:'POST', headers:{'X-Requested-With':'fetch'}})
+        .then(function(){
+          pollTimer = setInterval(poll, 2000);
+          setTimeout(poll, 1000);
+        })
+        .catch(function(){
+          btn.disabled = false;
+          btn.textContent = 'Refrescar ahora';
+          msg.textContent = '⚠ error de red';
+        });
+    });
+  })();
+  </script>
+
+  {% if clock %}
+  <div class="clock-wrap">
+    <div class="clock-title">Reloj del día · {{station.id}}
+      <span style="font-weight:400;color:#6c7086;font-size:11px;margin-left:.4rem">{{clock.source_label}}</span>
+    </div>
+    <div class="clock-bar">
+      <div class="zone zone-pre"  style="left:0;width:{{'%.1f'|format(clock.confidence_start_pct)}}%"></div>
+      <div class="zone zone-conf" style="left:{{'%.1f'|format(clock.confidence_start_pct)}}%;width:{{'%.1f'|format(clock.decisive_start_pct - clock.confidence_start_pct)}}%"></div>
+      <div class="zone zone-dec"  style="left:{{'%.1f'|format(clock.decisive_start_pct)}}%;width:{{'%.1f'|format(clock.decisive_end_pct - clock.decisive_start_pct)}}%"></div>
+      <div class="zone zone-post" style="left:{{'%.1f'|format(clock.decisive_end_pct)}}%;right:0"></div>
+      <div class="modal-mark" style="left:{{'%.1f'|format(clock.modal_pct)}}%" title="Pico esperado {{'%02d'|format(clock.modal_h_int)}}:00 {{clock.tz_abbr}} · {{'%02d'|format(clock.modal_pr_h_int)}}:00 PR"></div>
+      <div class="now-mark" style="left:{{'%.1f'|format(clock.now_pct)}}%" title="Ahora {{'%02d'|format(clock.now_h_int)}}:{{'%02d'|format(clock.now_min)}} {{clock.tz_abbr}} · {{'%02d'|format(clock.now_pr_h_int)}}:{{'%02d'|format(clock.now_pr_min)}} PR"></div>
+    </div>
+    <div class="clock-axis">
+      <span>6h</span><span>9h</span><span>12h</span><span>15h</span><span>18h</span><span>21h</span><span>23h</span>
+    </div>
+    <div class="clock-legend">
+      <span><i class="dot pre"></i>pre · obs poco diagnósticas</span>
+      <span><i class="dot conf"></i>confianza creciente</span>
+      <span><i class="dot dec"></i>decisiva {{'%02d'|format(clock.decisive_start_h_int)}}–{{'%02d'|format(clock.decisive_end_h_int)}}h {{clock.tz_abbr}} ({{'%02d'|format(clock.decisive_start_pr_h_int)}}–{{'%02d'|format(clock.decisive_end_pr_h_int)}}h PR) · si no llega aquí, no llega</span>
+      <span><i class="dot peak"></i>pico esperado {{'%02d'|format(clock.modal_h_int)}}h {{clock.tz_abbr}} ({{'%02d'|format(clock.modal_pr_h_int)}}h PR)</span>
+    </div>
+    <div class="clock-now-text">
+      Ahora {{'%02d'|format(clock.now_h_int)}}:{{'%02d'|format(clock.now_min)}} {{clock.tz_abbr}} · {{'%02d'|format(clock.now_pr_h_int)}}:{{'%02d'|format(clock.now_pr_min)}} PR → <b>{{clock.now_zone}}</b>
+    </div>
+  </div>
+  {% endif %}
+
+  <details class="tools">
+    <summary>Más herramientas · diagnóstico</summary>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
+                gap:.35rem;font-size:13px;margin-top:.3rem">
+      <a href="/comparison" style="color:#f5c2e7">{{market_name}} vs nuestro modelo →</a>
+      <a href="/table" style="color:#89dceb">Tabla curadas (live) →</a>
+      <a href="/ladder" style="color:#a6e3a1">Threshold ladder →</a>
+      <a href="/calibration" style="color:#89b4fa">Reliability diagram →</a>
+      <a href="/intraday" style="color:#fab387">Intraday (peak timing + movement) →</a>
+      <a href="/comparison?sort=edge" style="color:#94e2d5">Edge tracking →</a>
+      <a href="/cross" style="color:#cba6f7">Cross-station →</a>
+      <a href="/grid" style="color:#fab387">Grid 20 estaciones (heatmap) →</a>
+      <a href="/bets?view=history" style="color:#b4befe">Historial Brier diario →</a>
+      <a href="/bets" style="color:#f5c2e7">Simulador P&amp;L →</a>
+      <a href="/notify" style="color:#f38ba8">Push notifications →</a>
+      <a href="/alerts" style="color:#f38ba8">Alertas NWS →</a>
+      <a href="/export" style="color:#fab387">Export CSV →</a>
+      <a href="/status" style="color:#94e2d5">Status / poll health →</a>
+      <a href="/reweight" style="color:#94e2d5">Reweight diagnostics →</a>
+      <a href="/about" style="color:#cba6f7">About / tutorial →</a>
+    </div>
+  </details>
+  {% if station_ask_enabled and station_ask_prompts %}
+  <div class="quickask">
+    <div class="quickask-title">🤖 Quick asks · {{ station.id }}</div>
+    <div class="quickask-grid">
+      {% for p in station_ask_prompts %}
+      <form method="post" action="/ai/station-ask">
+        <input type="hidden" name="kind" value="{{ p.kind }}">
+        <input type="hidden" name="station" value="{{ station.id }}">
+        <input type="hidden" name="return_to" value="/">
+        <button type="submit">{{ p.label }}</button>
+      </form>
+      {% endfor %}
+    </div>
+    {% if station_ask_error %}
+    <div class="quickask-last" style="color:#f38ba8">
+      Error: {{ station_ask_error }}
+    </div>
+    {% endif %}
+    {% if station_ask_last %}
+    <div class="quickask-last">
+      <form method="post" action="/ai/station-ask/clear"
+            style="position:absolute;top:.3rem;right:.1rem;margin:0">
+        <input type="hidden" name="station" value="{{ station.id }}">
+        <input type="hidden" name="return_to" value="/">
+        <button type="submit" class="quickask-clear" title="borrar">⊗</button>
+      </form>
+      <div class="quickask-last-hdr">
+        Última respuesta · <b>{{ station_ask_last.label }}</b>
+      </div>
+      <div class="quickask-last-txt">{{ station_ask_last.text }}</div>
+      <div class="quickask-meta">
+        ${{ '%.4f'|format(station_ask_last.cost) }}
+        · {{ station_ask_last.ts[11:16] }}Z
+      </div>
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+<script>
+  let lastUpdate = {{ (snap.fetched_at.timestamp() * 1000)|int }};
+  function tick() {
+    const age = Math.floor((Date.now() - lastUpdate) / 1000);
+    const el = document.getElementById('age');
+    if (el) el.textContent = age;
+    if (age >= 60 && age % 60 === 0) {
+      fetch('/api/ping').then(r => r.json()).then(d => {
+        if (d.ts && d.ts_ms > lastUpdate) location.reload();
+      }).catch(() => {});
+    }
+  }
+  setInterval(tick, 1000);
+</script>
+</body>
+</html>

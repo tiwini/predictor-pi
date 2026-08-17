@@ -1,0 +1,71 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Historial diario</title>
+<link rel="stylesheet" href="/static/app.css">
+<style>
+  body{background:#11111b;color:#cdd6f4;font-family:system-ui,sans-serif;padding:1rem;max-width:1100px;margin:0 auto}
+  h1{color:#94e2d5;margin:0 0 .4rem}
+  a{color:#89b4fa}
+  .dim{color:#6c7086;font-size:12px}
+  .card{background:#1e1e2e;border-radius:8px;padding:1rem;margin:.8rem 0}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{padding:.35rem .5rem;text-align:right;border-bottom:1px solid #313244}
+  th{color:#cba6f7;font-weight:600;text-align:right}
+  th:first-child,td:first-child{text-align:left}
+  th:nth-child(2),td:nth-child(2){text-align:left}
+  tr:hover{background:#181825}
+  .good{color:#a6e3a1} .bad{color:#f38ba8} .neu{color:#a6adc8}
+  .win{background:#2a4a32;color:#a6e3a1;padding:.1rem .4rem;border-radius:3px;font-size:11px}
+  .lose{background:#4a2a32;color:#f38ba8;padding:.1rem .4rem;border-radius:3px;font-size:11px}
+</style></head><body>
+<p><a href="/">&larr; volver</a></p>
+<div style="margin-bottom:.5rem;font-size:13px">
+  <a href="/bets" style="color:#89b4fa">simulador P&amp;L</a> ·
+  <a href="/bets?view=history" style="color:#f9e2af;font-weight:600">historial Brier diario</a>
+</div>
+<h1>Historial diario · {{station_id}}</h1>
+<p class="dim">
+  Un row por día settleado. <b>B-nuestro/B-{{market_name}}</b> = Brier del día (&lt; mejor).
+  <b>p-gana</b> = nuestra P para el bin que contenía el max real · idealmente alto.
+  <b>Edge</b> = mayor |nuestra_p − {{market_name}}| encontrado ese día, y si nuestra dirección acertó.
+</p>
+{% if rows %}
+<div class="card">
+<table>
+<thead><tr>
+  <th>Fecha</th><th>Max</th>
+  <th>n-ours</th><th>B-nuestro</th>
+  <th>n-M</th><th>B-{{market_name}}</th>
+  <th>Bin gana</th><th>p-ours</th><th>p-K</th>
+  <th>Edge</th><th>Ok?</th>
+</tr></thead>
+<tbody>
+{% for r in rows %}
+<tr>
+  <td>{{r.date}}</td>
+  <td>{{ "%.1f"|format(r.actual_max_f) }}°F</td>
+  <td>{{r.our_n}}</td>
+  <td class="{{r.our_class}}">{{r.our_brier_s}}</td>
+  <td>{{r.kalshi_n or "—"}}</td>
+  <td class="{{r.kalshi_class}}">{{r.kalshi_brier_s}}</td>
+  <td>{{r.winning_bin_label or "—"}}</td>
+  <td>{{r.our_p_winning_s}}</td>
+  <td>{{r.kalshi_p_winning_s}}</td>
+  <td>{{r.best_edge_s}}{% if r.best_edge_bin_label %} <span class="dim">({{r.best_edge_bin_label}})</span>{% endif %}</td>
+  <td>{% if r.best_edge_correct == 1 %}<span class="win">✓</span>{% elif r.best_edge_correct == 0 %}<span class="lose">✗</span>{% else %}—{% endif %}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+<div class="card">
+  <b>Agregado:</b>
+  días = {{agg.n}} ·
+  B-nuestro medio = {{agg.our_brier_mean}} ·
+  B-{{market_name}} medio = {{agg.kalshi_brier_mean}} ·
+  días que ganamos a {{market_name}} = {{agg.beats_kalshi}}/{{agg.n_with_kalshi}} ·
+  edge-calls correctos = {{agg.edge_correct}}/{{agg.edge_total}}
+</div>
+{% else %}
+<p class="dim">Aún no hay días settleados. Aparecerán aquí cuando Open-Meteo publique el max histórico (normalmente al día siguiente).</p>
+{% endif %}
+</body></html>

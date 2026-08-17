@@ -1,0 +1,155 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Simulador de ganancias</title>
+<link rel="stylesheet" href="/static/app.css">
+<style>
+  body{background:#11111b;color:#cdd6f4;font-family:system-ui,sans-serif;padding:1rem;max-width:1200px;margin:0 auto}
+  h1{color:#94e2d5;margin:0 0 .4rem} h2{color:#cba6f7;margin:.8rem 0 .3rem;font-size:16px}
+  a{color:#89b4fa}
+  .card{background:#1e1e2e;border-radius:8px;padding:1rem;margin:.8rem 0}
+  .kpi{display:inline-block;margin-right:1.2rem}
+  .kpi b{color:#94e2d5;font-size:20px;display:block}
+  .dim{color:#6c7086;font-size:12px}
+  .good{color:#a6e3a1} .bad{color:#f38ba8} .neu{color:#a6adc8}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{padding:.35rem .5rem;text-align:right;border-bottom:1px solid #313244}
+  th{color:#cba6f7;font-weight:600;text-align:right}
+  th:nth-child(-n+4),td:nth-child(-n+4){text-align:left}
+  tr:hover{background:#181825}
+  .pill{display:inline-block;padding:.1rem .5rem;border-radius:3px;font-size:11px;font-weight:600}
+  .yes{background:#2a4a32;color:#a6e3a1} .no{background:#4a2a32;color:#f38ba8}
+  .win{background:#2a4a32;color:#a6e3a1;padding:.1rem .4rem;border-radius:3px;font-size:11px}
+  .lose{background:#4a2a32;color:#f38ba8;padding:.1rem .4rem;border-radius:3px;font-size:11px}
+  .open{background:#313244;color:#a6adc8;padding:.1rem .4rem;border-radius:3px;font-size:11px}
+  select{background:#181825;color:#cdd6f4;border:1px solid #313244;border-radius:4px;padding:.3rem}
+</style></head><body>
+<p><a href="/">&larr; volver</a></p>
+<div style="margin-bottom:.5rem;font-size:13px">
+  <a href="/bets" style="color:#f9e2af;font-weight:600">simulador P&amp;L</a> ·
+  <a href="/bets?view=history" style="color:#89b4fa">historial Brier diario</a>
+</div>
+<h1>Simulador de ganancias · {{station_id}}</h1>
+<p class="dim">
+  Apuesta hipotética de <b>${{stake}}</b> cada vez que encontramos |edge| ≥ {{thr}}pp
+  contra el mercado (Kalshi). Lado <b>yes</b> si nuestro modelo dice más probable;
+  <b>no</b> si menos. Payoff al settlear. <b>No es dinero real.</b>
+</p>
+
+<div class="card">
+  <div class="kpi"><span class="dim">Total bets</span><b>{{s.n_total}}</b></div>
+  <div class="kpi"><span class="dim">Settled</span><b>{{s.n_settled}}</b></div>
+  <div class="kpi"><span class="dim">Wins</span><b>{{s.n_wins}}</b></div>
+  <div class="kpi"><span class="dim">Win rate</span><b>{{win_rate_s}}</b></div>
+  <div class="kpi"><span class="dim">Total stake</span><b>${{ "%.2f"|format(s.total_stake) }}</b></div>
+  <div class="kpi"><span class="dim">Total payoff</span><b>${{ "%.2f"|format(s.total_payoff) }}</b></div>
+  <div class="kpi"><span class="dim">P&amp;L</span><b class="{{pnl_class}}">${{ "%.2f"|format(s.pnl) }}</b></div>
+  <div class="kpi"><span class="dim">ROI</span><b class="{{pnl_class}}">{{roi_s}}</b></div>
+</div>
+
+<form method="get" style="margin:.4rem 0">
+  Filtro:
+  <select name="only" onchange="this.form.submit()">
+    <option value="all"    {{'selected' if only=='all' else ''}}>todos</option>
+    <option value="open"   {{'selected' if only=='open' else ''}}>abiertos</option>
+    <option value="settled"{{'selected' if only=='settled' else ''}}>settleados</option>
+  </select>
+  Estación:
+  <select name="station" onchange="this.form.submit()">
+    <option value="">— todas —</option>
+    {% for sid in known_stations %}
+      <option value="{{sid}}" {{'selected' if sid==station_id else ''}}>{{sid}}</option>
+    {% endfor %}
+  </select>
+</form>
+
+<div class="card">
+  <h2>What-if · sweep últimos {{sweep_days}}d
+    <span class="dim">(min n={{sweep_min_n}} para considerar)</span></h2>
+  <p class="dim">
+    Replica decisión sobre bets settled del periodo aplicando un filtro alternativo.
+    Solo restrictivo (subir thresholds). Sample sizes pequeños suelen ser ruido
+    estadístico — no auto-aplicar sin reflexión.
+  </p>
+
+  {% for swp in sweeps %}
+  <h3 style="color:#fab387;margin:.6rem 0 .2rem;font-size:14px">{{swp.title}}</h3>
+  {% if swp.data.rows %}
+  <table style="margin-bottom:.4rem">
+    <thead><tr>
+      <th>Config</th><th>n</th><th>wins</th><th>WR</th>
+      <th>stake</th><th>payoff</th><th>P&amp;L</th><th>ROI</th>
+    </tr></thead>
+    <tbody>
+    {% for r in swp.data.rows %}
+    <tr {% if swp.best and r.label == swp.best.label %}style="background:#1e3a2a"{% endif %}>
+      <td>{{r.label}}</td>
+      <td>{{r.n_bets}}</td>
+      <td>{{r.n_wins}}</td>
+      <td>{% if r.win_rate is not none %}{{"%.0f"|format(r.win_rate*100)}}%{% else %}—{% endif %}</td>
+      <td>${{"%.0f"|format(r.total_stake)}}</td>
+      <td>${{"%.0f"|format(r.total_payoff)}}</td>
+      <td class="{{'good' if r.pnl>0 else ('bad' if r.pnl<0 else 'neu')}}">
+        ${{ "%+.2f"|format(r.pnl) }}</td>
+      <td class="{{'good' if r.roi and r.roi>0 else ('bad' if r.roi and r.roi<0 else 'neu')}}">
+        {% if r.roi is not none %}{{"%+.1f"|format(r.roi*100)}}%{% else %}—{% endif %}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% if swp.best %}
+  <p class="dim">
+    Mejor (por PnL absoluto, n≥{{sweep_min_n}}): <b>{{swp.best.label}}</b> ·
+    PnL ${{ "%+.2f"|format(swp.best.pnl) }} ·
+    WR {% if swp.best.win_rate %}{{"%.0f"|format(swp.best.win_rate*100)}}%{% endif %} ·
+    n={{swp.best.n_bets}}
+  </p>
+  {% else %}
+  <p class="dim">Sin slice con n≥{{sweep_min_n}} — esperar más data.</p>
+  {% endif %}
+  {% if swp.data.n_with_data is defined %}
+  <p class="dim">Slices con data nueva: {{swp.data.n_with_data}}/{{swp.data.n_total_in_window}}
+    (columna añadida 2026-06-22).</p>
+  {% endif %}
+  {% else %}
+  <p class="dim">Sin bets settled en la ventana.</p>
+  {% endif %}
+  {% endfor %}
+</div>
+
+<div class="card">
+<table>
+<thead><tr>
+  <th>Entrada</th><th>Est.</th><th>Fecha</th><th>Bin</th>
+  <th>Lado</th><th>our p</th><th>K p</th><th>edge</th>
+  <th>Stake</th><th>Entry $</th><th>Contracts</th>
+  <th>Outc.</th><th>Payoff</th><th>P&amp;L</th>
+</tr></thead>
+<tbody>
+{% for b in bets %}
+<tr>
+  <td class="dim">{{b.entered_at[:16]}}</td>
+  <td>{{b.station_id}}</td>
+  <td>{{b.date}}</td>
+  <td>{{b.bin_label or '—'}}</td>
+  <td><span class="pill {{b.side}}">{{b.side}}</span></td>
+  <td>{{ "%.0f"|format(b.our_p*100) }}%</td>
+  <td>{{ "%.0f"|format(b.kalshi_p*100) }}%</td>
+  <td>{{ "%+.1f"|format(b.edge_pp) }}pp</td>
+  <td>${{ "%.0f"|format(b.stake) }}</td>
+  <td>{{ "%.2f"|format(b.entry_price) }}</td>
+  <td>{{ "%.1f"|format(b.contracts) }}</td>
+  <td>
+    {% if b.outcome is none %}<span class="open">open</span>
+    {% elif b.won %}<span class="win">WON</span>
+    {% else %}<span class="lose">LOST</span>{% endif %}
+  </td>
+  <td>{% if b.payoff is not none %}${{ "%.2f"|format(b.payoff) }}{% else %}—{% endif %}</td>
+  <td class="{{'good' if b.pnl and b.pnl>0 else ('bad' if b.pnl and b.pnl<0 else 'neu')}}">
+    {% if b.pnl is not none %}${{ "%+.2f"|format(b.pnl) }}{% else %}—{% endif %}
+  </td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% if not bets %}<p class="dim">Sin bets registrados en este filtro.</p>{% endif %}
+</div>
+</body></html>

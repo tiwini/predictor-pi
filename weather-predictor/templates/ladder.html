@@ -1,0 +1,104 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Decision ladder</title>
+<link rel="stylesheet" href="/static/app.css">
+<style>
+  body{background:#11111b;color:#cdd6f4;font-family:system-ui,sans-serif;padding:1rem;max-width:1200px;margin:0 auto}
+  h1{color:#f5c2e7;margin:0 0 .4rem} a{color:#89b4fa}
+  .card{background:#1e1e2e;border-radius:8px;padding:1rem;margin:.8rem 0}
+  table{width:100%;border-collapse:collapse;font-family:monospace;font-size:13px}
+  th,td{padding:5px 7px;border-bottom:1px solid #313244}
+  th{color:#a6adc8;font-weight:normal;text-align:right}
+  th:first-child,td:first-child{text-align:left}
+  td.num{text-align:right;font-variant-numeric:tabular-nums}
+  .diff-pos{color:#a6e3a1} .diff-neg{color:#f38ba8}
+  .dim{color:#6c7086;font-size:12px}
+  tr.hl{background:#252535}
+  .pill{display:inline-block;padding:.05rem .4rem;border-radius:3px;font-size:11px;font-weight:600}
+  .rec-yes{background:#2a4a32;color:#a6e3a1}
+  .rec-no{background:#4a2a32;color:#f38ba8}
+  .rec-none{background:#313244;color:#6c7086}
+  .ev-pos{color:#a6e3a1;font-weight:600}
+  .ev-neg{color:#f38ba8}
+</style></head><body>
+<p><a href="/">&larr; volver</a></p>
+<h1>Decision ladder — {{station}} {{target_date}} ({{day_label}})</h1>
+
+<div class="card">
+  <div>
+    <a href="?day=0&range={{window}}" style="color:{% if day_offset==0 %}#f9e2af{% else %}#89b4fa{% endif %}">hoy</a> ·
+    <a href="?day=1&range={{window}}" style="color:{% if day_offset==1 %}#f9e2af{% else %}#89b4fa{% endif %}">mañana</a> ·
+    <a href="?day=2&range={{window}}" style="color:{% if day_offset==2 %}#f9e2af{% else %}#89b4fa{% endif %}">pasado</a>
+    &nbsp;·&nbsp;
+    Ventana:
+    {% for r in [2,3,4,6,10] %}
+      <a href="?day={{day_offset}}&range={{r}}"
+         style="color:{% if not show_all and window==r %}#f9e2af{% else %}#89b4fa{% endif %}">±{{r}}°F</a>{% if not loop.last %} ·{% endif %}
+    {% endfor %}
+    · <a href="?day={{day_offset}}&all=1" style="color:{% if show_all %}#f9e2af{% else %}#89b4fa{% endif %}">todo</a>
+  </div>
+  <div style="margin-top:.4rem">
+    {% if day_offset == 0 %}Max observado: <b style="color:#f9e2af">{{max_obs}}</b> · {% endif %}
+    mediana ensemble: <b>{{median_pred}}</b>
+    {% if cal_active %}
+      · <span style="background:#2a4a32;color:#a6e3a1;padding:.05rem .4rem;border-radius:3px;font-size:11px;font-weight:600">CALIBRADO</span>
+      <span class="dim">isotonic n={{cal_n_fit}}, {{cal_n_days}}d</span>
+    {% else %}
+      · <span style="background:#3a3a3a;color:#a6adc8;padding:.05rem .4rem;border-radius:3px;font-size:11px">RAW</span>
+      <span class="dim">isotonic gate {{cal_n_fit}}/{{cal_min_n}}n · {{cal_n_days}}/{{cal_min_days}}d</span>
+    {% endif %}
+  </div>
+  <div class="dim">
+    Mesa de decisión centrada en la mediana (±{{window}}°F).
+    <b>yes = P(max &gt; X)</b>, <b>no = P(max ≤ X)</b>.
+    EV = retorno esperado por $1 al precio {{market_name}} · Kelly = fracción óptima del bankroll.
+    Columna <b>rec</b> marca el lado con EV positivo (si hay).
+    {% if day_offset > 0 %}D+{{day_offset}} sin obs → ensemble raw.{% endif %}
+  </div>
+</div>
+
+<div class="card">
+<table>
+<tr>
+  <th>thr.</th>
+  <th>yes (ours)</th><th>no (ours)</th>
+  <th>yes (K)</th><th>no (K)</th>
+  <th>edge</th>
+  <th>EV yes</th><th>EV no</th>
+  <th>Kelly yes</th><th>Kelly no</th>
+  <th>rec</th>
+</tr>
+{% for r in rows %}
+<tr class="{% if r.hl %}hl{% endif %}">
+  <td><b>&gt;{{r.thr}}°F</b></td>
+  <td class="num" style="color:#a6e3a1" title="raw {{'%.0f'|format(r.our_yes_raw*100)}}%">{{'%.0f'|format(r.our_yes*100)}}%</td>
+  <td class="num" style="color:#a6e3a1;opacity:.6">{{'%.0f'|format(r.our_no*100)}}%</td>
+  <td class="num" style="color:#f5c2e7">{% if r.k_yes is not none %}{{'%.0f'|format(r.k_yes*100)}}%{% else %}—{% endif %}</td>
+  <td class="num" style="color:#f5c2e7;opacity:.6">{% if r.k_no is not none %}{{'%.0f'|format(r.k_no*100)}}%{% else %}—{% endif %}</td>
+  <td class="num {% if r.edge is not none and r.edge >= 0 %}diff-pos{% elif r.edge is not none %}diff-neg{% endif %}">
+    {% if r.edge is not none %}{{'%+.0f'|format(r.edge*100)}}pp{% else %}—{% endif %}
+  </td>
+  <td class="num {% if r.ev_yes is not none and r.ev_yes > 0 %}ev-pos{% elif r.ev_yes is not none %}ev-neg{% endif %}">
+    {% if r.ev_yes is not none %}{{'%+.0f'|format(r.ev_yes*100)}}%{% else %}—{% endif %}
+  </td>
+  <td class="num {% if r.ev_no is not none and r.ev_no > 0 %}ev-pos{% elif r.ev_no is not none %}ev-neg{% endif %}">
+    {% if r.ev_no is not none %}{{'%+.0f'|format(r.ev_no*100)}}%{% else %}—{% endif %}
+  </td>
+  <td class="num">{% if r.kelly_yes is not none %}{{'%.0f'|format(r.kelly_yes*100)}}%{% else %}—{% endif %}</td>
+  <td class="num">{% if r.kelly_no is not none %}{{'%.0f'|format(r.kelly_no*100)}}%{% else %}—{% endif %}</td>
+  <td style="text-align:center">
+    {% if r.rec == 'yes' %}<span class="pill rec-yes">YES</span>
+    {% elif r.rec == 'no' %}<span class="pill rec-no">NO</span>
+    {% elif r.k_yes is not none %}<span class="pill rec-none">—</span>
+    {% else %}<span class="dim">—</span>{% endif %}
+    {% if r.rec_kelly %}<div class="dim" style="font-size:10px">~{{'%.0f'|format(r.rec_kelly*100)}}%</div>{% endif %}
+  </td>
+</tr>
+{% endfor %}
+</table>
+<p class="dim" style="margin-top:.8rem">
+  yes col opaca · no col semi-transparente · fila resaltada = threshold ≈ mediana.
+  <br>EV positivo = apostar ese lado tiene expected value &gt; 0 bajo nuestro modelo.
+  Kelly = fracción del bankroll a apostar (0% = skip, 10% = moderado, &gt;30% = modelo muy confiado).
+</p>
+</div>
+</body></html>

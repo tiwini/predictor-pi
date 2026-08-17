@@ -1,0 +1,128 @@
+<!doctype html><html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Grid · 20 estaciones</title>
+<link rel="stylesheet" href="/static/app.css">
+<style>
+  body{background:#1e1e2e;color:#cdd6f4;font-family:system-ui,-apple-system,sans-serif;
+       margin:0;padding:.6rem;max-width:1400px;margin-inline:auto}
+  h1{color:#f9e2af;margin:.2rem 0 .4rem;font-size:1.3rem}
+  .meta{color:#6c7086;font-size:12px;margin-bottom:.6rem}
+  .meta a{color:#89b4fa}
+  .filters{display:flex;gap:.4rem;flex-wrap:wrap;margin-bottom:.7rem}
+  .chip{background:#313244;color:#cdd6f4;border:1px solid #45475a;
+        border-radius:14px;padding:.25rem .7rem;font-size:12px;cursor:pointer;
+        user-select:none}
+  .chip.active{background:#89b4fa;color:#1e1e2e;border-color:#89b4fa;font-weight:600}
+  .grid{display:grid;gap:.5rem;
+        grid-template-columns:repeat(auto-fill,minmax(170px,1fr))}
+  .card{background:#313244;border-radius:8px;padding:.55rem .65rem;
+        border-left:4px solid #6c7086;font-size:13px;line-height:1.35}
+  .card.stable{border-left-color:#a6e3a1}
+  .card.transition{border-left-color:#f9e2af;background:#3d3b2e}
+  .card.heatwave{border-left-color:#fab387;background:#3d352b}
+  .card.cold_snap{border-left-color:#89b4fa;background:#2b3340}
+  .card.marine_bimodal{border-left-color:#cba6f7;background:#33293d}
+  .card.regime_break{border-left-color:#f38ba8;background:#3d2932}
+  .stn{font-weight:700;color:#f9e2af;font-size:14px}
+  .city{color:#a6adc8;font-size:11px;margin-bottom:.25rem}
+  .row{display:flex;justify-content:space-between;gap:.4rem;
+       font-variant-numeric:tabular-nums}
+  .lbl{color:#6c7086;font-size:11px}
+  .val{color:#cdd6f4}
+  .edge{font-weight:700;margin-top:.3rem}
+  .edge.pos{color:#a6e3a1} .edge.neg{color:#f38ba8}
+  .badge{display:inline-block;padding:1px 6px;border-radius:9px;
+         font-size:10px;font-weight:600;text-transform:uppercase;
+         letter-spacing:.03em;margin-top:.2rem}
+  .badge.stable{background:#a6e3a1;color:#1e1e2e}
+  .badge.transition{background:#f9e2af;color:#1e1e2e}
+  .badge.heatwave{background:#fab387;color:#1e1e2e}
+  .badge.cold_snap{background:#89b4fa;color:#1e1e2e}
+  .badge.marine_bimodal{background:#cba6f7;color:#1e1e2e}
+  .badge.regime_break{background:#f38ba8;color:#1e1e2e}
+  .stale{opacity:.55}
+  .empty{color:#6c7086;text-align:center;padding:2rem;font-style:italic}
+  @media(max-width:480px){
+    .grid{grid-template-columns:repeat(2,1fr)}
+    .card{font-size:12px}
+  }
+</style></head><body>
+<h1>Grid · 20 estaciones</h1>
+<div class="meta">
+  <a href="/">&larr; volver</a> ·
+  <a href="/stations">5 curadas</a> ·
+  <a href="/cross">cross</a> ·
+  snapshot del poller (cada 10 min) ·
+  auto-refresh 60s ·
+  <span id="updated">cargando...</span>
+</div>
+<div class="filters">
+  <span class="chip active" data-filter="all">todas (20)</span>
+  <span class="chip" data-filter="not_stable">régimen ≠ stable</span>
+  <span class="chip" data-filter="edge5">|edge| ≥ 5pp</span>
+  <span class="chip" data-filter="break">regime_break</span>
+</div>
+<div id="grid" class="grid"><div class="empty">cargando...</div></div>
+<script>
+let DATA = [];
+let FILTER = 'all';
+
+function fmt(v, d){return v==null?'—':v.toFixed(d||1);}
+
+function render(){
+  const el = document.getElementById('grid');
+  let rows = DATA;
+  if (FILTER === 'not_stable') rows = rows.filter(r => r.regime_tag !== 'stable');
+  if (FILTER === 'edge5') rows = rows.filter(r => Math.abs(r.top_edge_pp||0) >= 5);
+  if (FILTER === 'break') rows = rows.filter(r => r.regime_tag === 'regime_break');
+  if (!rows.length){ el.innerHTML = '<div class="empty">sin estaciones que cumplan filtro</div>'; return; }
+  rows.sort((a,b) => Math.abs(b.top_edge_pp||0) - Math.abs(a.top_edge_pp||0));
+  el.innerHTML = rows.map(r => {
+    const tag = r.regime_tag || 'stable';
+    const stale = (r.snap_age_min||0) > 20 ? 'stale' : '';
+    const edgeCls = (r.top_edge_pp||0) > 0 ? 'pos' : 'neg';
+    const edgeStr = r.top_edge_pp != null
+      ? `<div class="edge ${edgeCls}">${r.top_side||''} ${r.top_bin_label||''} · ${r.top_edge_pp>0?'+':''}${r.top_edge_pp.toFixed(1)}pp</div>`
+      : '<div class="edge" style="color:#6c7086">sin mercado</div>';
+    return `<div class="card ${tag} ${stale}">
+      <div class="stn">${r.station}</div>
+      <div class="city">${r.city}</div>
+      <div class="row"><span class="lbl">ahora</span><span class="val">${fmt(r.current_f)}°F</span></div>
+      <div class="row"><span class="lbl">obs hoy</span><span class="val">${fmt(r.today_max_obs)}°F</span></div>
+      <div class="row"><span class="lbl">pred</span><span class="val">${fmt(r.ens_med)}°F</span></div>
+      <div class="row"><span class="lbl">p10-p90</span><span class="val">${fmt(r.ens_p10)}-${fmt(r.ens_p90)}</span></div>
+      ${edgeStr}
+      <span class="badge ${tag}" title="${r.regime_reason||''}">${tag.replace('_',' ')}</span>
+    </div>`;
+  }).join('');
+}
+
+async function load(){
+  try{
+    const r = await fetch('/api/grid');
+    const j = await r.json();
+    DATA = j.stations || [];
+    const t = new Date(j.generated_at);
+    document.getElementById('updated').textContent =
+      'actualizado ' + t.toLocaleTimeString();
+    render();
+  } catch(e){
+    document.getElementById('grid').innerHTML =
+      '<div class="empty">error fetch: '+e+'</div>';
+  }
+}
+
+document.querySelectorAll('.chip').forEach(ch => {
+  ch.addEventListener('click', () => {
+    document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+    ch.classList.add('active');
+    FILTER = ch.dataset.filter;
+    render();
+  });
+});
+
+load();
+setInterval(load, 60000);
+</script>
+</body></html>

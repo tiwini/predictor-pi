@@ -1,0 +1,98 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Reweight · {{station}}</title>
+<link rel="stylesheet" href="/static/app.css">
+<style>
+  body{background:#11111b;color:#cdd6f4;font-family:system-ui,sans-serif;padding:1rem;max-width:900px;margin:0 auto}
+  h1{color:#94e2d5;margin:0 0 .4rem} h2{color:#cba6f7;margin:.8rem 0 .3rem;font-size:16px}
+  a{color:#89b4fa}
+  .card{background:#1e1e2e;border-radius:8px;padding:1rem;margin:.8rem 0}
+  .kv{display:flex;justify-content:space-between;padding:.2rem 0;border-bottom:1px solid #313244;font-family:monospace;font-size:13px}
+  .kv:last-child{border:none} .kv-k{color:#a6adc8}
+  table{border-collapse:collapse;width:100%;font-family:monospace;font-size:13px}
+  th,td{padding:.3rem .5rem;text-align:right;border-bottom:1px solid #313244}
+  th{color:#a6adc8;text-align:right} td.h{text-align:left;color:#cba6f7}
+  tr.broken td{background:#3a1e24;color:#f38ba8}
+  tr.peak td.sig{color:#a6e3a1;font-weight:600}
+  .dim{color:#6c7086;font-size:12px}
+</style></head><body>
+<p><a href="/">&larr; volver</a></p>
+<h1>Reweight diagnostics · {{station}}</h1>
+<div class="card">
+  <div class="kv"><span class="kv-k">Residual hours</span><span>{{residual_hours}}</span></div>
+  <div class="kv"><span class="kv-k">eff_N / total</span><span>{{eff_n}} / {{total_members}} ({{eff_ratio}})</span></div>
+  <div class="kv"><span class="kv-k">Regime-break hours</span><span>{{regime_break_hours or '—'}}</span></div>
+  <div class="kv"><span class="kv-k">Peak window (local)</span><span>{{peak_lo}}-{{peak_hi}}h</span></div>
+</div>
+<div class="card">
+  <h2>Ajuste por sesgo histórico</h2>
+  {% if bias_info %}
+    {% if bias_info.applied %}
+      <div class="kv"><span class="kv-k">Corrección aplicada</span>
+        <span style="color:{% if bias_correction_f > 0 %}#f9e2af{% else %}#89dceb{% endif %};font-weight:600">
+          {{ '%+.2f'|format(-bias_correction_f) }}°F al ensemble
+        </span>
+      </div>
+      <div class="kv"><span class="kv-k">Bias detectado (early_pred − actual)</span>
+        <span>{{ '%+.2f'|format(bias_correction_f) }}°F</span>
+      </div>
+    {% else %}
+      <div class="kv"><span class="kv-k">Corrección</span><span class="dim">no aplicada · {{bias_info.reason}}</span></div>
+    {% endif %}
+    <div class="kv"><span class="kv-k">Modo</span>
+      {% if bias_info.mode == 'conditional' %}
+        <span style="color:#cba6f7;font-weight:600">condicional</span>
+        <span class="dim">· régimen {{bias_info.regime}} · pct {{ '%.0f'|format(bias_info.today_percentile) }}</span>
+      {% else %}
+        <span class="dim">global (sin clim. o bucket fino)</span>
+      {% endif %}
+    </div>
+    <div class="kv"><span class="kv-k">N días usados</span><span>{{bias_info.n}}</span></div>
+    {% if bias_info.mode == 'conditional' and bias_info.global_bias is defined %}
+    <div class="kv"><span class="kv-k">Bias global (referencia)</span>
+      <span class="dim">{{ '%+.2f'|format(bias_info.global_bias) }}°F · n={{bias_info.global_n}}</span>
+    </div>
+    {% endif %}
+    {% if bias_info.samples %}
+    <table style="margin-top:.4rem">
+      <tr><th style="text-align:left">fecha</th><th>error (pred − obs)</th></tr>
+      {% for d, e in bias_info.samples %}
+      <tr><td class="h">{{d}}</td><td style="color:{% if e > 0 %}#f9e2af{% elif e < 0 %}#89dceb{% else %}#a6adc8{% endif %}">{{ '%+.2f'|format(e) }}°F</td></tr>
+      {% endfor %}
+    </table>
+    {% endif %}
+  {% else %}
+    <p class="dim">Tracker no disponible (sin datos o error de lectura).</p>
+  {% endif %}
+  <p class="dim" style="margin-top:.5rem">
+    Promedio exponencial (α=0.4) de los últimos 7 días settleados con snapshot temprano.
+    Se aplica solo si |bias| ≥ 0.7°F y hay ≥4 días.
+  </p>
+</div>
+<div class="card">
+  <h2>Per-hour breakdown</h2>
+  {% if diagnostics %}
+  <table>
+    <tr><th>hora</th><th>obs</th><th>ens p10</th><th>p50</th><th>p90</th><th>σ</th><th>n</th><th>∈ p1-p99</th></tr>
+    {% for d in diagnostics %}
+    <tr class="{% if d.out_of_range %}broken{% endif %} {% if peak_lo <= d.hour < peak_hi %}peak{% endif %}">
+      <td class="h">{{'%02d'|format(d.hour)}}h</td>
+      <td>{{'%.1f'|format(d.obs)}}°F</td>
+      <td>{{'%.1f'|format(d.p10) if d.p10 is not none else '—'}}</td>
+      <td>{{'%.1f'|format(d.p50) if d.p50 is not none else '—'}}</td>
+      <td>{{'%.1f'|format(d.p90) if d.p90 is not none else '—'}}</td>
+      <td class="sig">{{'%.1f'|format(d.sigma)}}</td>
+      <td>{{d.n_members}}</td>
+      <td>{% if d.out_of_range %}✗ ROTO{% else %}✓{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p class="dim">Aún no hay obs matched hoy (demasiado temprano).</p>
+  {% endif %}
+</div>
+<p class="dim">
+  Las horas de pico usan σ=1.5°F (más peso por observación, color verde). Filas
+  rojas = obs fuera del rango p1-p99 del ensemble en esa hora (ruptura de
+  régimen). ≥2 filas rojas dispara push + fuerza "muy difícil" en /cross.
+</p>
+</body></html>

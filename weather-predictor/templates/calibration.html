@@ -1,0 +1,90 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Reliability</title>
+<link rel="stylesheet" href="/static/app.css">
+<style>
+  body{background:#11111b;color:#cdd6f4;font-family:system-ui,sans-serif;padding:1rem;max-width:900px;margin:0 auto}
+  h1{color:#f5c2e7;margin:0 0 .4rem} a{color:#89b4fa}
+  .card{background:#1e1e2e;border-radius:8px;padding:1rem;margin:.8rem 0}
+  table{width:100%;border-collapse:collapse;font-family:monospace;font-size:13px}
+  th,td{padding:4px 8px;text-align:right;border-bottom:1px solid #313244}
+  th{color:#a6adc8;text-align:center}
+  .dim{color:#6c7086}
+  .brier{font-size:18px;color:#a6e3a1}
+</style></head><body>
+<p><a href="/">&larr; volver</a></p>
+<h1>Reliability — {{scope}}</h1>
+<div class="card">
+  <div>Snapshots totales: <b>{{total}}</b> · resueltos: <b>{{settled}}</b></div>
+  {% if brier is not none %}
+    <div class="brier">Brier nosotros: {{'%.4f'|format(brier)}} <span class="dim">(0=perfecto, 0.25=al azar)</span></div>
+  {% else %}
+    <div class="dim">Sin datos resueltos aún — vuelve mañana cuando el archive API tenga el max de hoy.</div>
+  {% endif %}
+  {% if kalshi_rep and kalshi_rep.brier is not none %}
+    <div class="brier" style="color:#f5c2e7">Brier {{market_name}}: {{'%.4f'|format(kalshi_rep.brier)}}
+      <span class="dim">({{kalshi_rep.settled_n}} filas resueltas de {{kalshi_rep.total_n}})</span></div>
+  {% elif kalshi_rep %}
+    <div class="dim">{{market_name}}: {{kalshi_rep.total_n}} filas capturadas, {{kalshi_rep.settled_n}} resueltas.</div>
+  {% endif %}
+</div>
+{% if settled or (kalshi_rep and kalshi_rep.settled_n) %}
+<div class="card">{{svg|safe}}
+<p class="dim" style="font-size:12px">Círculos azules = nosotros · diamantes rosas = {{market_name}} · tamaño ∝ √n · diagonal amarilla = calibración perfecta.</p></div>
+{% endif %}
+{% if settled %}
+<div class="card"><h3 style="margin:.2rem 0;color:#89b4fa">Nosotros</h3><table>
+<tr><th>bucket</th><th>n</th><th>pred medio</th><th>hit rate</th><th>diff</th></tr>
+{% for b in buckets %}{% if b.n > 0 %}
+<tr><td>{{'%.1f'|format(b.low)}} – {{'%.1f'|format(b.high)}}</td>
+    <td>{{b.n}}</td>
+    <td>{{'%.1f'|format(b.mean_pred*100)}}%</td>
+    <td>{{'%.1f'|format(b.hit_rate*100)}}%</td>
+    <td style="color:{% if b.hit_rate >= b.mean_pred %}#a6e3a1{% else %}#f38ba8{% endif %}">
+        {{'%+.1f'|format((b.hit_rate - b.mean_pred)*100)}}pp</td></tr>
+{% endif %}{% endfor %}
+</table></div>
+{% endif %}
+{% if kalshi_rep and kalshi_rep.settled_n %}
+<div class="card"><h3 style="margin:.2rem 0;color:#f5c2e7">{{market_name}}</h3><table>
+<tr><th>bucket</th><th>n</th><th>pred medio</th><th>hit rate</th><th>diff</th></tr>
+{% for b in kalshi_rep.buckets %}{% if b.n > 0 %}
+<tr><td>{{'%.1f'|format(b.low)}} – {{'%.1f'|format(b.high)}}</td>
+    <td>{{b.n}}</td>
+    <td>{{'%.1f'|format(b.mean_pred*100)}}%</td>
+    <td>{{'%.1f'|format(b.hit_rate*100)}}%</td>
+    <td style="color:{% if b.hit_rate >= b.mean_pred %}#a6e3a1{% else %}#f38ba8{% endif %}">
+        {{'%+.1f'|format((b.hit_rate - b.mean_pred)*100)}}pp</td></tr>
+{% endif %}{% endfor %}
+</table></div>
+{% endif %}
+<div class="card">
+  <h3 style="margin:.2rem 0;color:#a6e3a1">Auto-calibración isotónica</h3>
+  <div class="dim" style="font-size:12px;margin-bottom:.4rem">
+    Regresión PAV sobre pares (p, outcome) settleados. Si nuestro modelo
+    sobre-estima, la curva verde queda debajo de la diagonal; si sub-estima,
+    arriba. Aplicar este mapa a futuras p corregiría el sesgo sistemático.
+  </div>
+  <div>Muestras fit: <b>{{cal.n_fit}}</b> · días únicos: <b>{{cal.n_days}}</b>
+    · bloques PAV: <b>{{cal.blocks}}</b>
+    <span class="dim">(min: {{cal.min_n}} muestras, {{cal.min_days}} días)</span></div>
+  {% if cal.raw_brier is not none and cal.cal_brier is not none %}
+    <div>Brier <b>cruda</b>: {{'%.4f'|format(cal.raw_brier)}} ·
+         Brier <b>calibrada</b>:
+         <span style="color:{% if cal.cal_brier < cal.raw_brier %}#a6e3a1{% else %}#f38ba8{% endif %}">
+           {{'%.4f'|format(cal.cal_brier)}}</span>
+         (mejora: {{'%+.4f'|format(cal.raw_brier - cal.cal_brier)}})</div>
+  {% endif %}
+  {% if not cal.enough %}
+    <div style="color:#f9e2af;font-size:12px;margin-top:.3rem">
+      ⚠ Fit disponible pero poco confiable: N={{cal.n_fit}} (min {{cal.min_n}})
+      · días={{cal.n_days}} (min {{cal.min_days}}).
+      Acumula más días settleados antes de aplicar en vivo.
+    </div>
+  {% endif %}
+  {% if cal.svg %}<div style="margin-top:.6rem">{{cal.svg|safe}}</div>{% endif %}
+</div>
+<p class="dim" style="font-size:12px">
+  <a href="/calibration">esta estación</a> ·
+  <a href="/calibration?all=1">todas las estaciones</a>
+</p>
+</body></html>

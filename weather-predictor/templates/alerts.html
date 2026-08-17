@@ -1,0 +1,47 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Alertas NWS</title>
+<link rel="stylesheet" href="/static/app.css">
+<style>
+  body{background:#11111b;color:#cdd6f4;font-family:system-ui,sans-serif;padding:1rem;max-width:960px;margin:0 auto}
+  h1{color:#cba6f7;margin:0 0 .4rem} a{color:#89b4fa}
+  .card{background:#1e1e2e;border-radius:8px;padding:1rem;margin:.8rem 0}
+  .alert{border-left:4px solid #6c7086;padding:.6rem .8rem;margin:.5rem 0;border-radius:4px;background:#181825}
+  .alert.sev-Extreme,.alert.sev-Severe{border-left-color:#f38ba8}
+  .alert.sev-Moderate{border-left-color:#f9e2af}
+  .alert.sev-Minor{border-left-color:#89b4fa}
+  .evt{font-weight:700;color:#f9e2af}
+  .meta{font-size:.8rem;color:#a6adc8;margin-top:.25rem}
+  .head{margin-top:.35rem;color:#cdd6f4;font-size:.92rem}
+  .area{margin-top:.25rem;color:#a6adc8;font-size:.82rem}
+  .dim{color:#6c7086;font-size:12px}
+  .ok{color:#a6e3a1}
+  .empty{color:#6c7086;font-style:italic;padding:.5rem 0}
+</style></head><body>
+{{ system_tabs_html|safe }}
+<h1>Alertas NWS activas</h1>
+<p class="dim">Poll al endpoint público <code>api.weather.gov/alerts/active</code>
+(rate-limit 15 min/estación). Filtra eventos irrelevantes para max diario
+(Coastal Flood, Rip Current, Small Craft, Marine...). Severo o urgente
+inmediato = push prioritario.</p>
+{% for sid, info in per_station.items() %}
+<div class="card">
+  <h3 style="margin:0">{{sid}} <span class="dim">({{info.name}})</span></h3>
+  {% if info.error %}
+    <div class="empty">error: {{info.error}}</div>
+  {% elif not info.alerts %}
+    <div class="empty ok">✓ sin alerts activos</div>
+  {% else %}
+    {% for a in info.alerts %}
+    <div class="alert sev-{{a.severity}}">
+      <span class="evt">{{a.event}}</span>
+      <span class="dim"> · {{a.severity}} · {{a.urgency}} · {{a.certainty}}</span>
+      {% if a.headline %}<div class="head">{{a.headline}}</div>{% endif %}
+      {% if a.area_desc %}<div class="area">Área: {{a.area_desc}}</div>{% endif %}
+      <div class="meta">sender: {{a.sender_name}}
+        {% if a.ends %}· termina: {{a.ends}}{% endif %}</div>
+    </div>
+    {% endfor %}
+  {% endif %}
+</div>
+{% endfor %}
+</body></html>
