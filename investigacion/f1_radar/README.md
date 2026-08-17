@@ -14,6 +14,30 @@
 
 **Estaciones (5 convectivas)**: KMIA, KIAH, KAUS, KATL, KMSY.
 
+### ⚠ Houston: KIAH o KHOU, según lo que mires
+
+El id de Houston cambió el **2026-07-25** (`KIAH`→`KHOU`), porque el mercado de
+Kalshi liquida con Hobby y no con Bush. El backfill de radar es **anterior**, así
+que los datos quedaron grabados con el id viejo:
+
+```
+radar_snapshots     Houston = KIAH   2026-07-03 → 07-23   (todo el backfill)
+station_snapshots   Houston = KIAH   2026-07-15 → 07-25
+                    Houston = KHOU   desde 2026-07-25
+```
+
+De ahí la regla:
+
+- **Analizar el backfill existente → `KIAH`.** Es el id con el que están las
+  filas, en las dos tablas, durante todo el periodo cubierto.
+- **Correr un backfill nuevo → `KHOU`.** Se unirá contra `station_snapshots` de
+  hoy, que ya no tiene KIAH.
+
+Esto se rompió una vez (2026-08-16) al "arreglar" el id viejo en los scripts de
+análisis: el join pasó a buscar KHOU en un rango donde no existe y salía vacío
+por el otro lado. Si algún día se re-backfillea la ventana de julio bajo KHOU,
+esta sección se puede borrar; hasta entonces, la dualidad es real.
+
 **Ventana temporal**: 3 semanas × 18:00-23:00 UTC. Cover 14-17 local para ET/CT.
 
 **Cadencia**: 5-min (N0R). ~250-1260 frames total.

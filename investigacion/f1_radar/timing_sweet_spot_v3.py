@@ -27,12 +27,12 @@ from stations import PEAK_HOURS
 
 DB_PATH = Path(__file__).resolve().parent.parent.parent / "weather-predictor" / "analysis.db"
 
-STATIONS = ["KMIA", "KHOU", "KAUS", "KATL", "KMSY",
+STATIONS = ["KMIA", "KIAH", "KAUS", "KATL", "KMSY",
             "KNYC", "KBOS", "KDCA", "KPHL", "KPHX"]
 
 TZ_MAP = {
     "KMIA": "America/New_York", "KATL": "America/New_York",
-    "KHOU": "America/Chicago", "KAUS": "America/Chicago", "KMSY": "America/Chicago",
+    "KIAH": "America/Chicago", "KAUS": "America/Chicago", "KMSY": "America/Chicago",
     "KNYC": "America/New_York", "KBOS": "America/New_York",
     "KDCA": "America/New_York", "KPHL": "America/New_York",
     "KPHX": "America/Phoenix",
