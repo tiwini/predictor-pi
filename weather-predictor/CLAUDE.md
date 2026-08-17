@@ -33,6 +33,9 @@ Un solo origen: **NWS CLI** (`nws_cli.py`), el mismo que liquida Kalshi.
 predictor.py       Núcleo: fetch, ensemble GFS 31m, reweight bayesiano,
                    piso de observación, State y Snapshot dataclass
 predictor_web.py   Flask :8000 (Tailscale). SUPPORTED_STATIONS viene de stations
+templates/         Los 19 templates Jinja, uno por página (2026-08-17). Antes
+                   vivían inline en predictor_web como constantes HTML — si ves
+                   `render_template_string` en algún sitio, es código viejo
 analysis_poller.py Cycler de fondo: recorre las 20 y persiste en analysis.db
 predictor_tui.py   TUI de Textual
 stations.py        SINGLE SOURCE del roster: ids, series Kalshi, loc CLI,
