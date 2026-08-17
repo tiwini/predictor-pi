@@ -107,6 +107,70 @@ def fila_del_dia(an, cal, st: str, dia: str) -> dict | None:
             "sin": r["ens_med"] + b, "corr": b, "mk": mk}
 
 
+def estado_de(an, cal, st: str, hora: int = None) -> dict:
+    """Estado del corrector en una estación: filas, métricas y veredicto.
+
+    Fuente ÚNICA del criterio de vigilancia — `corrector_watchdog.py` la importa
+    en vez de reimplementarlo, para que el umbral no pueda divergir entre lo que
+    se mira a mano y lo que alerta sola.
+    """
+    global HORA
+    if hora is not None:
+        HORA = hora
+    desde = primer_dia_activo(an, st)
+    if desde is None:
+        return {"st": st, "estado": "sin_datos", "n": 0,
+                "veredicto": "nunca aplicó el corrector todavía"}
+
+    dias = [r[0] for r in cal.execute(
+        "SELECT date FROM day_outcomes WHERE station_id=? AND date>=? "
+        "ORDER BY date", (st, desde)).fetchall()]
+    filas = [f for f in (fila_del_dia(an, cal, st, d) for d in dias) if f]
+    if not filas:
+        return {"st": st, "estado": "sin_settle", "n": 0, "desde": desde,
+                "veredicto": f"activo desde {desde}, aún sin días con settle"}
+
+    e_pub = [f["pub"] - f["settle"] for f in filas]
+    e_sin = [f["sin"] - f["settle"] for f in filas]
+    neg = sum(1 for e in e_pub[-10:] if e < 0)
+    m_pub = statistics.mean([abs(e) for e in e_pub])
+    m_sin = statistics.mean([abs(e) for e in e_sin])
+
+    if len(filas) < 10:
+        estado, v = "n_bajo", (f"N={len(filas)} — no decide, "
+                               f"faltan {10 - len(filas)} días")
+    elif neg >= 7 and m_pub >= m_sin:
+        estado, v = "rojo", "🔴 REVERTIR — sobre-corrige y ya no compensa"
+    elif neg >= 7:
+        estado, v = "amarillo", "🟡 REVISAR — vuelca el signo pero aún queda más cerca"
+    else:
+        estado, v = "verde", "🟢 SEGUIR"
+
+    return {"st": st, "estado": estado, "veredicto": v, "desde": desde,
+            "n": len(filas), "filas": filas, "neg": neg,
+            "n_reciente": len(e_pub[-10:]), "m_pub": m_pub, "m_sin": m_sin}
+
+
+def render(e: dict) -> str:
+    """Bloque de texto de una estación. Compartido por el script y el watchdog."""
+    if e["estado"] in ("sin_datos", "sin_settle"):
+        return f"── {e['st']}: {e['veredicto']}\n"
+    out = [f"── {e['st']}  (corrector activo desde {e['desde']}, N={e['n']})",
+           f"   {'día':12s} {'settle':>7s} {'pub':>7s} {'sin':>7s} "
+           f"{'corr':>6s} {'Δpub':>6s} {'Δsin':>6s} {'Δmk':>6s}"]
+    for f in e["filas"]:
+        dmk = f"{f['mk'] - f['settle']:+6.1f}" if f["mk"] is not None else "     —"
+        out.append(f"   {f['dia']:12s} {f['settle']:7.1f} {f['pub']:7.1f} "
+                   f"{f['sin']:7.1f} {f['corr']:+6.2f} "
+                   f"{f['pub'] - f['settle']:+6.1f} "
+                   f"{f['sin'] - f['settle']:+6.1f} {dmk}")
+    out.append(f"   |error| medio   publicado {e['m_pub']:.2f}   "
+               f"sin corrector {e['m_sin']:.2f}   ({e['m_pub'] - e['m_sin']:+.2f})")
+    out.append(f"   signo: {e['neg']} de los últimos {e['n_reciente']} negativos")
+    out.append(f"   {e['veredicto']}\n")
+    return "\n".join(out)
+
+
 def main() -> int:
     an = sqlite3.connect(f"file:{BASE / 'analysis.db'}?mode=ro", uri=True)
     an.row_factory = sqlite3.Row
@@ -115,46 +179,7 @@ def main() -> int:
     print(f"Corrector de nivel — seguimiento a las {HORA}h local "
           f"(hora de decisión)\n")
     for st in sorted(lc.ENABLED_STATIONS):
-        desde = primer_dia_activo(an, st)
-        if desde is None:
-            print(f"{st}: nunca aplicó el corrector todavía\n")
-            continue
-        dias = [r[0] for r in cal.execute(
-            "SELECT date FROM day_outcomes WHERE station_id=? AND date>=? "
-            "ORDER BY date", (st, desde)).fetchall()]
-        filas = [f for f in (fila_del_dia(an, cal, st, d) for d in dias) if f]
-        if not filas:
-            print(f"{st}: activo desde {desde}, aún sin días con settle\n")
-            continue
-
-        e_pub = [f["pub"] - f["settle"] for f in filas]
-        e_sin = [f["sin"] - f["settle"] for f in filas]
-        neg = sum(1 for e in e_pub[-10:] if e < 0)
-        n_rec = len(e_pub[-10:])
-        m_pub = statistics.mean([abs(e) for e in e_pub])
-        m_sin = statistics.mean([abs(e) for e in e_sin])
-
-        print(f"── {st}  (corrector activo desde {desde}, N={len(filas)})")
-        print(f"   {'día':12s} {'settle':>7s} {'pub':>7s} {'sin':>7s} "
-              f"{'corr':>6s} {'Δpub':>6s} {'Δsin':>6s} {'Δmk':>6s}")
-        for f in filas:
-            dmk = f"{f['mk'] - f['settle']:+6.1f}" if f["mk"] is not None else "     —"
-            print(f"   {f['dia']:12s} {f['settle']:7.1f} {f['pub']:7.1f} "
-                  f"{f['sin']:7.1f} {f['corr']:+6.2f} "
-                  f"{f['pub'] - f['settle']:+6.1f} {f['sin'] - f['settle']:+6.1f} {dmk}")
-        print(f"   |error| medio   publicado {m_pub:.2f}   sin corrector {m_sin:.2f}"
-              f"   ({m_pub - m_sin:+.2f})")
-        print(f"   signo: {neg} de los últimos {n_rec} negativos")
-
-        if len(filas) < 10:
-            v = f"N={len(filas)} — no decide, faltan {10 - len(filas)} días"
-        elif neg >= 7 and m_pub >= m_sin:
-            v = "🔴 REVERTIR — sobre-corrige y ya no compensa"
-        elif neg >= 7:
-            v = "🟡 REVISAR — vuelca el signo pero aún queda más cerca"
-        else:
-            v = "🟢 SEGUIR"
-        print(f"   {v}\n")
+        print(render(estado_de(an, cal, st)))
     return 0
 
 
