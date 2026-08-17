@@ -19,7 +19,17 @@ El estado previo se guarda en `corrector_watchdog/estado.json`. Si el fichero no
 existe (primer run) no se empuja por "cambio": no tiene sentido alertar de un
 cambio contra la nada.
 
+⚠ **El push está inerte a propósito** (decisión del usuario, 2026-08-17): no
+existe `~/.config/ntfy.env` porque las alertas están pausadas en bloque, y
+reactivarlo aquí encendería también el `brier_watchdog`. Este watchdog vive del
+informe en disco, que se lee a mano. NO crear el fichero de config para "que
+funcione" — el silencio es la configuración elegida, y el script lo dice en su
+log en vez de fingir que empujó.
+
 Salida: `~/predictor-pi/corrector_watchdog/corrector_YYYY-MM-DD.md`
+Cron: `0 16 * * *` en el Pi, que corre en AST. A las 4 PM AST el settle del día
+anterior ya está para las tres estaciones — a las 10 AM todavía no lo estaba
+para KLAX/KSFO, que dependen del CLI del Pacífico.
 """
 from __future__ import annotations
 
