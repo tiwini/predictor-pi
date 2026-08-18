@@ -1560,6 +1560,8 @@ def calibration_view():
         total=rep.total_n,
         settled=rep.settled_n,
         brier=rep.brier,
+        base_rate=rep.base_rate,
+        baseline_brier=rep.baseline_brier,
         buckets=rep.buckets,
         kalshi_rep=kalshi_rep,
         svg=_reliability_svg(rep, kalshi_rep, market_name=mkt),

@@ -40,6 +40,14 @@ class ReliabilityReport:
     settled_n: int
     brier: float | None     # mean squared error of prob vs outcome
     station_id: str | None  # None = across all stations
+    # Tasa base observada y Brier de predecirla siempre. Es el baseline honesto
+    # contra el que comparar: la referencia "0.25 = al azar" que se mostraba
+    # antes vale para un binario equilibrado, y esto NO lo es — sólo gana un bin
+    # por día, así que la tasa base ronda 0.22 y el baseline trivial cae a
+    # ~0.175. Con el 0.25 nuestro Brier de 0.34 parecía "algo peor que el
+    # azar"; contra el baseline real es el DOBLE de error que no predecir nada.
+    base_rate: float | None = None
+    baseline_brier: float | None = None
 
 
 def _conn() -> sqlite3.Connection:
@@ -848,8 +856,12 @@ def reliability(station_id: str | None = None,
 
     if rows:
         brier = sum((p - o) ** 2 for p, o in rows) / len(rows)
+        base_rate = sum(o for _, o in rows) / len(rows)
+        # Brier de predecir SIEMPRE la tasa base = p(1-p). Es el listón que hay
+        # que superar para que el modelo aporte algo.
+        baseline_brier = base_rate * (1.0 - base_rate)
     else:
-        brier = None
+        brier = base_rate = baseline_brier = None
 
     return ReliabilityReport(
         buckets=buckets,
@@ -857,4 +869,6 @@ def reliability(station_id: str | None = None,
         settled_n=len(rows),
         brier=brier,
         station_id=station_id,
+        base_rate=base_rate,
+        baseline_brier=baseline_brier,
     )

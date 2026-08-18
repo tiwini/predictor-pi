@@ -111,3 +111,41 @@ def test_un_grid_explicito_tambien_se_filtra():
     r = bets_sweep.sweep_edge_threshold(
         days=30, thresholds_pp=[1.0, 2.0, 5.0, 20.0], current_thr_pp=5.0)
     assert [row.label for row in r["rows"]] == ["≥5pp · actual", "≥20pp"]
+
+
+# ── El baseline del Brier ────────────────────────────────────────────────
+#
+# `/calibration` anunciaba "0.25 = al azar", que es el baseline de un binario
+# EQUILIBRADO. Aquí sólo gana un bin por día: medido el 2026-08-18 la tasa base
+# es 0.2256 y el baseline trivial p(1-p) cae a 0.1747. Con el 0.25 nuestro
+# Brier de 0.3439 parecía "algo peor que el azar"; contra el baseline real es
+# el doble de error que no predecir nada.
+
+def test_reliability_expone_el_baseline_de_la_tasa_base(tmp_path, monkeypatch):
+    import calibration
+    monkeypatch.setattr(calibration, "DB_PATH", tmp_path / "c.db")
+    c = calibration._conn()
+    hoy = date.today().isoformat()
+    # 2 de 8 aciertan → tasa base 0.25, baseline 0.25*0.75 = 0.1875
+    for i in range(8):
+        c.execute(
+            """INSERT INTO prediction_snapshots
+               (station_id, date, ts, bin_lo, bin_hi, predicted_p, outcome)
+               VALUES ('KX', ?, ?, 90, 91, 0.5, ?)""",
+            (hoy, f"{hoy}T{i:02d}:00:00", 1 if i < 2 else 0))
+    c.commit()
+    c.close()
+    rep = calibration.reliability("KX")
+    assert rep.base_rate == pytest.approx(0.25)
+    assert rep.baseline_brier == pytest.approx(0.1875)
+    assert rep.brier == pytest.approx(0.25), "predecir 0.5 siempre"
+    assert rep.brier > rep.baseline_brier, "peor que el baseline trivial"
+
+
+def test_sin_filas_resueltas_el_baseline_es_none(tmp_path, monkeypatch):
+    import calibration
+    monkeypatch.setattr(calibration, "DB_PATH", tmp_path / "c2.db")
+    calibration._conn().close()
+    rep = calibration.reliability("KX")
+    assert rep.brier is None and rep.baseline_brier is None
+    assert rep.base_rate is None

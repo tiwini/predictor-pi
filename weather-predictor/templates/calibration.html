@@ -16,7 +16,22 @@
 <div class="card">
   <div>Snapshots totales: <b>{{total}}</b> · resueltos: <b>{{settled}}</b></div>
   {% if brier is not none %}
-    <div class="brier">Brier nosotros: {{'%.4f'|format(brier)}} <span class="dim">(0=perfecto, 0.25=al azar)</span></div>
+    <div class="brier">Brier nosotros: {{'%.4f'|format(brier)}}
+      <span class="dim">(0 = perfecto · menor es mejor)</span></div>
+    {% if baseline_brier is not none %}
+    <div class="brier" style="color:{% if brier <= baseline_brier %}#a6e3a1{% else %}#f38ba8{% endif %}">
+      Baseline trivial: {{'%.4f'|format(baseline_brier)}}
+      <span class="dim">= predecir siempre la tasa base ({{'%.1f'|format(base_rate*100)}}%),
+      que es el listón a superar para aportar algo.
+      {% if brier > baseline_brier %}Estamos <b>{{'%.1f'|format(brier/baseline_brier)}}×</b> por
+      encima: el modelo añade error frente a no predecir nada.
+      {% else %}Estamos por debajo.{% endif %}</span></div>
+    <div class="dim" style="font-size:11px;margin-top:.2rem">
+      La referencia "0.25 = al azar" que salía antes vale para un binario
+      equilibrado; aquí sólo gana un bin por día, así que el listón real es más
+      bajo y el modelo queda peor de lo que aquel 0.25 sugería.
+    </div>
+    {% endif %}
   {% else %}
     <div class="dim">Sin datos resueltos aún — vuelve mañana cuando el archive API tenga el max de hoy.</div>
   {% endif %}
