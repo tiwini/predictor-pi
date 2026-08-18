@@ -150,3 +150,28 @@ def test_sin_filas_resueltas_el_baseline_es_none(tmp_path, monkeypatch):
     rep = calibration.reliability("KX")
     assert rep.brier is None and rep.baseline_brier is None
     assert rep.base_rate is None
+
+
+# ── El roster fantasma ───────────────────────────────────────────────────
+#
+# `DEFAULT_CROSS = ["KPHX","KLAX","KLAS","KNYC","KBOS"]` sobrevivió al paso de 5
+# a 20 estaciones y se quedó gobernando tres cosas que parecían completas y
+# cubrían un cuarto del sistema: los marcadores de pico de la home, los datos de
+# temperatura mínima y las alertas NWS — que el 2026-08-18 ocultaban cuatro
+# avisos de calor extremo activos (KDFW, KOKC, KMSY, KMIA).
+#
+# Ninguna de las tres fallaba ni avisaba. Este test existe para que la constante
+# no pueda reaparecer.
+
+def test_no_queda_roster_de_5_hardcodeado():
+    fuente = (BASE / "predictor_web.py").read_text()
+    vivas = [l for l in fuente.splitlines()
+             if "DEFAULT_CROSS" in l and not l.lstrip().startswith("#")]
+    assert not vivas, f"DEFAULT_CROSS vuelve a estar viva: {vivas}"
+
+
+def test_el_roster_sale_de_stations():
+    import stations
+    assert len(stations.STATION_IDS) == 20
+    assert "KLGA" not in stations.STATION_IDS, "el id de NY es KNYC"
+    assert "KIAH" not in stations.STATION_IDS, "Houston liquida con KHOU"

@@ -1815,7 +1815,18 @@ def movement_view():
     return redirect(target, code=301)
 
 
-DEFAULT_CROSS = ["KPHX", "KLAX", "KLAS", "KNYC", "KBOS"]
+# DEFAULT_CROSS = ["KPHX","KLAX","KLAS","KNYC","KBOS"] vivía aquí: el roster de
+# cuando eran 5 estaciones. Sobrevivió al paso a 20 y se quedó gobernando tres
+# cosas que parecían completas y cubrían un cuarto del sistema, sin fallar ni
+# avisar en ninguna de las tres:
+#
+#   _refresh_peak_status_cache      marcadores de pico en las tarjetas de la home
+#   _record_min_snapshots_curated   38 días de datos de mínima, sólo de 5
+#   _render_alerts_page             alertas NWS — ocultaba 4 avisos de calor
+#                                   extremo activos el 2026-08-18
+#
+# Las tres usan `SUPPORTED_STATIONS` desde el 2026-08-18. La constante se borra
+# para que no pueda reaparecer: el roster es `stations.py` y nada más.
 
 PEAK_POLL_SEC = 180
 LOST_POLL_SEC = 2700  # 45 min para estaciones settled / sin info útil
@@ -2008,19 +2019,29 @@ def _peak_badge_from_timing(t: dict) -> dict:
 
 
 def _refresh_peak_status_cache() -> dict:
-    """Recompute peak_status para las 5 curadas y guardar en cache.
-    Retorna el dict recién computado."""
+    """Recompute peak_status de las 20 y guardar en cache.
+
+    Iteraba `DEFAULT_CROSS`, o sea 5. Por eso las tarjetas de la home mostraban
+    el marcador de pico (`↑ ~3h`, `✓ pico -2h`) sólo en KPHX/KLAX/KLAS/KNYC/KBOS
+    y las otras quince salían en blanco: no era irregularidad visual, es que
+    nunca se computaban.
+
+    En paralelo porque el caso frío son 20 fetches; con `fetch_ensemble` ya
+    caliente (TTL 60 min, lo warmea `_warm_cross_cache`) es casi gratis.
+    """
     import peak_timing as _pt
     from predictor import fetch_station as _fs
-    data = {}
-    for sid in DEFAULT_CROSS:
+
+    def _una(sid):
         try:
-            stn = _fs(sid)
-            t = _pt.compute(stn)
-            data[sid] = _peak_badge_from_timing(t)
+            return sid, _peak_badge_from_timing(_pt.compute(_fs(sid)))
         except Exception as e:
-            data[sid] = {"badge_text": "err", "badge_kind": "err",
+            return sid, {"badge_text": "err", "badge_kind": "err",
                          "error": str(e)[:80]}
+
+    sids = list(SUPPORTED_STATIONS)
+    with ThreadPoolExecutor(max_workers=min(20, len(sids))) as ex:
+        data = dict(ex.map(_una, sids))
     _peak_status_cache["computed_at"] = datetime.now(timezone.utc)
     _peak_status_cache["data"] = data
     return data
@@ -2034,14 +2055,24 @@ _min_snapshot_last_ts: dict = {}   # sid → ts float
 
 
 def _record_min_snapshots_curated() -> None:
-    """F8 fase 0: captura p10/p50/p90 del min diario del ensemble para las 5
-    curadas. Ensemble ya cacheado 60 min, así que costo real = 0 fetches.
-    Rate-limit por estación a 20 min para no inflar la tabla."""
+    """F8 fase 0: captura p10/p50/p90 del min diario del ensemble, las 20.
+
+    Iteraba `DEFAULT_CROSS`: por eso `prediction_min_snapshots` tenía 38 días de
+    historia pero sólo de KPHX/KLAX/KLAS/KNYC/KBOS. El ensemble ya está cacheado
+    (TTL 60 min), así que ampliar a 20 **no cuesta fetches**; sólo filas.
+
+    ⚠ Este colector vive en el web, que es lo que ya mató al EWMA del bias
+    (`bias_ewma_muerto_2026_08_14`): lo que escribe el web depende de que el web
+    corra y de su cadencia. Migrarlo a `analysis_poller` sigue pendiente para la
+    v2 — la regla es que la recolección va en el poller y el web sólo sirve.
+
+    Rate-limit por estación a 20 min para no inflar la tabla.
+    """
     from predictor import fetch_station as _fs, compute_min_forecast as _cmf
     import calibration as _cal
     import time as _time
     now = _time.time()
-    for sid in DEFAULT_CROSS:
+    for sid in SUPPORTED_STATIONS:
         last = _min_snapshot_last_ts.get(sid, 0.0)
         if now - last < _MIN_SNAPSHOT_INTERVAL_SEC:
             continue
