@@ -2521,6 +2521,12 @@ def _analysis_poller_health() -> dict:
             edad = (datetime.now(timezone.utc) - dt).total_seconds()
             # Ventana de un ciclo y medio: cuántas estaciones distintas
             # escribieron de verdad en la última vuelta.
+            #
+            # El 1.5 no es decorativo: la ventana tiene que ser MAYOR que lo
+            # que tarda una vuelta completa, o la cobertura da falsas alarmas.
+            # El poller tarda ~4 min en recorrer las 20 (20 × ~12s) y la
+            # ventana son 15 min, así que cabe con holgura. Si alguien baja
+            # INTERVAL_S por debajo de ~5 min, esta cuenta empieza a mentir.
             desde = (dt - timedelta(seconds=_AP_INTERVAL_S * 1.5)).isoformat()
             n = con.execute(
                 "SELECT COUNT(DISTINCT station) FROM station_snapshots "
