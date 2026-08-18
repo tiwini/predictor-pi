@@ -74,8 +74,13 @@
     <span class="dim">(min n={{sweep_min_n}} para considerar)</span></h2>
   <p class="dim">
     Replica decisión sobre bets settled del periodo aplicando un filtro alternativo.
-    Solo restrictivo (subir thresholds). Sample sizes pequeños suelen ser ruido
-    estadístico — no auto-aplicar sin reflexión.
+    Solo restrictivo (subir thresholds): la tabla sólo tiene bets que ya pasaron
+    el filtro vigente, así que un umbral más laxo devolvería el mismo conjunto y
+    no mediría nada. Sample sizes pequeños suelen ser ruido estadístico — no
+    auto-aplicar sin reflexión.
+    <br>⚠ Aquí <b>sí</b> entran las bets bloqueadas por los guardas, no sólo las
+    ejecutadas. La pregunta que responde es "qué habría pasado sin guardas y con
+    umbral X", que no es lo mismo que cambiar sólo el umbral.
   </p>
 
   {% for swp in sweeps %}

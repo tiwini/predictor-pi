@@ -88,7 +88,17 @@ def sweep_edge_threshold(
     Cada row es como si hubiéramos usado ese thr en lugar del actual.
     """
     if thresholds_pp is None:
-        thresholds_pp = [3.0, 5.0, 7.0, 10.0, 15.0]
+        # Nada por DEBAJO de `current_thr_pp`: la tabla sólo contiene bets que
+        # ya pasaron el filtro vigente, así que un umbral más laxo devuelve
+        # exactamente el mismo conjunto. El grid llevaba un 3.0 que salía
+        # idéntico al 5.0 actual (209 bets, −35.2%) y se leía como "bajar a 3pp
+        # no empeora", cuando el dato no puede responder esa pregunta: las bets
+        # de 3-5pp nunca se registraron. Es el "solo restrictivo" del docstring
+        # de este módulo, que el propio grid se saltaba.
+        thresholds_pp = [t for t in (3.0, 5.0, 7.0, 10.0, 15.0)
+                         if t >= current_thr_pp]
+    else:
+        thresholds_pp = [t for t in thresholds_pp if t >= current_thr_pp]
     bets = _settled_bets(days=days, station_id=station_id)
     rows: list[SweepRow] = []
     for thr in thresholds_pp:

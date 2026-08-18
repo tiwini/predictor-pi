@@ -88,3 +88,26 @@ def test_el_titular_no_puede_volver_a_incluir_lo_invalidado(db):
     _insert(db, _fix_date() + timedelta(days=1), won=0, payoff=0.0)
     assert bets.stats("KX").roi < 0, "el titular refleja el periodo válido"
     assert bets.stats("KX", since=None).roi > 0, "el histórico sigue accesible"
+
+
+# ── El sweep no puede relajar el umbral ──────────────────────────────────
+#
+# `bets_sweep` sólo puede endurecer: la tabla contiene únicamente bets que ya
+# pasaron el filtro vigente, así que un umbral más laxo devuelve el mismo
+# conjunto. El grid llevaba un 3.0 que salía idéntico al 5.0 actual (209 bets,
+# −35.2% las dos filas) y se leía como "bajar a 3pp no empeora", cuando el dato
+# no puede responder eso: las bets de 3-5pp nunca se registraron.
+
+def test_el_sweep_no_ofrece_umbrales_por_debajo_del_actual():
+    import bets_sweep
+    r = bets_sweep.sweep_edge_threshold(days=30, current_thr_pp=5.0)
+    etiquetas = [row.label for row in r["rows"]]
+    assert not any("≥3pp" in e for e in etiquetas), etiquetas
+    assert any("actual" in e for e in etiquetas), "el vigente sigue estando"
+
+
+def test_un_grid_explicito_tambien_se_filtra():
+    import bets_sweep
+    r = bets_sweep.sweep_edge_threshold(
+        days=30, thresholds_pp=[1.0, 2.0, 5.0, 20.0], current_thr_pp=5.0)
+    assert [row.label for row in r["rows"]] == ["≥5pp · actual", "≥20pp"]
