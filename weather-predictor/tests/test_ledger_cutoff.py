@@ -164,10 +164,26 @@ def test_sin_filas_resueltas_el_baseline_es_none(tmp_path, monkeypatch):
 # no pueda reaparecer.
 
 def test_no_queda_roster_de_5_hardcodeado():
-    fuente = (BASE / "predictor_web.py").read_text()
-    vivas = [l for l in fuente.splitlines()
-             if "DEFAULT_CROSS" in l and not l.lstrip().startswith("#")]
-    assert not vivas, f"DEFAULT_CROSS vuelve a estar viva: {vivas}"
+    """Con AST, no con grep: las menciones en docstrings son documentación del
+    arreglo y deben poder quedarse; lo que no puede volver es una referencia
+    real en el código."""
+    import ast
+    arbol = ast.parse((BASE / "predictor_web.py").read_text())
+    refs = [n.lineno for n in ast.walk(arbol)
+            if isinstance(n, ast.Name) and n.id == "DEFAULT_CROSS"]
+    assert not refs, f"DEFAULT_CROSS vuelve a usarse en las líneas {refs}"
+
+
+def test_ninguna_lista_de_5_estaciones_suelta():
+    """El roster fantasma también podría reaparecer como literal sin nombre."""
+    import ast
+    arbol = ast.parse((BASE / "predictor_web.py").read_text())
+    viejo = {"KPHX", "KLAX", "KLAS", "KNYC", "KBOS"}
+    for n in ast.walk(arbol):
+        if isinstance(n, (ast.List, ast.Set, ast.Tuple)):
+            vals = {e.value for e in n.elts
+                    if isinstance(e, ast.Constant) and isinstance(e.value, str)}
+            assert vals != viejo, f"roster de 5 hardcodeado en la línea {n.lineno}"
 
 
 def test_el_roster_sale_de_stations():
