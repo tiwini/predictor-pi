@@ -18,11 +18,13 @@
   .empty{color:#6c7086;font-style:italic;padding:.5rem 0}
 </style></head><body>
 {{ system_tabs_html|safe }}
-<h1>Alertas NWS activas</h1>
-<p class="dim">Poll al endpoint público <code>api.weather.gov/alerts/active</code>
-(rate-limit 15 min/estación). Filtra eventos irrelevantes para max diario
+<h1>Alertas NWS activas
+  <span class="dim" style="font-size:14px;font-weight:400">·
+    {{n_con_alertas}} de {{n_total}} estaciones con aviso</span></h1>
+<p class="dim">Poll al endpoint público <code>api.weather.gov/alerts/active</code>,
+una llamada por estación en paralelo. Filtra eventos irrelevantes para max diario
 (Coastal Flood, Rip Current, Small Craft, Marine...). Severo o urgente
-inmediato = push prioritario.</p>
+inmediato = push prioritario. Las estaciones con aviso van primero.</p>
 {% for sid, info in per_station.items() %}
 <div class="card">
   <h3 style="margin:0">{{sid}} <span class="dim">({{info.name}})</span></h3>

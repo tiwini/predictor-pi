@@ -2719,18 +2719,42 @@ def _render_notify_page():
 
 
 def _render_alerts_page():
+    """Alertas NWS de las 20 estaciones.
+
+    Iteraba `DEFAULT_CROSS`, o sea 5 — el roster viejo. Con KDFW, KOKC y KSAT
+    en calor extremo el 2026-08-18, la página decía lo que pasaba en KPHX y
+    KLAS y callaba el resto, sin fallar ni avisar de que faltaban 15.
+
+    `fetch_active` no cachea: cada carga hace una llamada por estación, así que
+    en serie 20 estaciones podían encadenar hasta 20 timeouts de 10s. Va en
+    paralelo, igual que `_compute_stations_results`.
+    """
     if _weather_alerts is None:
         return "weather_alerts module unavailable", 500
-    per_station = {}
-    for sid in DEFAULT_CROSS:
+
+    def _una(sid):
         try:
             st = fetch_station(sid)
-            alerts = _weather_alerts.fetch_active(st)
-            per_station[sid] = {"name": st.name, "alerts": alerts, "error": None}
+            return sid, {"name": st.name,
+                         "alerts": _weather_alerts.fetch_active(st),
+                         "error": None}
         except Exception as e:
-            per_station[sid] = {"name": "—", "alerts": [], "error": str(e)}
+            return sid, {"name": "—", "alerts": [], "error": str(e)}
+
+    sids = list(SUPPORTED_STATIONS)
+    with ThreadPoolExecutor(max_workers=min(20, len(sids))) as ex:
+        resultados = dict(ex.map(_una, sids))
+
+    # Con 20 estaciones la mayoría dice "sin alerts" y entierra las 3 que
+    # importan; las que tienen algo suben. Dentro de cada grupo se conserva el
+    # orden del roster, que es geográfico E→O.
+    per_station = {s: resultados[s] for s in sids if resultados[s]["alerts"]}
+    per_station.update({s: resultados[s] for s in sids
+                        if not resultados[s]["alerts"]})
     return render_template(
         "alerts.html", per_station=per_station,
+        n_con_alertas=sum(1 for v in resultados.values() if v["alerts"]),
+        n_total=len(sids),
         system_tabs_html=_render_system_tabs_html("alerts"))
 
 
