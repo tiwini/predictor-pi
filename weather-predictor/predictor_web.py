@@ -1198,10 +1198,22 @@ def ladder_view():
         })
     max_obs = (f"{max_obs_val:.1f}°F" if max_obs_val is not None
                and max_obs_val > -900 else "—")
+    # El METAR horario sale a las :53, así que `max_obs` puede ir hasta 60 min
+    # por detrás del feed de 5 min. Si el termómetro ya marca más, se avisa:
+    # "Max observado 96.98" se lee como el pico del día cuando en realidad el
+    # día va por 98.6 (KMIA, 2026-08-18). El piso ya lo compensa por dentro;
+    # esto es sólo para que la etiqueta no mienta.
+    current_over = None
+    if (day_offset == 0 and state is not None
+            and state.last_snapshot is not None
+            and max_obs_val is not None and max_obs_val > -900):
+        _cur = getattr(state.last_snapshot, "current_temp_f", None)
+        if _cur is not None and _cur > max_obs_val + 0.05:
+            current_over = _cur
     day_labels = {0: "hoy", 1: "mañana", 2: "pasado"}
     return render_template(
         "ladder.html", station=station.id, target_date=target.isoformat(),
-        rows=rows, max_obs=max_obs,
+        rows=rows, max_obs=max_obs, current_over=current_over,
         median_pred=f"{median:.1f}°F",
         day_offset=day_offset, day_label=day_labels[day_offset],
         window=window, show_all=show_all,
@@ -1382,6 +1394,18 @@ def comparison_view():
 
     max_obs = (f"{max_obs_val:.1f}°F" if max_obs_val is not None
                and max_obs_val > -900 else "—")
+    # El METAR horario sale a las :53, así que `max_obs` puede ir hasta 60 min
+    # por detrás del feed de 5 min. Si el termómetro ya marca más, se avisa:
+    # "Max observado 96.98" se lee como el pico del día cuando en realidad el
+    # día va por 98.6 (KMIA, 2026-08-18). El piso ya lo compensa por dentro;
+    # esto es sólo para que la etiqueta no mienta.
+    current_over = None
+    if (day_offset == 0 and state is not None
+            and state.last_snapshot is not None
+            and max_obs_val is not None and max_obs_val > -900):
+        _cur = getattr(state.last_snapshot, "current_temp_f", None)
+        if _cur is not None and _cur > max_obs_val + 0.05:
+            current_over = _cur
     if bins:
         latest_ts = max(b["fetched_at"] for b in bins)
         try:
@@ -1453,7 +1477,7 @@ def comparison_view():
         station=station.id,
         target_date=target.isoformat(),
         bins=bins,
-        max_obs=max_obs,
+        max_obs=max_obs, current_over=current_over,
         fetched_age=fetched_age,
         day_offset=day_offset,
         day_label=day_labels[day_offset],

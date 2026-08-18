@@ -627,6 +627,16 @@
                 title="Timestamp del METAR aceptado que produjo el max (hora local AST)">
             · {{ max_obs_ts_local }}</span>
           {% endif %}
+          {# El METAR horario se emite a las :53, así que este max puede ir
+             hasta 60 min por detrás. Cuando el feed de 5 min ya marca más, hay
+             que decirlo: si no, "Max obs 96.98" se lee como el pico del día
+             cuando el termómetro va por 98.6 (KMIA, 2026-08-18). #}
+          {% if snap.current_temp_f is not none
+                and snap.current_temp_f > snap.today_max_obs + 0.05 %}
+          <span style="color:#f9e2af;font-size:.8em;margin-left:.4rem"
+                title="El METAR horario sale a las :53; el feed de 5 min va por delante">
+            ⚠ actual {{ '%.1f' % snap.current_temp_f }}°F por encima</span>
+          {% endif %}
           <span class="muted" style="font-size:.8em;margin-left:.4rem"
                 title="Kalshi liquida contra CLI redondeado al entero (half-up); usa el max del feed 5-min o del grupo ASOS 6h si supera al feed">
             CLI: {{ ((settle_hint_f + 0.5)|round(0, 'floor'))|int }}°F</span>

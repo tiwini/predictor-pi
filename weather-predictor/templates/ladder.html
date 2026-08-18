@@ -37,7 +37,7 @@
     · <a href="?day={{day_offset}}&all=1" style="color:{% if show_all %}#f9e2af{% else %}#89b4fa{% endif %}">todo</a>
   </div>
   <div style="margin-top:.4rem">
-    {% if day_offset == 0 %}Max observado: <b style="color:#f9e2af">{{max_obs}}</b> · {% endif %}
+    {% if day_offset == 0 %}Max observado: <b style="color:#f9e2af">{{max_obs}}</b> · {% if current_over %}<span style="color:#f9e2af" title="El METAR horario sale a las :53; el feed de 5 min va por delante">⚠ actual {{ '%.1f'|format(current_over) }}°F por encima</span> · {% endif %}{% endif %}
     mediana ensemble: <b>{{median_pred}}</b>
     {% if cal_active %}
       · <span style="background:#2a4a32;color:#a6e3a1;padding:.05rem .4rem;border-radius:3px;font-size:11px;font-weight:600">CALIBRADO</span>

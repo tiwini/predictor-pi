@@ -41,7 +41,7 @@
     <a href="?day={{day_offset}}&sort=edge" style="color:{% if sort_mode=='edge' %}#f9e2af{% else %}#89b4fa{% endif %}">por edge</a>
   </div>
   <div class="dim" style="margin-top:.4rem">
-    {% if day_offset == 0 %}Max observado hasta ahora: <b style="color:#f9e2af">{{max_obs}}</b> · {% endif %}
+    {% if day_offset == 0 %}Max observado hasta ahora: <b style="color:#f9e2af">{{max_obs}}</b> · {% if current_over %}<span style="color:#f9e2af" title="El METAR horario sale a las :53; el feed de 5 min va por delante">⚠ actual {{ '%.1f'|format(current_over) }}°F por encima</span> · {% endif %}{% endif %}
     último fetch {{market_name}}: <b>{{fetched_age}}</b>
     ·
     {% if cal_active %}
