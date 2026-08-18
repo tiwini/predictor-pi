@@ -94,3 +94,47 @@ def test_piso_desde_snapshot_toma_el_mayor_de_los_tres():
     s3 = SimpleNamespace(today_max_obs=-999.0, today_max_cli=None,
                          current_temp_f=None)
     assert obs_floor_from_snapshot(s3) is None
+
+
+# ── Regresión 2026-08-17: el web pasa dicts, no objetos ──────────────────
+#
+# `/comparison` y `/ladder` reimplementan el pipeline (dist → isotónica →
+# blend) y no llamaban a este paso final. Al conectarlo apareció el segundo
+# fallo, más silencioso: allí los bins son dicts y `getattr(b, "bin_hi")`
+# devolvía None, así que TODOS caían en la rama de vivos y la función no
+# anulaba nada mientras aparentaba funcionar.
+#
+# Caso real que lo destapó: KPHX el 2026-08-17 con max_obs 111.9°F mostraba
+# ≤107 / 108-109 / 110-111 al 7.7-9.7% en /comparison, cuando el poller los
+# tenía en 0.0 para ese mismo instante.
+
+def D(lo, hi):
+    """Bin en la forma que usa el web."""
+    return {"bin_lo": lo, "bin_hi": hi}
+
+
+def test_acepta_bins_como_dict():
+    bins = [D(float("-inf"), 107), D(108, 109), D(110, 111),
+            D(112, 113), D(114, 115), D(116, float("inf"))]
+    ps = [0.077, 0.082, 0.097, 0.494, 0.080, 0.077]
+    out, n, liberada = zero_impossible_bins(bins, ps, floor=111.9)
+    assert n == 3, "los tres bins bajo 111.9 son imposibles"
+    assert out[0] == 0.0 and out[1] == 0.0 and out[2] == 0.0
+    assert out[3] > 0.494, "la masa liberada se redistribuye a los vivos"
+    assert abs(sum(out) - sum(ps)) < 1e-9, "la suma total se conserva"
+
+
+def test_dict_y_objeto_dan_el_mismo_resultado():
+    """Sin esto, la misma cifra saldría distinta en el web y en el poller."""
+    lims = [(float("-inf"), 107), (108, 109), (110, 111), (112, 113)]
+    ps = [0.077, 0.082, 0.097, 0.494]
+    como_obj, n1, m1 = zero_impossible_bins([B(*l) for l in lims], list(ps), 111.9)
+    como_dict, n2, m2 = zero_impossible_bins([D(*l) for l in lims], list(ps), 111.9)
+    assert como_obj == como_dict and n1 == n2 and m1 == m2
+
+
+def test_dict_sin_piso_es_identidad():
+    bins = [D(float("-inf"), 107), D(108, 109)]
+    ps = [0.3, 0.7]
+    out, n, _ = zero_impossible_bins(bins, ps, floor=None)
+    assert out == ps and n == 0

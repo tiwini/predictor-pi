@@ -1998,9 +1998,22 @@ def zero_impossible_bins(bins: list, ps: list,
     """
     if floor is None or not bins:
         return ps, 0, 0.0
+
+    def _hi(b):
+        """`bin_hi` venga como atributo (MarketBin) o como clave (dict).
+
+        El web construye los bins como dicts, así que sin esto la función
+        parecía funcionar y no anulaba nada: `getattr` devolvía None y todos
+        los bins caían en la rama de 'vivos'. Fue justo lo que pasó en
+        /comparison y /ladder hasta el 2026-08-17.
+        """
+        if isinstance(b, dict):
+            return b.get("bin_hi")
+        return getattr(b, "bin_hi", None)
+
     vivos, muertos = [], []
     for i, b in enumerate(bins):
-        hi = getattr(b, "bin_hi", None)
+        hi = _hi(b)
         if (ps[i] is None or hi is None or hi != hi          # None / NaN
                 or hi > 1e8 or floor <= hi + 0.5):
             vivos.append(i)

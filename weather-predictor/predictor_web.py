@@ -19,6 +19,7 @@ from predictor import (
     fetch_station, build_snapshot, refresh_auto, eval_assertion,
     find_informative_bin, most_likely_max, movement_cents, parse_expr, log_snapshot,
     record_kalshi, invalidate_obs_cache, fetch_precip_context_12h,
+    obs_floor_from_snapshot, zero_impossible_bins,
 )
 try:
     import calibration as _calibration
@@ -1105,10 +1106,23 @@ def ladder_view():
                   and cal.n_days >= _iso.MIN_DAYS)
     cal_for_apply = cal if cal_active else None
 
+    # Mismo piso que /comparison, en su forma de umbral: si el día ya pasó de
+    # `thr`, P(max > thr) es CERTEZA y no una estimación que la isotónica deba
+    # tocar (su techo efectivo es 0.50, así que degradaba un 1.00 seguro a ~0.5
+    # y con ello inflaba our_no sobre algo ya perdido). Mismo criterio de
+    # redondeo que `zero_impossible_bins`: seguro sólo si floor > thr + 0.5.
+    ladder_floor = None
+    if day_offset == 0 and state is not None and state.last_snapshot is not None:
+        ladder_floor = obs_floor_from_snapshot(state.last_snapshot)
+
     rows = []
     for thr in range(thr_lo, thr_hi + 1):
         our_yes_raw = sum(1 for v in dist if v > thr) / n
-        our_yes = _iso.apply(cal_for_apply, our_yes_raw)
+        if ladder_floor is not None and ladder_floor > thr + 0.5:
+            our_yes_raw = 1.0
+            our_yes = 1.0
+        else:
+            our_yes = _iso.apply(cal_for_apply, our_yes_raw)
         our_no = 1.0 - our_yes
         k_yes = None
         if kalshi_bins_for_impl:
@@ -1259,6 +1273,22 @@ def comparison_view():
             b["our_p_raw"] = None
             b["our_p_iso"] = None
             b["anchor_weight"] = 0.0
+
+    # Piso de observación — el mismo paso final que `_compute_final_our_p_per_bin`
+    # aplica en el poller. Esta ruta reimplementa el pipeline (dist → isotónica →
+    # blend externo) y se había quedado sin él: el 2026-08-17, con KPHX ya en
+    # 111.9°F, los bins ≤107 / 108-109 / 110-111 se mostraban al 7.7-9.7% cuando
+    # el poller los tenía en 0.0 para ese mismo instante. La isotónica sube el
+    # raw de 0.030 a ~0.09, así que sin este paso la masa se queda en bins
+    # muertos y produce "edge" a favor de algo que ya no puede pasar.
+    # Sólo D+0: un día futuro no tiene observación que fije piso.
+    dead_bins, dead_mass = 0, 0.0
+    if day_offset == 0 and state is not None and state.last_snapshot is not None:
+        _floor = obs_floor_from_snapshot(state.last_snapshot)
+        _ps = [b.get("our_p") for b in bins]
+        _ps, dead_bins, dead_mass = zero_impossible_bins(bins, _ps, _floor)
+        for b, p in zip(bins, _ps):
+            b["our_p"] = p
 
     max_obs = (f"{max_obs_val:.1f}°F" if max_obs_val is not None
                and max_obs_val > -900 else "—")
