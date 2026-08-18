@@ -83,11 +83,30 @@ def test_ventana_cerrada_acota_aunque_no_este_confirmado():
 
 
 def test_plana_con_poca_ventana_acota():
-    """KNYC 08-12: 82.9 plano 1h07m con 1 h de ventana (13-16h)."""
-    c, why = pg.ceiling_f("KNYC", _snap("KNYC", 15, 3, max_obs=82.9, cur=82.9,
-                                        estable=67))
+    """KNYC 08-12: 82.9 plano 1h07m con 1 h de ventana por delante.
+
+    La hora sale de `PEAK_HOURS` en vez de fijarse: la ventana de KNYC pasó de
+    (13,16) a (13,18) el 2026-08-18 al recalibrarlas, y con las 15:03 fijas este
+    test dejó de medir lo que dice — a esa hora ya quedaban 3 h de ventana, así
+    que la vía 2 no debía dispararse y no lo hacía. Se toma una hora que deje
+    ~1 h por delante, sea cual sea la ventana vigente.
+    """
+    from stations import PEAK_HOURS
+    hora = PEAK_HOURS["KNYC"][1] - 1
+    c, why = pg.ceiling_f("KNYC", _snap("KNYC", hora, 3, max_obs=82.9,
+                                        cur=82.9, estable=67))
     assert c == pytest.approx(82.9 + pg.FLAT_HEADROOM_F)
     assert "plana" in why
+
+
+def test_la_ventana_ancha_no_dispara_la_via_plana_demasiado_pronto():
+    """Regresión de la recalibración: con (13,18), a las 15h quedan 3 h y una
+    meseta NO significa que el día esté hecho. Antes, con (13,16), la misma
+    hora acotaba a max_obs+2.0 y daba el día por cerrado dos horas antes."""
+    c, why = pg.ceiling_f("KNYC", _snap("KNYC", 15, 3, max_obs=82.9, cur=82.9,
+                                        estable=67))
+    assert c > 82.9 + pg.FLAT_HEADROOM_F, "no debe acotar tan pronto"
+    assert "plana" not in (why or "")
 
 
 def test_klas_ventana_abierta_no_se_acota_por_las_vias_duras():
