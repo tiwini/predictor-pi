@@ -1043,6 +1043,31 @@ def _load_day_dist(station, day_offset: int):
 KELLY_FRACTION = 0.25
 
 
+def _default_move_bin(move_bins: list, move_summary: list) -> dict | None:
+    """Bin que abre la gráfica de /intraday: el que encabeza la tabla.
+
+    Antes era `max(move_bins, key=len(points))`, o sea el que tuviera más filas.
+    A media mañana todos los bins llevan el mismo número de muestras, así que
+    `max` devolvía el primero de la lista y la gráfica principal abría con
+    "92° or below" — mercado 0.5%, nuestro 3%, movimiento 0.0pp: dos líneas
+    planas en el suelo. Mientras tanto el bin que se había movido 8pp estaba a
+    dos clics (KMIA, 2026-08-18).
+
+    `move_summary` ya viene ordenado por |Δ Kalshi|, que es justo el criterio de
+    la tabla; se reutiliza para que la gráfica y la tabla no se contradigan. Se
+    exigen ≥2 puntos porque con uno solo no hay línea que dibujar, y si ninguno
+    llega se cae al criterio viejo en vez de no mostrar nada.
+    """
+    if not move_bins:
+        return None
+    dibujables = {b["ticker"]: b for b in move_bins if len(b["points"]) >= 2}
+    for r in move_summary:
+        b = dibujables.get(r["ticker"])
+        if b is not None:
+            return b
+    return max(move_bins, key=lambda b: len(b["points"]))
+
+
 def _ev_kelly(p_our: float, k_yes: float) -> dict:
     """EV y Kelly por $1 apostado en yes o no al precio Kalshi.
 
@@ -1763,7 +1788,7 @@ def intraday_view():
         if selected_ticker:
             selected = next((b for b in move_bins if b["ticker"] == selected_ticker), None)
         if selected is None:
-            selected = max(move_bins, key=lambda b: len(b["points"]))
+            selected = _default_move_bin(move_bins, move_summary)
 
     move_svg = ""
     if selected:
