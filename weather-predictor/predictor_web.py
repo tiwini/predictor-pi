@@ -598,7 +598,11 @@ def index():
         precip = None
 
     dash = _build_dashboard(station.id)
-    hero = _build_hero(snap.ensemble_daily_maxes, state.prev_dist_med)
+    hero = _build_hero(
+        snap.ensemble_daily_maxes, state.prev_dist_med,
+        floor_n=getattr(snap, "obs_floor_n", 0) or 0,
+        floor_f=obs_floor_from_snapshot(snap),
+        current_f=getattr(snap, "current_temp_f", None))
     top_max_bars = build_top_max_bars(snap.ensemble_daily_maxes)
     external = _build_external_view(station, dist_med)
     station_options = _supported_stations()
@@ -2289,7 +2293,9 @@ def _build_signals(difficulty, market, external, dash, snap) -> list[dict]:
     return out
 
 
-def _build_hero(dist: list[float], prev_med: float | None) -> dict:
+def _build_hero(dist: list[float], prev_med: float | None,
+                floor_n: int = 0, floor_f: float | None = None,
+                current_f: float | None = None) -> dict:
     """Hero number: ensemble median with 2 decimals, trend vs prev snapshot,
     and confidence badge from most-likely bin probability + p10-p90 band.
 
@@ -2297,6 +2303,23 @@ def _build_hero(dist: list[float], prev_med: float | None) -> dict:
       high  = P(bin ±0.5°F) ≥ 35% AND (p90-p10) ≤ 2.0°F
       low   = P(bin ±0.5°F) < 20% OR  (p90-p10) > 5.0°F
       mid   = otherwise
+
+    ⚠ EXCEPCIÓN: distribución clavada en el piso (2026-08-18).
+    `apply_obs_floor` clampea la distribución ENTERA a propósito, para que
+    percentiles y bins queden coherentes. Cuando TODO el ensemble está por
+    debajo del piso, eso la aplasta a un punto: KMIA el 2026-08-18 a las 14:19
+    mostraba `97.70` con banda `97.7–97.7 (0.0°F)` y la etiqueta **"alta
+    confianza"** — con el termómetro ya en 98.6°F y la ventana de pico abierta
+    hasta las 17h.
+
+    O sea la banda de 0.0°F no era certeza: era el modelo entero fuera de
+    juego. Y las reglas de arriba la premiaban como confianza máxima, así que
+    **cuanto más equivocado estaba el modelo, más seguro se veía**. Es el mismo
+    defecto de forma que el Kelly completo.
+
+    Con `floor_n` (miembros clampeados) se distingue una cosa de la otra. No se
+    toca el piso: está medido y backtesteado (`backtest_piso_current.py`,
+    |error| 1.400 → 1.283). Lo que cambia es lo que la página AFIRMA sobre él.
     """
     n = len(dist)
     s = sorted(dist)
@@ -2323,6 +2346,12 @@ def _build_hero(dist: list[float], prev_med: float | None) -> dict:
     else:
         conf_class, conf_label = "conf-mid", "confianza media"
 
+    # Clavado en el piso: la banda estrecha no es certeza, es que el ensemble
+    # entero quedó por debajo de lo ya observado y el clamp lo aplastó.
+    clavado = n > 0 and floor_n >= 0.9 * n and band <= 0.2
+    if clavado:
+        conf_class, conf_label = "conf-low", "sin señal propia"
+
     if med >= 90:
         val_color = "val-color-hot"
     elif med >= 70:
@@ -2331,7 +2360,12 @@ def _build_hero(dist: list[float], prev_med: float | None) -> dict:
         val_color = "val-color-cool"
 
     hint = ""
-    if conf_class == "conf-low":
+    if clavado:
+        hint = (f"todo el ensemble quedaba bajo lo ya observado, así que esto "
+                f"es el PISO, no un pronóstico")
+        if current_f is not None and current_f > med + 0.05:
+            hint += f" · el termómetro ya marca {current_f:.1f}°F"
+    elif conf_class == "conf-low":
         hint = "rango amplio o pico difuso — considera esperar más polls"
 
     return {
@@ -2339,8 +2373,13 @@ def _build_hero(dist: list[float], prev_med: float | None) -> dict:
         "val_color": val_color,
         "trend_str": trend_str,
         "trend_class": trend_class,
-        "conf_str": (f"{ml_p*100:.0f}% de caer en {ml_val:.0f}°F ±0.5°F · "
-                     f"banda p10-p90 {p10:.1f}–{p90:.1f}°F ({band:.1f}°F)"),
+        "conf_str": (
+            (f"distribución clavada en el piso de observación "
+             f"({floor_n}/{n} miembros clampeados) — la banda de {band:.1f}°F "
+             f"no mide certeza")
+            if clavado else
+            (f"{ml_p*100:.0f}% de caer en {ml_val:.0f}°F ±0.5°F · "
+             f"banda p10-p90 {p10:.1f}–{p90:.1f}°F ({band:.1f}°F)")),
         "conf_class": conf_class,
         "conf_label": conf_label,
         "hint": hint,
