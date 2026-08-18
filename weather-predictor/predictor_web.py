@@ -1029,17 +1029,36 @@ def _load_day_dist(station, day_offset: int):
     return sorted(d["daily_maxes"]), d["target"], d.get("max_obs")
 
 
+# Kelly se muestra FRACCIONADO. Kelly completo es óptimo sólo si la
+# probabilidad que le das es la verdadera, y la nuestra está medida y no lo es:
+# `our_p` 0.80 acierta 0.35 (calibrador_techo_050_2026_08_03) y el Brier de
+# Kalshi nos gana 7 de 9 (edges_no_estructurales_brier_2026_07_27). Con
+# probabilidades sobreconfiadas, Kelly completo crece justo cuando más
+# equivocado está el modelo: el 2026-08-17 la mesa de KMIA recomendaba "NO ~87%
+# del bankroll" sobre un desacuerdo de 20pp con el mercado.
+#
+# 1/4 es la convención habitual bajo incertidumbre de parámetros; NO sale de
+# nuestros datos, y por eso se muestra etiquetado como fracción y con el Kelly
+# completo al lado, en vez de esconder el cálculo.
+KELLY_FRACTION = 0.25
+
+
 def _ev_kelly(p_our: float, k_yes: float) -> dict:
     """EV y Kelly por $1 apostado en yes o no al precio Kalshi.
 
     EV_yes = (p - k)/k         · EV_no = (k - p)/(1-k)
     f*_yes = (p - k)/(1 - k)   · f*_no = (k - p)/k
-    Retorna el lado recomendado (mayor EV, positivo). None si k inválido.
+
+    `kelly_*` son los completos (el cálculo, intacto) y `kelly_*_frac` los
+    que se muestran y se recomiendan. Retorna el lado con mayor EV positivo.
+    None si k inválido.
     """
     if k_yes is None or k_yes <= 0.01 or k_yes >= 0.99:
         return {"ev_yes": None, "ev_no": None,
                 "kelly_yes": None, "kelly_no": None,
-                "rec": None, "rec_ev": None, "rec_kelly": None}
+                "kelly_yes_frac": None, "kelly_no_frac": None,
+                "rec": None, "rec_ev": None, "rec_kelly": None,
+                "rec_kelly_full": None}
     ev_yes = (p_our - k_yes) / k_yes
     ev_no = (k_yes - p_our) / (1 - k_yes)
     kel_yes = max(0.0, (p_our - k_yes) / (1 - k_yes))
@@ -1052,7 +1071,14 @@ def _ev_kelly(p_our: float, k_yes: float) -> dict:
         rec, rec_ev, rec_kelly = None, None, None
     return {"ev_yes": ev_yes, "ev_no": ev_no,
             "kelly_yes": kel_yes, "kelly_no": kel_no,
-            "rec": rec, "rec_ev": rec_ev, "rec_kelly": rec_kelly}
+            "kelly_yes_frac": kel_yes * KELLY_FRACTION,
+            "kelly_no_frac": kel_no * KELLY_FRACTION,
+            "rec": rec, "rec_ev": rec_ev,
+            # Lo que se recomienda es el fraccionado; el completo se conserva
+            # para poder enseñar de dónde sale.
+            "rec_kelly": (rec_kelly * KELLY_FRACTION
+                          if rec_kelly is not None else None),
+            "rec_kelly_full": rec_kelly}
 
 
 @app.route("/ladder")

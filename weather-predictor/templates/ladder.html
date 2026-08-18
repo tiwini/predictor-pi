@@ -50,7 +50,8 @@
   <div class="dim">
     Mesa de decisión centrada en la mediana (±{{window}}°F).
     <b>yes = P(max &gt; X)</b>, <b>no = P(max ≤ X)</b>.
-    EV = retorno esperado por $1 al precio {{market_name}} · Kelly = fracción óptima del bankroll.
+    EV = retorno esperado por $1 al precio {{market_name}} · Kelly = fracción del bankroll,
+    mostrada a <b>¼</b> (ver nota al pie).
     Columna <b>rec</b> marca el lado con EV positivo (si hay).
     {% if day_offset > 0 %}D+{{day_offset}} sin obs → ensemble raw.{% endif %}
   </div>
@@ -64,7 +65,7 @@
   <th>yes (K)</th><th>no (K)</th>
   <th>edge</th>
   <th>EV yes</th><th>EV no</th>
-  <th>Kelly yes</th><th>Kelly no</th>
+  <th>¼Kelly yes</th><th>¼Kelly no</th>
   <th>rec</th>
 </tr>
 {% for r in rows %}
@@ -83,22 +84,34 @@
   <td class="num {% if r.ev_no is not none and r.ev_no > 0 %}ev-pos{% elif r.ev_no is not none %}ev-neg{% endif %}">
     {% if r.ev_no is not none %}{{'%+.0f'|format(r.ev_no*100)}}%{% else %}—{% endif %}
   </td>
-  <td class="num">{% if r.kelly_yes is not none %}{{'%.0f'|format(r.kelly_yes*100)}}%{% else %}—{% endif %}</td>
-  <td class="num">{% if r.kelly_no is not none %}{{'%.0f'|format(r.kelly_no*100)}}%{% else %}—{% endif %}</td>
+  <td class="num" title="Kelly completo {% if r.kelly_yes is not none %}{{'%.0f'|format(r.kelly_yes*100)}}%{% else %}—{% endif %}">
+    {% if r.kelly_yes_frac is not none %}{{'%.0f'|format(r.kelly_yes_frac*100)}}%{% else %}—{% endif %}</td>
+  <td class="num" title="Kelly completo {% if r.kelly_no is not none %}{{'%.0f'|format(r.kelly_no*100)}}%{% else %}—{% endif %}">
+    {% if r.kelly_no_frac is not none %}{{'%.0f'|format(r.kelly_no_frac*100)}}%{% else %}—{% endif %}</td>
   <td style="text-align:center">
     {% if r.rec == 'yes' %}<span class="pill rec-yes">YES</span>
     {% elif r.rec == 'no' %}<span class="pill rec-no">NO</span>
     {% elif r.k_yes is not none %}<span class="pill rec-none">—</span>
     {% else %}<span class="dim">—</span>{% endif %}
-    {% if r.rec_kelly %}<div class="dim" style="font-size:10px">~{{'%.0f'|format(r.rec_kelly*100)}}%</div>{% endif %}
+    {% if r.rec_kelly %}<div class="dim" style="font-size:10px"
+      title="Kelly completo {{'%.0f'|format(r.rec_kelly_full*100)}}%">~{{'%.0f'|format(r.rec_kelly*100)}}%</div>{% endif %}
   </td>
 </tr>
 {% endfor %}
 </table>
 <p class="dim" style="margin-top:.8rem">
   yes col opaca · no col semi-transparente · fila resaltada = threshold ≈ mediana.
-  <br>EV positivo = apostar ese lado tiene expected value &gt; 0 bajo nuestro modelo.
-  Kelly = fracción del bankroll a apostar (0% = skip, 10% = moderado, &gt;30% = modelo muy confiado).
+  <br>EV positivo = apostar ese lado tiene expected value &gt; 0 <b>bajo nuestro modelo</b>.
+  <br><b>Por qué ¼ y no Kelly completo:</b> Kelly completo es óptimo sólo si la
+  probabilidad que le das es la verdadera, y la nuestra está medida y no lo es —
+  cuando decimos 0.80 acierta 0.35, y el Brier de Kalshi nos gana 7 de 9 días.
+  Con probabilidades sobreconfiadas, Kelly completo crece justo cuando más
+  equivocado está el modelo: llegaba a recomendar el 87% del bankroll sobre un
+  desacuerdo de 20pp con el mercado. El ¼ es la convención habitual bajo
+  incertidumbre de parámetros, <i>no</i> un número sacado de nuestros datos.
+  Pasa el cursor por la celda para ver el Kelly completo.
+  <br>⚠ Un EV de tres cifras no es un premio: sale de separarnos decenas de
+  puntos del mercado, y ahí la historia dice que suele fallar el modelo.
 </p>
 </div>
 </body></html>
