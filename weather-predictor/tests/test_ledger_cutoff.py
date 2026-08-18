@@ -191,3 +191,27 @@ def test_el_roster_sale_de_stations():
     assert len(stations.STATION_IDS) == 20
     assert "KLGA" not in stations.STATION_IDS, "el id de NY es KNYC"
     assert "KIAH" not in stations.STATION_IDS, "Houston liquida con KHOU"
+
+
+# ── Ventanas de pico ─────────────────────────────────────────────────────
+#
+# Recalibradas el 2026-08-18: cerraban antes de que ocurriera el pico (KSEA
+# dejaba fuera el 73% de los días, KDFW el 57%). La regla al recalibrar es que
+# la ventana sólo se ENSANCHA: el fallo es unidireccional y estrechar el lado
+# temprano abre un punto ciego que la evidencia no pide.
+
+def test_las_ventanas_de_pico_son_sensatas():
+    from stations import STATIONS
+    for s in STATIONS:
+        assert 6 <= s.peak_lo < s.peak_hi <= 21, s.id
+        assert s.peak_hi - s.peak_lo >= 3, f"{s.id}: ventana demasiado estrecha"
+
+
+def test_las_8_recalibradas_conservan_su_ventana():
+    """Si alguien las revierte a la ventana estrecha, esto lo dice."""
+    from stations import PEAK_HOURS
+    esperado = {"KNYC": (13, 18), "KDEN": (13, 18), "KSAT": (14, 19),
+                "KDCA": (13, 18), "KDFW": (14, 19), "KPHL": (13, 18),
+                "KSEA": (14, 18), "KATL": (13, 18)}
+    for sid, v in esperado.items():
+        assert PEAK_HOURS[sid] == v, f"{sid}: {PEAK_HOURS[sid]} != {v}"

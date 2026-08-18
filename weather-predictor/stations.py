@@ -39,6 +39,29 @@ class StationConfig:
     nws_cli_loc: str    # NWS CLI product location code (e.g. "NYC" para KNYC)
     peak_lo: int        # local hour, peak window start (inclusive)
     peak_hi: int        # local hour, peak window end (exclusive)
+    # RECALIBRADAS 2026-08-18 en 8 estaciones (KNYC, KDEN, KSAT, KDCA, KDFW,
+    # KPHL, KSEA, KATL). `investigacion/backtest_peak_hours.py`, pre-registrado.
+    #
+    # Cerraban antes de que ocurriera el pico: KSEA dejaba fuera el 73% de los
+    # días y KDFW el 57%, siempre por el mismo lado. No es cosmético — la
+    # ventana gobierna el techo físico (`physical_gate` vía 1 da el día por
+    # cerrado y fija techo max_obs+1.0), el polling adaptativo (pasa de 3 a 10
+    # min), `cap_by_floor` (sólo protege con la ventana ABIERTA) y la hora de
+    # referencia del corrector de nivel (peak_lo − 2). En los cuatro el error
+    # empujaba a dar el día por terminado antes de tiempo.
+    #
+    # Dos fuentes independientes tuvieron que coincidir: el archivo horario de
+    # Open-Meteo (que no depende de nuestro poller) y nuestros METAR
+    # descartando días con <80% de cobertura. Donde sólo una señalaba
+    # descalibre —KLAS, KBOS, KMIA, KMDW, KHOU, KSFO, KMSY, KOKC— NO se tocó.
+    #
+    # ⚠ Sólo se ENSANCHA, nunca se estrecha. El criterio pre-registrado
+    # proponía (16,19) para KSAT y KDFW, que habría movido la apertura de las
+    # 14 a las 16: el fallo demostrado es unidireccional, y estrechar el lado
+    # temprano abre un punto ciego que la evidencia no pide (y recorta
+    # `cap_by_floor`, que sólo actúa con la ventana abierta).
+    #
+    # ⚠ Datos de julio-agosto: son ventanas de VERANO. Revisar en otoño.
     lon: float          # longitud °E (negativo = W); usado para ordenar E→W
 
 
@@ -46,20 +69,20 @@ STATIONS: list[StationConfig] = [
     StationConfig("KPHX", "KXHIGHTPHX",  "PHX", 14, 17, -112.02),
     StationConfig("KLAX", "KXHIGHLAX",   "LAX", 12, 15, -118.41),
     StationConfig("KLAS", "KXHIGHTLV",   "LAS", 14, 17, -115.15),
-    StationConfig("KNYC", "KXHIGHNY",    "NYC", 13, 16,  -73.97),
+    StationConfig("KNYC", "KXHIGHNY",    "NYC", 13, 18,  -73.97),
     StationConfig("KBOS", "KXHIGHTBOS",  "BOS", 12, 17,  -71.01),
     StationConfig("KMIA", "KXHIGHMIA",   "MIA", 14, 17,  -80.29),
     StationConfig("KMDW", "KXHIGHCHI",   "MDW", 14, 17,  -87.75),
     StationConfig("KHOU", "KXHIGHTHOU",  "HOU", 14, 17,  -95.28),
     StationConfig("KSFO", "KXHIGHTSFO",  "SFO", 12, 15, -122.38),
     StationConfig("KAUS", "KXHIGHAUS",   "AUS", 14, 17,  -97.67),
-    StationConfig("KDEN", "KXHIGHDEN",   "DEN", 13, 16, -104.67),
-    StationConfig("KSAT", "KXHIGHTSATX", "SAT", 14, 17,  -98.47),
-    StationConfig("KDCA", "KXHIGHTDC",   "DCA", 13, 16,  -77.04),
-    StationConfig("KDFW", "KXHIGHTDAL",  "DFW", 14, 17,  -97.04),
-    StationConfig("KPHL", "KXHIGHPHIL",  "PHL", 13, 16,  -75.24),
-    StationConfig("KSEA", "KXHIGHTSEA",  "SEA", 14, 17, -122.31),
-    StationConfig("KATL", "KXHIGHTATL",  "ATL", 14, 17,  -84.43),
+    StationConfig("KDEN", "KXHIGHDEN",   "DEN", 13, 18, -104.67),
+    StationConfig("KSAT", "KXHIGHTSATX", "SAT", 14, 19,  -98.47),
+    StationConfig("KDCA", "KXHIGHTDC",   "DCA", 13, 18,  -77.04),
+    StationConfig("KDFW", "KXHIGHTDAL",  "DFW", 14, 19,  -97.04),
+    StationConfig("KPHL", "KXHIGHPHIL",  "PHL", 13, 18,  -75.24),
+    StationConfig("KSEA", "KXHIGHTSEA",  "SEA", 14, 18, -122.31),
+    StationConfig("KATL", "KXHIGHTATL",  "ATL", 13, 18,  -84.43),
     StationConfig("KMSY", "KXHIGHTNOLA", "MSY", 14, 17,  -90.26),
     StationConfig("KOKC", "KXHIGHTOKC",  "OKC", 14, 17,  -97.60),
     StationConfig("KMSP", "KXHIGHTMIN",  "MSP", 14, 17,  -93.22),
