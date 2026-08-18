@@ -33,6 +33,14 @@
   contra el mercado (Kalshi). Lado <b>yes</b> si nuestro modelo dice más probable;
   <b>no</b> si menos. Payoff al settlear. <b>No es dinero real.</b>
 </p>
+<p class="dim" style="border-left:3px solid #f38ba8;padding:.5rem .7rem;
+                      background:rgba(243,139,168,.08);border-radius:6px">
+  <b style="color:#f38ba8">Sólo cuenta desde el {{ledger_fix_date}}.</b>
+  Hasta esa fecha el ledger estaba roto y producía un ROI artificial de ~+53%;
+  la auditoría lo arregló pero las filas viejas siguen en la tabla.
+  Se excluyen <b>{{n_prefix}}</b> bets pre-fix — con ellas dentro el ROI sale
+  <b>{{roi_prefix}}</b>, que es el artefacto, no una medida de si esto gana.
+</p>
 
 <div class="card">
   <div class="kpi"><span class="dim">Total bets</span><b>{{s.n_total}}</b></div>

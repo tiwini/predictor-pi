@@ -2654,6 +2654,9 @@ def bets_view():
         sweep_days = 30
     rows = _bets.list_bets(station_id, only=only, limit=300)
     s = _bets.stats(station_id)
+    # El histórico completo se calcula sólo para poder decir cuánto se está
+    # dejando fuera y por qué. No alimenta ningún titular.
+    s_todo = _bets.stats(station_id, since=None)
     pnl_class = "good" if s.pnl > 0 else ("bad" if s.pnl < 0 else "neu")
     roi_s = f"{100*s.roi:+.1f}%" if s.roi is not None else "—"
     win_rate_s = f"{100*s.win_rate:.0f}%" if s.win_rate is not None else "—"
@@ -2689,6 +2692,9 @@ def bets_view():
         thr=int(_bets.EDGE_THR * 100), stake=int(_bets.STAKE),
         sweeps=sweeps, sweep_days=sweep_days,
         sweep_min_n=_sweep.MIN_N,
+        ledger_fix_date=_bets.LEDGER_FIX_DATE,
+        n_prefix=(s_todo.n_settled - s.n_settled),
+        roi_prefix=(f"{100 * s_todo.roi:+.1f}%" if s_todo.roi is not None else "—"),
     )
 
 

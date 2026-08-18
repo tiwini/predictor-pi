@@ -175,8 +175,11 @@ def test_stats_excludes_shadow_by_default(tmp_path, monkeypatch):
                    our_pred_f=95.5, bias_info=NEUTRAL_BIAS,
                    difficulty_score=1000.0, station_local_hour=10)
     bets.settle_day("KX", date(2025, 1, 15), 95.5)
-    real = bets.stats("KX")
-    with_shadow = bets.stats("KX", include_shadow=True)
+    # `since=None`: este test mide el filtro de SHADOWS, no el del ledger. Las
+    # filas se siembran en 2025, anteriores a LEDGER_FIX_DATE, así que sin esto
+    # el corte por fecha las borraría y el test mediría otra cosa.
+    real = bets.stats("KX", since=None)
+    with_shadow = bets.stats("KX", include_shadow=True, since=None)
     assert real.n_total == 1
     assert real.n_settled == 1
     assert with_shadow.n_total == 2

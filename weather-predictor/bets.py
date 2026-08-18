@@ -506,10 +506,26 @@ def list_bets(station_id: str | None = None,
     return rows
 
 
+LEDGER_FIX_DATE = "2026-07-07"
+# Fecha de la auditoría que arregló el ledger (weather_ledger_broken_2026_07_06).
+# Las bets ANTERIORES se calcularon con el mecanismo roto que producía un ROI
+# de +53% artificial: sobre las filas de hoy, pre-fix da +53.2% con n=548 y
+# post-fix da −10.4% con n=38. El mecanismo se arregló entonces, pero las filas
+# históricas nunca se pusieron en cuarentena, así que el agregado seguía
+# mostrando el artefacto como titular. `stats()` cuenta desde el fix por
+# defecto; `since=None` devuelve el histórico completo para inspeccionarlo.
+
+
 def stats(station_id: str | None = None,
-          include_shadow: bool = False) -> BetStats:
-    """P&L agregado. Por defecto excluye shadow bets (blocked_by IS NOT NULL).
-    Pasa include_shadow=True para inspeccionar toda la tabla (debug)."""
+          include_shadow: bool = False,
+          since: str | None = LEDGER_FIX_DATE) -> BetStats:
+    """P&L agregado. Por defecto excluye shadow bets (blocked_by IS NOT NULL)
+    y las bets anteriores al fix del ledger.
+
+    Pasa include_shadow=True para inspeccionar toda la tabla (debug) y
+    since=None para incluir el periodo pre-fix, que es evidencia de cómo se ve
+    un ledger roto pero NO una medida de si el sistema gana.
+    """
     c = _conn()
     parts: list[str] = []
     params: list = []
@@ -518,6 +534,9 @@ def stats(station_id: str | None = None,
         params.append(station_id)
     if not include_shadow:
         parts.append("blocked_by IS NULL")
+    if since:
+        parts.append("date >= ?")
+        params.append(since)
     where = f"WHERE {' AND '.join(parts)}" if parts else ""
     total = c.execute(f"SELECT COUNT(*) FROM simulated_bets {where}",
                       tuple(params)).fetchone()[0]
