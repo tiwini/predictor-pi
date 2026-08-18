@@ -28,11 +28,9 @@ import bets  # noqa: E402
 
 @pytest.fixture
 def db(tmp_path, monkeypatch):
-    p = tmp_path / "cal.db"
-    monkeypatch.setattr(bets, "DB_PATH", p, raising=False)
-    import calibration
-    monkeypatch.setattr(calibration, "DB_PATH", p, raising=False)
-    calibration.init_db()
+    p = tmp_path / "calibration.db"
+    monkeypatch.setattr(bets, "DB_PATH", p)
+    bets._conn().close()   # corre las migraciones: crea tabla + columnas
     return p
 
 
