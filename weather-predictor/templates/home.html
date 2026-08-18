@@ -283,6 +283,9 @@
                    border-top: 1px solid var(--surface2); position: relative; }
   .quickask-last-hdr { font-size: .72rem; color: var(--muted); margin-bottom: .3rem; }
   .quickask-last-hdr b { color: var(--cyan); }
+  /* La edad va junto al título, no escondida al pie: una respuesta de la IA
+     envejece en minutos y antes sólo se pintaba la hora sin fecha. */
+  .quickask-age { color: var(--yellow); font-weight: 600; margin-left: .35rem; }
   .quickask-last-txt { font-size: .88rem; color: var(--text); line-height: 1.45;
                        white-space: pre-wrap; }
   .quickask-meta { color: var(--muted); font-size: .72rem; margin-top: .35rem;
@@ -897,11 +900,12 @@
       </form>
       <div class="quickask-last-hdr">
         Última respuesta · <b>{{ station_ask_last.label }}</b>
+        <span class="quickask-age">{{ station_ask_last.age_str }}</span>
       </div>
       <div class="quickask-last-txt">{{ station_ask_last.text }}</div>
       <div class="quickask-meta">
         ${{ '%.4f'|format(station_ask_last.cost) }}
-        · {{ station_ask_last.ts[11:16] }}Z
+        · {{ station_ask_last.ts[:16].replace('T', ' ') }}Z
       </div>
     </div>
     {% endif %}

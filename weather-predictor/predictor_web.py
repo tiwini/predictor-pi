@@ -656,8 +656,9 @@ def index():
         peak_status_age = int(
             (datetime.now(timezone.utc) - _pca).total_seconds())
     brier_watchdog = _build_brier_watchdog()
-    station_ask_last = (_get_last_station_ask(station.id)
-                        if _ask_station else None)
+    station_ask_last = _fresh_ask(
+        _get_last_station_ask(station.id) if _ask_station else None,
+        station.tz)
     station_ask_prompts = [{"kind": k, "label": v["label"]}
                            for k, v in _STATION_PROMPTS.items()]
     station_ask_error = request.args.get("ask_err")
@@ -1154,6 +1155,38 @@ def ladder_view():
         market_name=_market_name(station.id))
 
 
+def _fresh_ask(ask: dict | None, tz) -> dict | None:
+    """Respuesta de la IA sólo si es del día local en curso, con su edad anotada.
+
+    Por qué caduca: el 2026-08-17 la home servía en KLAS una respuesta del
+    2026-06-26 que decía "Hoy ya observado 105.98°F", y /comparison una del
+    2026-07-18 con "Recomendación de bet: 95° to 96° YES, edge +92pp, confianza
+    muy alta" — con el día ya en 111.9°F. El `ts` estaba guardado desde el
+    principio; la home sólo pintaba `ts[11:16]`, o sea la hora sin la fecha, y
+    una respuesta de hace dos meses parecía de esta mañana.
+
+    Una respuesta a "¿ya empezó a bajar?" o "max hoy" no vale nada al día
+    siguiente, así que se descarta en vez de envejecerse en pantalla. Sin `ts`
+    tampoco se muestra: no se puede afirmar frescura de algo sin fecha.
+    """
+    if not ask or not ask.get("ts"):
+        return None
+    try:
+        dt = datetime.fromisoformat(str(ask["ts"]).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    if dt.astimezone(tz).date() != datetime.now(tz).date():
+        return None
+    mins = max(0, int((datetime.now(timezone.utc) - dt).total_seconds() // 60))
+    out = dict(ask)
+    out["age_min"] = mins
+    out["age_str"] = (f"hace {mins} min" if mins < 60
+                      else f"hace {mins // 60}h {mins % 60:02d}m")
+    return out
+
+
 def _split_recs(bins, min_edge_pp=5.0, tail_lo=0.08, tail_hi=0.92, top_k=3,
                 low_edge_min_yes=0.05, low_edge_max_yes=0.95):
     """Divide en 'safe' (tail-negation), 'edge' (top |diff|), 'low' (consenso).
@@ -1304,7 +1337,10 @@ def comparison_view():
     else:
         fetched_age = "—"
 
-    recs_safe, recs_edge, recs_low = _split_recs(bins)
+    # `recs_safe` es la tail-negation, retirada el 2026-07-07: `_split_recs` la
+    # fuerza vacía y desde el 2026-08-17 el template ya no la pinta. Se recoge
+    # con `_` para que quede claro que se descarta a propósito.
+    _recs_safe_retirada, recs_edge, recs_low = _split_recs(bins)
 
     # F3.2a — sort=edge: reorder bins by |diff| desc + surface /edge data.
     edge_current, edge_analysis = [], None
@@ -1325,7 +1361,9 @@ def comparison_view():
             edge_analysis = None
 
     brief = _station_brief.get(station.id) if _station_brief else None
-    last_ask = _get_last_station_ask(station.id) if _ask_station else None
+    last_ask = _fresh_ask(
+        _get_last_station_ask(station.id) if _ask_station else None,
+        station.tz)
     ask_error = None
     # Racha de precisión por ventana local para esta estación
     try:
@@ -1367,7 +1405,6 @@ def comparison_view():
         cal_n_days=(cal.n_days if cal else 0),
         cal_min_n=_iso.MIN_N, cal_min_days=_iso.MIN_DAYS,
         market_name=_market_name(station.id),
-        recs_safe=recs_safe,
         recs_edge=recs_edge,
         recs_low=recs_low,
         brief=brief,

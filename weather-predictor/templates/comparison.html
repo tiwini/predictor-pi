@@ -59,22 +59,14 @@
   <p class="dim">Estaciones soportadas (Kalshi): KPHX, KLAX, KLAS, KNYC, KBOS.</p>
 </div>
 {% else %}
-{% if recs_safe or recs_edge or recs_low %}
+{# La tarjeta "🛡 más seguras (tail-negation)" vivía aquí. La categoría se
+   RETIRÓ el 2026-07-07 (auditoría del ledger): su validación se apoyaba en 89
+   penny-YES longshots con 6 aciertos, sobre el ledger roto. `_split_recs` ya
+   fuerza `safe = []`, así que este bloque llevaba un mes sin poder renderizar.
+   Se borra el markup para que nadie lo reviva sin el re-audit: readmitir exige
+   win_rate >55% con p<0.05 sobre N≥100 bets post-fix. #}
+{% if recs_edge or recs_low %}
 <div class="rec-grid">
-  {% if recs_safe %}
-  <div class="card safe">
-    <h3 style="color:#a6e3a1">🛡 más seguras (tail-negation)</h3>
-    {% for r in recs_safe %}
-    <div class="rec-row">
-      <b>{{r.label}}</b>
-      <span class="pill rec-{{r.side|lower}}">{{r.side}}</span>
-      · ours {{'%.0f'|format(r.our_p*100)}}% vs {{market_name}} {{'%.0f'|format(r.yes_mid*100)}}%
-      · <b style="color:#a6e3a1">+{{'%.0f'|format(r.edge_pp)}}pp</b>
-    </div>
-    {% endfor %}
-    <div class="dim" style="margin-top:.5rem">our_p extremo (≤8% o ≥92%) + edge ≥5pp: convicción alta del modelo, side opuesto al mercado. Cuidado si regime_break.</div>
-  </div>
-  {% endif %}
   {% if recs_edge %}
   <div class="card edge">
     <h3 style="color:#fab387">⚡ mayor edge</h3>
@@ -227,7 +219,8 @@
   {% if last_ask %}
   <div style="margin-top:.7rem;padding:.6rem;background:#181825;border-radius:4px;border-left:2px solid #f9e2af">
     <div style="display:flex;justify-content:space-between;align-items:start;gap:.5rem">
-      <div style="color:#f9e2af;font-size:12px;font-weight:600">{{last_ask.label}}</div>
+      <div style="color:#f9e2af;font-size:12px;font-weight:600">{{last_ask.label}}
+        <span style="color:#f9e2af;font-weight:600;margin-left:.3rem">{{last_ask.age_str}}</span></div>
       <form method="POST" action="/ai/station-ask/clear" style="margin:0">
         <input type="hidden" name="station" value="{{station}}">
         <button type="submit" style="background:none;border:none;color:#6c7086;cursor:pointer;font-size:11px">✕</button>
