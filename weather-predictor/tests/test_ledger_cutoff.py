@@ -130,9 +130,10 @@ def test_reliability_expone_el_baseline_de_la_tasa_base(tmp_path, monkeypatch):
     for i in range(8):
         c.execute(
             """INSERT INTO prediction_snapshots
-               (station_id, date, ts, bin_lo, bin_hi, predicted_p, outcome)
-               VALUES ('KX', ?, ?, 90, 91, 0.5, ?)""",
-            (hoy, f"{hoy}T{i:02d}:00:00", 1 if i < 2 else 0))
+               (station_id, date, snapshot_time, slot, is_auto, expr, op,
+                threshold, predicted_p, outcome)
+               VALUES ('KX', ?, ?, ?, 1, 'max>=90', '>=', 90, 0.5, ?)""",
+            (hoy, f"{hoy}T{i:02d}:00:00", i, 1 if i < 2 else 0))
     c.commit()
     c.close()
     rep = calibration.reliability("KX")
