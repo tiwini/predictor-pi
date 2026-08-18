@@ -6,10 +6,12 @@ Run with the venv python:
     ./venv/bin/python3 predictor_web.py [STATION_ID] [PORT]
 """
 import socket
+import sqlite3
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from flask import Flask, Response, jsonify, redirect, render_template, request
 
@@ -2162,6 +2164,14 @@ def station_drilldown(sid):
     )
 
 
+# Cadencia del colector de fondo. Se importa del propio módulo en vez de
+# copiarla, para que no puedan divergir; si `analysis_poller` no es importable
+# se cae al valor conocido y la vigilancia sigue funcionando.
+try:
+    from analysis_poller import INTERVAL_S as _AP_INTERVAL_S
+except Exception:      # pragma: no cover
+    _AP_INTERVAL_S = 600
+
 POLL_STATS = {
     "started_at": datetime.now(timezone.utc),
     "last_ok_at": None,
@@ -2473,6 +2483,69 @@ def _fmt_age(dt) -> str:
     return f"hace {s // 86400}d {(s % 86400) // 3600}h"
 
 
+def _analysis_poller_health() -> dict:
+    """Salud del `analysis_poller`, el colector de fondo.
+
+    Existe porque hasta el 2026-08-18 **nadie lo vigilaba**: `POLL_STATS` cubre
+    sólo el poll loop del web y su estación activa, así que si el poller moría,
+    esta página seguía diciendo OK y el hueco se descubría semanas después al
+    correr un backtest. Es el proceso que llena `analysis.db`, o sea la base de
+    todos los backtests y del corrector de nivel.
+
+    Se mide **lo que llega a la tabla**, no si el proceso está vivo: un poller
+    colgado sigue apareciendo en `ps` pero deja de escribir, y eso es lo que
+    importa. Mismo criterio de umbrales que `_health_badge` (OK < 2× intervalo,
+    WARN < 5×, BAD más allá) para no tener dos escalas distintas en la misma
+    página.
+
+    Añade la COBERTURA del último ciclo: un poller vivo que sólo escribe 5 de
+    20 estaciones es el modo de fallo del roster fantasma, y sin esto también
+    pasaría desapercibido.
+    """
+    out = {"age_s": None, "age": "nunca", "clase": "bad", "label": "BAD",
+           "cobertura": None, "n_total": len(SUPPORTED_STATIONS),
+           "intervalo_s": _AP_INTERVAL_S, "error": None}
+    try:
+        con = sqlite3.connect(
+            f"file:{Path(__file__).parent / 'analysis.db'}?mode=ro", uri=True)
+        try:
+            con.execute("PRAGMA busy_timeout=3000")
+            fila = con.execute(
+                "SELECT MAX(ts) FROM station_snapshots").fetchone()
+            ultimo = fila[0] if fila else None
+            if not ultimo:
+                return out
+            dt = datetime.fromisoformat(ultimo)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            edad = (datetime.now(timezone.utc) - dt).total_seconds()
+            # Ventana de un ciclo y medio: cuántas estaciones distintas
+            # escribieron de verdad en la última vuelta.
+            desde = (dt - timedelta(seconds=_AP_INTERVAL_S * 1.5)).isoformat()
+            n = con.execute(
+                "SELECT COUNT(DISTINCT station) FROM station_snapshots "
+                "WHERE ts >= ?", (desde,)).fetchone()[0]
+        finally:
+            con.close()
+    except Exception as e:
+        out["error"] = str(e)[:120]
+        return out
+
+    out["age_s"] = int(edad)
+    out["age"] = _fmt_age(dt)
+    out["cobertura"] = n
+    if edad < 2 * _AP_INTERVAL_S:
+        out["clase"], out["label"] = "ok", "OK"
+    elif edad < 5 * _AP_INTERVAL_S:
+        out["clase"], out["label"] = "warn", "WARN"
+    else:
+        out["clase"], out["label"] = "bad", "BAD"
+    # Cobertura incompleta degrada aunque el dato sea fresco.
+    if n is not None and n < len(SUPPORTED_STATIONS) and out["clase"] == "ok":
+        out["clase"], out["label"] = "warn", "WARN"
+    return out
+
+
 def _render_health_page():
     ps = POLL_STATS
     now = datetime.now(timezone.utc)
@@ -2501,6 +2574,7 @@ def _render_health_page():
         poll_sec=_poll_interval_for(state.station) if state else POLL_SEC, cache_ttl=600,
         station=state.station.id if state else "—",
         recent_errors=recent,
+        poller=_analysis_poller_health(),
         system_tabs_html=_render_system_tabs_html("health"),
     )
 

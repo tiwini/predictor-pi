@@ -17,9 +17,35 @@
 </style></head><body>
 {{ system_tabs_html|safe }}
 <h1>Status
-  <span class="badge {{health_class}}">{{health_label}}</span>
+  <span class="badge {{health_class}}">web {{health_label}}</span>
+  <span class="badge {{poller.clase}}">colector {{poller.label}}</span>
 </h1>
+
+{# Dos procesos, dos tarjetas. El colector de fondo no se vigilaba hasta el
+   2026-08-18: si moría, esta página seguía diciendo OK y el hueco aparecía
+   semanas después al correr un backtest. #}
 <div class="card">
+  <h2>Colector de fondo · analysis_poller</h2>
+  <p class="dim" style="margin:.2rem 0 .5rem">
+    Recorre las {{poller.n_total}} estaciones y llena <code>analysis.db</code>,
+    que es la base de los backtests y del corrector de nivel. Proceso aparte del
+    web: se mide por el dato que llega a la tabla, no por si el proceso vive —
+    uno colgado sigue apareciendo en <code>ps</code> y deja de escribir.
+  </p>
+  {% if poller.error %}
+    <div class="kv"><span class="kv-k">Error al leer</span>
+      <span class="err">{{poller.error}}</span></div>
+  {% else %}
+    <div class="kv"><span class="kv-k">Último snapshot</span><span>{{poller.age}}</span></div>
+    <div class="kv"><span class="kv-k">Cobertura último ciclo</span>
+      <span {% if poller.cobertura is not none and poller.cobertura < poller.n_total %}class="err"{% endif %}>
+        {{poller.cobertura if poller.cobertura is not none else '—'}} / {{poller.n_total}} estaciones</span></div>
+    <div class="kv"><span class="kv-k">Intervalo</span><span>{{poller.intervalo_s}}s</span></div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Web · poll loop</h2>
   <div class="kv"><span class="kv-k">Uptime</span><span>{{uptime}}</span></div>
   <div class="kv"><span class="kv-k">Último poll OK</span><span>{{last_ok}}</span></div>
   <div class="kv"><span class="kv-k">Último error</span><span>{{last_err}}</span></div>
@@ -43,5 +69,9 @@
   <b>OK</b> = último poll hace &lt; 2× intervalo ·
   <b>WARN</b> = entre 2× y 5× ·
   <b>BAD</b> = &gt; 5× o nunca.
+  Mismo criterio para los dos, con el intervalo de cada uno; el colector baja
+  además a WARN si escribió menos de {{poller.n_total}} estaciones en el último
+  ciclo, aunque el dato sea fresco — un colector que cubre la cuarta parte del
+  roster no falla, sólo parece completo.
 </p>
 </body></html>
