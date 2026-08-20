@@ -138,3 +138,49 @@ def test_dict_sin_piso_es_identidad():
     ps = [0.3, 0.7]
     out, n, _ = zero_impossible_bins(bins, ps, floor=None)
     assert out == ps and n == 0
+
+
+# ── El grupo ASOS 6h en el piso (2026-08-20) ─────────────────────────────
+#
+# El ASOS de 1 min es la MISMA fuente con la que liquida el NWS y llega antes
+# que el CLI. KMIA el 08-19 lo tenía en 96.08 con nuestro feed en 95.0, y
+# predecíamos 95.0.
+#
+# Sólo entra la variante LIMPIA: ventana de 6h entera dentro del día local. Sin
+# esa guarda, un METAR de 05:53Z arrastra la tarde de AYER en husos americanos.
+# Backtest pre-registrado sobre 605 station-days: sin guarda el piso violaría el
+# settle 35 veces en vez de 4; con ella, exactamente las mismas 4.
+
+def _snap_asos(asos_f, asos_hora_utc, max_obs=95.0):
+    """Snapshot mínimo con un ASOS a una hora UTC dada. tz = Miami."""
+    from datetime import datetime, timezone as _tz
+    from zoneinfo import ZoneInfo
+    mia = ZoneInfo("America/New_York")
+    ts = datetime(2026, 8, 19, asos_hora_utc, 53, tzinfo=_tz.utc)
+    return SimpleNamespace(
+        today_max_obs=max_obs, today_max_cli=None, current_temp_f=None,
+        today_max_asos_6h=asos_f, today_max_asos_6h_ts=ts,
+        station_local=ts.astimezone(mia))
+
+
+def test_asos_con_ventana_limpia_sube_el_piso():
+    """El caso KMIA: METAR de 17:53Z, ventana 11:53→17:53Z = 07:53→13:53 local."""
+    f = obs_floor_from_snapshot(_snap_asos(96.08, 17))
+    assert f == 96.08, "el ASOS manda cuando su ventana es de hoy"
+
+
+def test_asos_que_cruza_medianoche_NO_entra():
+    """METAR de 05:53Z: ventana 23:53→05:53Z = 19:53 de AYER → 01:53 local."""
+    f = obs_floor_from_snapshot(_snap_asos(100.9, 5))
+    assert f == 95.0, "no puede importar el pico de ayer"
+
+
+def test_asos_mas_bajo_no_baja_el_piso():
+    """El piso sólo sube: es un max, nunca un reemplazo."""
+    assert obs_floor_from_snapshot(_snap_asos(90.0, 17)) == 95.0
+
+
+def test_sin_asos_el_piso_es_el_de_siempre():
+    s = _snap_asos(None, 17)
+    s.today_max_asos_6h_ts = None
+    assert obs_floor_from_snapshot(s) == 95.0

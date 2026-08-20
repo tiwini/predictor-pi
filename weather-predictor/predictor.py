@@ -1034,6 +1034,9 @@ def build_snapshot(station: Station) -> Snapshot:
                                      station.tz).astimezone(timezone.utc)
     asos_6h_f: float | None = None
     asos_6h_ts: datetime | None = None
+    # Sólo las lecturas cuya ventana cae entera en el día local. Ver la nota en
+    # el bucle: es la que entra al piso, la otra es para mostrar.
+    asos_6h_clean_f: float | None = None
     for o in obs_full:
         raw = o.get("raw") or ""
         max_c = parse_metar_6h_max_c(raw)
@@ -1062,6 +1065,17 @@ def build_snapshot(station: Station) -> Snapshot:
         if asos_6h_f is None or temp_f > asos_6h_f:
             asos_6h_f = temp_f
             asos_6h_ts = ts_metar
+        # Variante LIMPIA, la única que puede entrar al piso: la ventana de 6h
+        # cae ENTERA dentro del día local. La de arriba sólo exige que
+        # intersecte, y en husos americanos un METAR de 05:53Z arrastra la tarde
+        # de AYER — medido el 2026-08-20, KAUS y KDFW traían 100.04 y 100.94°F
+        # de esa forma. Backtest pre-registrado sobre 605 station-days: sin esta
+        # guarda el piso pasaría a violar el settle 35 veces en vez de 4; con
+        # ella, exactamente las mismas 4 que hoy.
+        if (window_start.astimezone(station.tz).date()
+                == ts_metar.astimezone(station.tz).date()):
+            if asos_6h_clean_f is None or temp_f > asos_6h_clean_f:
+                asos_6h_clean_f = temp_f
 
     # F2 pieza 1: CLI parcial de la tarde. Sólo dentro de la ventana horaria de
     # la estación, y nunca deja caer el snapshot si el NWS no responde — es una
@@ -1075,12 +1089,30 @@ def build_snapshot(station: Station) -> Snapshot:
         except Exception:
             cli_max_f, cli_max_ts = None, None
 
-    # El piso efectivo del día es el mayor de las tres fuentes. El CLI gana
+    # El piso efectivo del día es el mayor de las cuatro fuentes. El CLI gana
     # +1.0°F de mediana (N=486) porque agrega ASOS 1-min y nuestro feed es de
     # 5 min; cuando el CLI todavía no salió, esto es exactamente max_obs.
     floor_f = max_obs if max_obs is not None and max_obs > -900 else None
     if cli_max_f is not None:
         floor_f = cli_max_f if floor_f is None else max(floor_f, cli_max_f)
+
+    # Cuarta fuente (2026-08-20): el grupo ASOS de 6h, que es la MISMA que usa
+    # el NWS para liquidar y llega antes que el CLI. KMIA el 08-19 lo tenía en
+    # 96.08 con nuestro feed en 95.0 y predecíamos 95.0 — error garantizado de
+    # 1.1°F contra un dato que ya teníamos.
+    #
+    # Sólo la variante LIMPIA (ventana entera dentro del día local). Medido
+    # sobre 605 station-days, `investigacion/backtest_piso_asos6h.py`,
+    # pre-registrado:
+    #     violaciones del piso (floor > settle+0.5)
+    #       actual                4
+    #       + ASOS sin guarda    35   ← arrastra la tarde de ayer
+    #       + ASOS con guarda     4   ← riesgo añadido CERO
+    # Sube el piso en el 38.7% de los días; mediana +0.08°F, p90 +1.08°F. El
+    # valor está en la cola, que es donde se cometen los errores.
+    if asos_6h_clean_f is not None:
+        floor_f = (asos_6h_clean_f if floor_f is None
+                   else max(floor_f, asos_6h_clean_f))
 
     # Tercera fuente (2026-07-27): la temperatura ACTUAL. `max_obs` sale sólo de
     # METARs horarios, así que durante media hora de cada ciclo va atrasado y la
@@ -1966,6 +1998,20 @@ def obs_floor_from_snapshot(snap: Snapshot) -> float | None:
     cli = getattr(snap, "today_max_cli", None)
     if cli is not None:
         floor = cli if floor is None else max(floor, cli)
+    # ASOS 6h, sólo si su ventana cae entera en el día local — la misma guarda
+    # que aplica `build_snapshot`. Aquí se reconstruye desde el timestamp
+    # guardado en vez de recalcularse: si las dos rutas divergieran, el piso
+    # diría una cosa al construirse y otra al releerse.
+    asos = getattr(snap, "today_max_asos_6h", None)
+    asos_ts = getattr(snap, "today_max_asos_6h_ts", None)
+    if asos is not None and asos_ts is not None:
+        try:
+            tz = snap.station_local.tzinfo
+            if ((asos_ts - timedelta(hours=6)).astimezone(tz).date()
+                    == asos_ts.astimezone(tz).date()):
+                floor = asos if floor is None else max(floor, asos)
+        except Exception:
+            pass
     cur = getattr(snap, "current_temp_f", None)
     if cur is not None and cur > -900:
         cand = cur - CURRENT_FLOOR_MARGIN_F
