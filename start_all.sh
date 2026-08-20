@@ -117,6 +117,13 @@ start_analysis_poller() {
   log "analysis_poller lanzado (PID $!)"
 }
 
+start_kalshi_fast_poller() {
+  if pgrep -f "python.*kalshi_fast_poller\.py" > /dev/null; then log "kalshi_fast_poller ya corre"; return; fi
+  cd "$SCRIPT_DIR/weather-predictor" || { log "no existe weather-predictor"; return; }
+  nohup ./venv/bin/python3 kalshi_fast_poller.py >> kalshi_fast_poller.log 2>&1 &
+  log "kalshi_fast_poller lanzado (PID $!)"
+}
+
 start_btc_quarter_poller() {
   if pgrep -f "python.*btc_quarter_poller\.py" > /dev/null; then log "btc_quarter_poller ya corre"; return; fi
   cd "$SCRIPT_DIR" || return
@@ -130,6 +137,7 @@ start_weather_with_retry
 start_dashboard
 start_analysis_poller
 start_btc_quarter_poller
+start_kalshi_fast_poller
 
 sleep 2
 log "estado:"
@@ -138,3 +146,4 @@ is_up 8001 && log "  ✓ crypto  :8001 responde" || log "  ✗ crypto  :8001 NO 
 pgrep -f "python.*dashboard\.py" > /dev/null && log "  ✓ dashboard corre" || log "  ✗ dashboard NO corre"
 pgrep -f "python.*analysis_poller\.py" > /dev/null && log "  ✓ analysis_poller corre" || log "  ✗ analysis_poller NO corre"
 pgrep -f "python.*btc_quarter_poller\.py" > /dev/null && log "  ✓ btc_quarter_poller corre" || log "  ✗ btc_quarter_poller NO corre"
+pgrep -f "python.*kalshi_fast_poller\.py" > /dev/null && log "  ✓ kalshi_fast_poller corre" || log "  ✗ kalshi_fast_poller NO corre"
