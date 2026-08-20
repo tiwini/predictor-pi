@@ -131,7 +131,15 @@ def _conn() -> sqlite3.Connection:
                      # estable" de "la estación dejó de reportar": KNYC estuvo
                      # 70 min sin publicar con el pico ocurriendo y ninguna
                      # señal de la DB lo delataba.
-                     ("current_obs_ts", "TEXT")]:
+                     ("current_obs_ts", "TEXT"),
+                     # 2026-08-20: el grupo ASOS de 6h del METAR (`1sTTT`), que
+                     # es la MISMA fuente con la que liquida el NWS. Se calcula
+                     # desde el 2026-07-15 y se muestra, pero no se guardaba: al
+                     # ir a medir si debe entrar en el piso no había histórico y
+                     # hubo que reconstruirlo desde METARs crudos. Tercera vez
+                     # que pasa, tras current_temp_stable_min y current_obs_ts.
+                     ("today_max_asos_6h", "REAL"),
+                     ("today_max_asos_6h_ts", "TEXT")]:
         if col not in existing:
             c.execute(f"ALTER TABLE station_snapshots ADD COLUMN {col} {typ}")
     # 2026-07-27: `pred_calibrated_f` nunca estuvo calibrada — se poblaba con
@@ -467,6 +475,7 @@ def poll_one(station_id: str, c: sqlite3.Connection) -> None:
          pressure_inhg, pressure_trend_3h, dewpoint_f, humidity_pct,
          today_min_obs, convective_ambient, narrative_line,
          current_stable_min, current_obs_ts,
+         today_max_asos_6h, today_max_asos_6h_ts,
          obs_floor_n, obs_floor_delta_f, today_max_cli, today_max_cli_ts,
          today_max_obs_ts,
          our_pred_f, pred_iso_med_f, bias_median_causal_f, bias_median_n,
@@ -479,7 +488,7 @@ def poll_one(station_id: str, c: sqlite3.Connection) -> None:
          roi_mid_pct, trades_mid,
          brier_us_7d, brier_kalshi_7d, signal_error)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (ts, station_id, snap.current_temp_f, snap.today_max_obs,
@@ -494,6 +503,9 @@ def poll_one(station_id: str, c: sqlite3.Connection) -> None:
          getattr(snap, "current_temp_stable_min", None),
          (snap.current_obs_time.isoformat()
           if getattr(snap, "current_obs_time", None) else None),
+         getattr(snap, "today_max_asos_6h", None),
+         (snap.today_max_asos_6h_ts.isoformat()
+          if getattr(snap, "today_max_asos_6h_ts", None) else None),
          snap.obs_floor_n, snap.obs_floor_delta_f,
          snap.today_max_cli,
          snap.today_max_cli_ts.isoformat() if snap.today_max_cli_ts else None,
