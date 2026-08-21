@@ -152,66 +152,7 @@ def test_sin_filas_resueltas_el_baseline_es_none(tmp_path, monkeypatch):
     assert rep.base_rate is None
 
 
-# ── El roster fantasma ───────────────────────────────────────────────────
-#
-# `DEFAULT_CROSS = ["KPHX","KLAX","KLAS","KNYC","KBOS"]` sobrevivió al paso de 5
-# a 20 estaciones y se quedó gobernando tres cosas que parecían completas y
-# cubrían un cuarto del sistema: los marcadores de pico de la home, los datos de
-# temperatura mínima y las alertas NWS — que el 2026-08-18 ocultaban cuatro
-# avisos de calor extremo activos (KDFW, KOKC, KMSY, KMIA).
-#
-# Ninguna de las tres fallaba ni avisaba. Este test existe para que la constante
-# no pueda reaparecer.
-
-def test_no_queda_roster_de_5_hardcodeado():
-    """Con AST, no con grep: las menciones en docstrings son documentación del
-    arreglo y deben poder quedarse; lo que no puede volver es una referencia
-    real en el código."""
-    import ast
-    arbol = ast.parse((BASE / "predictor_web.py").read_text())
-    refs = [n.lineno for n in ast.walk(arbol)
-            if isinstance(n, ast.Name) and n.id == "DEFAULT_CROSS"]
-    assert not refs, f"DEFAULT_CROSS vuelve a usarse en las líneas {refs}"
-
-
-def test_ninguna_lista_de_5_estaciones_suelta():
-    """El roster fantasma también podría reaparecer como literal sin nombre."""
-    import ast
-    arbol = ast.parse((BASE / "predictor_web.py").read_text())
-    viejo = {"KPHX", "KLAX", "KLAS", "KNYC", "KBOS"}
-    for n in ast.walk(arbol):
-        if isinstance(n, (ast.List, ast.Set, ast.Tuple)):
-            vals = {e.value for e in n.elts
-                    if isinstance(e, ast.Constant) and isinstance(e.value, str)}
-            assert vals != viejo, f"roster de 5 hardcodeado en la línea {n.lineno}"
-
-
-def test_el_roster_sale_de_stations():
-    import stations
-    assert len(stations.STATION_IDS) == 20
-    assert "KLGA" not in stations.STATION_IDS, "el id de NY es KNYC"
-    assert "KIAH" not in stations.STATION_IDS, "Houston liquida con KHOU"
-
-
-# ── Ventanas de pico ─────────────────────────────────────────────────────
-#
-# Recalibradas el 2026-08-18: cerraban antes de que ocurriera el pico (KSEA
-# dejaba fuera el 73% de los días, KDFW el 57%). La regla al recalibrar es que
-# la ventana sólo se ENSANCHA: el fallo es unidireccional y estrechar el lado
-# temprano abre un punto ciego que la evidencia no pide.
-
-def test_las_ventanas_de_pico_son_sensatas():
-    from stations import STATIONS
-    for s in STATIONS:
-        assert 6 <= s.peak_lo < s.peak_hi <= 21, s.id
-        assert s.peak_hi - s.peak_lo >= 3, f"{s.id}: ventana demasiado estrecha"
-
-
-def test_las_8_recalibradas_conservan_su_ventana():
-    """Si alguien las revierte a la ventana estrecha, esto lo dice."""
-    from stations import PEAK_HOURS
-    esperado = {"KNYC": (13, 18), "KDEN": (13, 18), "KSAT": (14, 19),
-                "KDCA": (13, 18), "KDFW": (14, 19), "KPHL": (13, 18),
-                "KSEA": (14, 18), "KATL": (13, 18)}
-    for sid, v in esperado.items():
-        assert PEAK_HOURS[sid] == v, f"{sid}: {PEAK_HOURS[sid]} != {v}"
+# Los tests del roster fantasma se movieron a `test_roster_unico.py` el
+# 2026-08-21, al extenderlos a dashboard.py: este fichero era ya un cajón de
+# sastre (ledger, sweep, baseline del Brier, roster) y el roster merece su
+# propio sitio.
