@@ -133,8 +133,8 @@ def cargar_settles():
     con = sqlite3.connect(CALIB_DB)
     out = {}
     for sid, d, mx in con.execute(
-            "SELECT station_id, day, actual_max_f FROM day_outcomes "
-            "WHERE actual_max_f IS NOT NULL"):
+            "SELECT station_id, date, max_obs_f FROM day_outcomes "
+            "WHERE max_obs_f IS NOT NULL AND source = 'cli'"):
         out[(sid, d)] = float(mx)
     con.close()
     return out
@@ -175,8 +175,7 @@ def piso_base(max_obs, cli, asos, asos_ts, t_utc, tz):
 def correr(desde, etiqueta):
     settles = cargar_settles()
     filas = cargar_snapshots(desde)
-    tzs = {sid: ZoneInfo(stations.tz_for(sid)) if hasattr(stations, "tz_for")
-           else ZoneInfo(stations.STATIONS[sid].tz) for sid in stations.STATION_IDS}
+    tzs = {sid: ZoneInfo(stations.STATION_TZ[sid]) for sid in stations.STATION_IDS}
 
     # Máximo corrido por (estación, día) en las dos agrupaciones.
     run_utc = defaultdict(lambda: None)
