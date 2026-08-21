@@ -582,6 +582,24 @@ def _build_decision_pill(station, market, difficulty,
 
 @app.route("/")
 def index():
+    # `?station=KMDW` llevaba desde siempre a la estación ACTIVA, fuera cual
+    # fuera: pedías Chicago y te salía Phoenix, con el número grande de Phoenix
+    # y sin ninguna señal de que no era lo que pediste. El dashboard enlaza así
+    # (templates/home.html del panel), o sea que cada clic desde el panel podía
+    # mentir. Es la peor clase de fallo para un instrumento: no falta el dato,
+    # es que es de otra cosa.
+    pedida = (request.args.get("station") or "").strip().upper()
+    if pedida:
+        if pedida not in SUPPORTED_STATIONS:
+            return f"estación desconocida: {pedida}", 404
+        if state is not None and state.station.id != pedida:
+            try:
+                _cambiar_estacion(pedida)
+            except Exception as e:
+                return f"estación no encontrada: {e}", 400
+        # Redirige siempre para dejar la URL limpia: el destino ya no lleva
+        # parámetro, así que no hay bucle.
+        return redirect("/")
     if state is None or state.last_snapshot is None:
         return ("<html><body style='background:#0a0e14;color:#cdd6f4;font-family:sans-serif;"
                 "padding:2rem'>Cargando primera observación… recarga en unos segundos.</body></html>")
@@ -1060,23 +1078,32 @@ def api_clear():
     return redirect("/")
 
 
-@app.route("/api/station", methods=["POST"])
-def api_station():
-    sid = request.form["id"].strip().upper()
-    if not sid:
-        return redirect("/")
-    try:
-        new = fetch_station(sid)
-    except Exception as e:
-        return f"estación no encontrada: {e}", 400
+def _cambiar_estacion(sid: str) -> None:
+    """Cambia la estación activa. Una sola implementación para las dos vías.
+
+    `set_station` deja `last_snapshot` en None a propósito, así que la home
+    enseña "Cargando…" hasta que el poll termina — nunca los números de la
+    estación anterior bajo el nombre de la nueva.
+    """
+    new = fetch_station(sid)
     with state_lock:
         state.set_station(new)
     threading.Thread(target=do_poll, daemon=True).start()
     # Warm bajo demanda: con el warm selectivo (2026-08-21) la estación recién
     # elegida puede llevar rato sin refrescarse, y su tarjeta se vería vieja
     # justo al entrar. Sin esto, elegir una estación dormida se siente roto.
-    threading.Thread(
-        target=lambda: _warm_una(new.id), daemon=True).start()
+    threading.Thread(target=lambda: _warm_una(new.id), daemon=True).start()
+
+
+@app.route("/api/station", methods=["POST"])
+def api_station():
+    sid = request.form["id"].strip().upper()
+    if not sid:
+        return redirect("/")
+    try:
+        _cambiar_estacion(sid)
+    except Exception as e:
+        return f"estación no encontrada: {e}", 400
     return redirect("/")
 
 
