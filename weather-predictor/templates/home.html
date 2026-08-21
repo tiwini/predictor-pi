@@ -283,6 +283,20 @@
                     font-size: 1rem; padding: .1rem .3rem; cursor: pointer; }
   .quickask-clear:hover { color: var(--red); }
   /* F2b.4 — Station strip (horizontal scroll, click swaps active station) */
+  .frescura { background: var(--surface); border: 1px solid var(--surface2);
+              border-radius: 12px; padding: .6rem .8rem; margin-bottom: .8rem; }
+  .frescura-hdr { font-size: .68rem; color: var(--muted); text-transform: uppercase;
+                  letter-spacing: .05em; margin-bottom: .35rem; }
+  .frescura-hdr b { color: var(--text); }
+  .frescura-hdr .muted { text-transform: none; letter-spacing: 0; }
+  .frescura-fila { display: flex; align-items: baseline; gap: .45rem;
+                   flex-wrap: wrap; font-size: .8rem; margin-top: .15rem; }
+  .frescura-et { font-size: .66rem; text-transform: uppercase; letter-spacing: .04em;
+                 min-width: 68px; }
+  .frescura-et.ok  { color: var(--green); }
+  .frescura-et.mal { color: var(--red); }
+  .frescura-item { font-variant-numeric: tabular-nums; color: var(--muted); }
+  .frescura-item b { color: var(--cyan); font-weight: 600; }
   .stationstrip { margin-bottom: 1rem; }
   .stationstrip-title { font-size: .68rem; color: var(--muted); text-transform: uppercase;
                         letter-spacing: .08em; margin-bottom: .4rem; }
@@ -385,6 +399,29 @@
     {% endif %}
   </div>
   {% endif %}
+  {# Sección de frescura (2026-08-21). Los badges de las tarjetas sólo marcan
+     las que van MAL, así que las frescas se ven todas iguales y no se podía
+     responder "¿cuál está más al día?". La mediana dice si el retraso es de una
+     estación o del roster entero. #}
+  {% if frescura_resumen and frescura_resumen.n %}
+  <div class="frescura">
+    <div class="frescura-hdr">Frescura del dato · mediana
+      <b>{{ '%.0f'|format(frescura_resumen.mediana) }}′</b>
+      <span class="muted">· {{ frescura_resumen.n }} estaciones · edad de la
+      observación, no del snapshot</span></div>
+    <div class="frescura-fila">
+      <span class="frescura-et ok">más al día</span>
+      {% for f in frescura_resumen.frescas %}<span class="frescura-item"><b>{{ f.sid }}</b>
+        {{ '%.0f'|format(f.min) }}′</span>{% endfor %}
+    </div>
+    <div class="frescura-fila">
+      <span class="frescura-et mal">más atrás</span>
+      {% for f in frescura_resumen.viejas %}<span class="frescura-item"><b>{{ f.sid }}</b>
+        {{ '%.0f'|format(f.min) }}′</span>{% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
   {% if station_strip %}
   <div class="stationstrip">
     <div class="stationstrip-title" style="display:flex;justify-content:space-between;align-items:center">

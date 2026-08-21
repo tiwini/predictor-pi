@@ -380,6 +380,31 @@ def _frescura_ahora(sid: str, obs_time) -> dict:
         return {"obs_nivel": None, "obs_edad": None}
 
 
+def _resumen_frescura(cards: list) -> dict:
+    """Qué estaciones tienen el dato más al día, y cuáles van más atrás.
+
+    Pedido el 2026-08-21: los badges de las tarjetas sólo marcan las que van
+    MAL (>65 min), así que las frescas se ven todas iguales y no se puede
+    responder "¿cuál está más al día?" sin comparar a ojo.
+
+    La mediana da la referencia de si el roster entero va bien o si el retraso
+    es general — medido el 08-19, la observación varía 6× entre estaciones
+    (16 a 95 min) mientras nuestro snapshot va parejo en todas.
+    """
+    con_edad = [(c["obs_edad"], c["sid"]) for c in cards
+                if c.get("obs_edad") is not None]
+    if not con_edad:
+        return {}
+    con_edad.sort()
+    import statistics
+    return {
+        "n": len(con_edad),
+        "mediana": statistics.median([e for e, _ in con_edad]),
+        "frescas": [{"sid": sid, "min": e} for e, sid in con_edad[:3]],
+        "viejas": [{"sid": sid, "min": e} for e, sid in reversed(con_edad[-3:])],
+    }
+
+
 def _build_station_strip(active_sid: str):
     """F2b.4 — 8 station cards horizontal (max, band, difficulty, edge).
     Reads _stations_cache only (populated por _warm_cross_cache cada poll).
@@ -920,6 +945,7 @@ def index():
         difficulty=difficulty, regime_tag=regime_tag,
         decision=decision, streak_top3=streak_top3,
         station_strip=station_strip,
+        frescura_resumen=_resumen_frescura(station_strip),
         peak_status_age=peak_status_age,
         brier_watchdog=brier_watchdog,
         station_ask_last=station_ask_last,
