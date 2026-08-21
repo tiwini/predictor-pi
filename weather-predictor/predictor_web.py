@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 from flask import Flask, Response, jsonify, redirect, render_template, request
 
 from predictor import (
-    POLL_SEC, PR_TZ, PEAK_HOURS,
+    POLL_SEC, PR_TZ, PEAK_HOURS, STALE_FLOOR_MIN,
     Assertion, State, PeakState, peak_state_display,
     fetch_station, build_snapshot, refresh_auto, eval_assertion,
     find_informative_bin, most_likely_max, movement_cents, parse_expr, log_snapshot,
@@ -387,9 +387,12 @@ def _resumen_frescura(cards: list) -> dict:
     MAL (>65 min), así que las frescas se ven todas iguales y no se puede
     responder "¿cuál está más al día?" sin comparar a ojo.
 
-    La mediana da la referencia de si el roster entero va bien o si el retraso
-    es general — medido el 08-19, la observación varía 6× entre estaciones
-    (16 a 95 min) mientras nuestro snapshot va parejo en todas.
+    ⚠ La edad está CUANTIZADA: los METAR salen a las :53, así que en un momento
+    normal casi todas comparten edad. Medido el 08-21: 18 de 20 dentro de una
+    banda de 5 min, con KNYC (79′) y KDEN (77′) fuera. Por eso NO se nombran
+    "las tres más frescas" —sería un corte arbitrario de un empate— sino cuántas
+    comparten el mínimo. Cuando alguna se despega de verdad (un SPECI a las :15,
+    una estación de 5 min) el empate se rompe solo y el nombre aparece.
     """
     con_edad = [(c["obs_edad"], c["sid"]) for c in cards
                 if c.get("obs_edad") is not None]
@@ -397,11 +400,21 @@ def _resumen_frescura(cards: list) -> dict:
         return {}
     con_edad.sort()
     import statistics
+
+    minima = con_edad[0][0]
+    # Mismo umbral que el badge de las tarjetas: por debajo, la estación va al día.
+    en_minimo = [sid for e, sid in con_edad if e - minima < 1.0]
+    atrasadas = [{"sid": sid, "min": e} for e, sid in reversed(con_edad)
+                 if e > STALE_FLOOR_MIN]
+
     return {
         "n": len(con_edad),
         "mediana": statistics.median([e for e, _ in con_edad]),
-        "frescas": [{"sid": sid, "min": e} for e, sid in con_edad[:3]],
-        "viejas": [{"sid": sid, "min": e} for e, sid in reversed(con_edad[-3:])],
+        "min": minima,
+        "n_en_minimo": len(en_minimo),
+        "frescas": en_minimo[:6],
+        "atrasadas": atrasadas[:4],
+        "n_atrasadas": len(atrasadas),
     }
 
 

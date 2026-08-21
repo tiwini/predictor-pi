@@ -401,24 +401,33 @@
   {% endif %}
   {# Sección de frescura (2026-08-21). Los badges de las tarjetas sólo marcan
      las que van MAL, así que las frescas se ven todas iguales y no se podía
-     responder "¿cuál está más al día?". La mediana dice si el retraso es de una
-     estación o del roster entero. #}
+     responder "¿cuál está más al día?". Ojo: la edad está cuantizada por el
+     METAR de las :53, así que lo honesto es decir CUÁNTAS comparten el mínimo,
+     no nombrar tres de un empate. #}
   {% if frescura_resumen and frescura_resumen.n %}
   <div class="frescura">
-    <div class="frescura-hdr">Frescura del dato · mediana
-      <b>{{ '%.0f'|format(frescura_resumen.mediana) }}′</b>
-      <span class="muted">· {{ frescura_resumen.n }} estaciones · edad de la
-      observación, no del snapshot</span></div>
+    <div class="frescura-hdr">Frescura del dato
+      <span class="muted">· edad de la observación, no del snapshot</span></div>
     <div class="frescura-fila">
-      <span class="frescura-et ok">más al día</span>
-      {% for f in frescura_resumen.frescas %}<span class="frescura-item"><b>{{ f.sid }}</b>
-        {{ '%.0f'|format(f.min) }}′</span>{% endfor %}
+      <span class="frescura-et ok">al día</span>
+      <span class="frescura-item"><b>{{ frescura_resumen.n_en_minimo }}</b> de
+        {{ frescura_resumen.n }} a {{ '%.0f'|format(frescura_resumen.min) }}′</span>
+      <span class="frescura-item">{{ frescura_resumen.frescas|join(' · ') }}{% if
+        frescura_resumen.n_en_minimo > frescura_resumen.frescas|length %} …{% endif %}</span>
+      <span class="frescura-item">· mediana {{ '%.0f'|format(frescura_resumen.mediana) }}′</span>
     </div>
+    {% if frescura_resumen.n_atrasadas %}
     <div class="frescura-fila">
-      <span class="frescura-et mal">más atrás</span>
-      {% for f in frescura_resumen.viejas %}<span class="frescura-item"><b>{{ f.sid }}</b>
+      <span class="frescura-et mal">atrasadas</span>
+      {% for f in frescura_resumen.atrasadas %}<span class="frescura-item"><b>{{ f.sid }}</b>
         {{ '%.0f'|format(f.min) }}′</span>{% endfor %}
+      {% if frescura_resumen.n_atrasadas > frescura_resumen.atrasadas|length %}<span
+        class="frescura-item">+{{ frescura_resumen.n_atrasadas - frescura_resumen.atrasadas|length }}</span>{% endif %}
     </div>
+    {% else %}
+    <div class="frescura-fila"><span class="frescura-et ok">ninguna</span>
+      <span class="frescura-item">por encima de 65′</span></div>
+    {% endif %}
   </div>
   {% endif %}
 
