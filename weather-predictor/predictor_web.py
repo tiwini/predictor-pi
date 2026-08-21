@@ -74,12 +74,68 @@ except Exception as _e:
     _HOME_PROMPTS = {}
 
 
-def build_day_chart_svg(day_chart, current_hour: int) -> str:
+def _curva_de_ayer(station_id: str, tz) -> dict:
+    """{hora_local: °F} de AYER, de nuestros propios snapshots.
+
+    Sale de `analysis.db.station_snapshots.current_f`, que el poller escribe
+    cada 10 min para las 20 estaciones — o sea 5-6 muestras por hora y cero
+    llamadas a ninguna API. Es el mismo sensor que la curva de hoy, así que las
+    dos son comparables sin caveats.
+
+    Se añadió el 2026-08-21 a petición del usuario: ver la de ayer al lado de la
+    de hoy da el contexto que falta para juzgar si el día va adelantado o
+    atrasado respecto a lo normal reciente.
+    """
+    try:
+        off = int(datetime.now(tz).utcoffset().total_seconds() // 3600)
+        desp = f"{off} hours"
+        con = sqlite3.connect(
+            "file:" + str(Path(__file__).parent / "analysis.db") + "?mode=ro",
+            uri=True)
+        try:
+            con.execute("PRAGMA busy_timeout=3000")
+            filas = con.execute(
+                """SELECT CAST(strftime('%H', datetime(ts, ?)) AS INT) h,
+                          AVG(current_f)
+                   FROM station_snapshots
+                   WHERE station = ?
+                     AND date(datetime(ts, ?)) = date('now', ?, '-1 day')
+                     AND current_f IS NOT NULL
+                   GROUP BY h""",
+                (desp, station_id, desp, desp)).fetchall()
+        finally:
+            con.close()
+        return {h: t for h, t in filas if t is not None}
+    except Exception:
+        return {}
+
+
+def build_day_chart_svg(day_chart, current_hour: int,
+                        ayer: dict | None = None,
+                        current_f: float | None = None,
+                        current_hora_frac: float | None = None) -> str:
     """Inline SVG: observed line (verde, gruesa, con puntos) + ensemble
     envelope p10-p90 (banda azul) + median (línea fina punteada). Marcador
-    'ahora' resaltado, eje Y con °F, eje X con horas clave."""
+    'ahora' resaltado, eje Y con °F, eje X con horas clave.
+
+    Añadido el 2026-08-21, con el enfoque de instrumento:
+
+    - **curva de AYER** en gris punteado, para tener referencia de si el día va
+      adelantado o atrasado;
+    - **punto `current`** marcado aparte. La línea sólida sale de los METAR
+      HORARIOS, así que entre un :53 y el siguiente no crece aunque la
+      temperatura suba y el sistema ya lo sepa por el feed de 5 min. Sin este
+      punto la gráfica parecía "no actualizada" — que es justo lo que el
+      usuario reportó: a las 10:34 el último punto era de las 8h.
+    - **hueco sombreado** entre la última observación y ahora, para que la
+      ausencia de dato se vea en vez de parecer una línea que acaba.
+    """
+    ayer = ayer or {}
     all_temps = [v for h, obs, med, p10, p90 in day_chart
                  for v in (obs, med, p10, p90) if v is not None]
+    all_temps += [v for v in ayer.values() if v is not None]
+    if current_f is not None:
+        all_temps.append(current_f)
     if not all_temps:
         return "<p style='color:#a6adc8'>sin datos del día aún</p>"
     lo, hi = min(all_temps) - 1, max(all_temps) + 1
@@ -121,6 +177,13 @@ def build_day_chart_svg(day_chart, current_hour: int) -> str:
     med_pts = " ".join(f"{xpos(h):.1f},{ypos(med):.1f}"
                        for h, _, med, _, _ in day_chart if med is not None)
 
+    # AYER: gris punteado, por detrás de todo. Referencia, no protagonista.
+    ayer_pts = " ".join(f"{xpos(h):.1f},{ypos(t):.1f}"
+                        for h, t in sorted(ayer.items()) if lo <= t <= hi)
+    ayer_line = (f'<polyline points="{ayer_pts}" fill="none" stroke="#6c7086" '
+                 f'stroke-width="1.4" stroke-dasharray="4,3" opacity="0.75"/>'
+                 if ayer_pts else "")
+
     # observed: line + dots so cada hora con dato es visible
     obs_data = [(h, obs) for h, obs, _, _, _ in day_chart if obs is not None]
     obs_pts = " ".join(f"{xpos(h):.1f},{ypos(obs):.1f}" for h, obs in obs_data)
@@ -128,6 +191,25 @@ def build_day_chart_svg(day_chart, current_hour: int) -> str:
         f'<circle cx="{xpos(h):.1f}" cy="{ypos(obs):.1f}" r="2.5" '
         f'fill="#a6e3a1" stroke="#0a0e14" stroke-width="0.8"/>'
         for h, obs in obs_data)
+
+    # El HUECO entre el último METAR y ahora, y el punto del feed de 5 min.
+    # Sin esto, una estación que lleva dos horas callada se ve igual que una
+    # que acaba de reportar.
+    hueco = punto_now = ""
+    if current_f is not None and current_hora_frac is not None and obs_data:
+        h_ult = max(h for h, _ in obs_data)
+        x_ult, x_now = xpos(h_ult), xpos(min(23, current_hora_frac))
+        if x_now - x_ult > 2:
+            hueco = (f'<rect x="{x_ult:.1f}" y="{pad_t}" '
+                     f'width="{x_now - x_ult:.1f}" height="{ih:.1f}" '
+                     f'fill="rgba(249,226,175,0.07)"/>'
+                     f'<line x1="{x_ult:.1f}" y1="{ypos(dict(obs_data)[h_ult]):.1f}" '
+                     f'x2="{x_now:.1f}" y2="{ypos(current_f):.1f}" '
+                     f'stroke="#a6e3a1" stroke-width="1.2" '
+                     f'stroke-dasharray="3,3" opacity="0.55"/>')
+        if lo <= current_f <= hi:
+            punto_now = (f'<circle cx="{x_now:.1f}" cy="{ypos(current_f):.1f}" '
+                         f'r="4" fill="none" stroke="#f9e2af" stroke-width="2"/>')
 
     # y-axis: rayitas cada 1°F (sin label) + label cada 5°F con grid line
     y_lines = []
@@ -189,11 +271,23 @@ def build_day_chart_svg(day_chart, current_hour: int) -> str:
         f'<line x1="{pad_l+220}" y1="{pad_t-12}" x2="{pad_l+234}" y2="{pad_t-12}" '
         f'stroke="#89b4fa" stroke-width="1" stroke-dasharray="3,3"/>'
         f'<text x="{pad_l+238}" y="{pad_t-9}">mediana</text>'
-        f'</g>')
+        + (f'<line x1="{pad_l+300}" y1="{pad_t-12}" x2="{pad_l+314}" y2="{pad_t-12}" '
+           f'stroke="#6c7086" stroke-width="1.4" stroke-dasharray="4,3"/>'
+           f'<text x="{pad_l+318}" y="{pad_t-9}">ayer</text>' if ayer_pts else "")
+        + (f'<circle cx="{pad_l+372}" cy="{pad_t-12}" r="4" fill="none" '
+           f'stroke="#f9e2af" stroke-width="2"/>'
+           f'<text x="{pad_l+380}" y="{pad_t-9}">ahora (feed 5min)</text>'
+           if punto_now else "")
+        + f'</g>')
 
+    # Orden de pintado = orden de importancia, de atrás hacia delante: contexto
+    # (bandas, ejes), luego ayer, luego la banda del ensemble, y encima lo
+    # observado. El punto `current` va el último para que nunca quede tapado.
     return (f'<svg viewBox="0 0 {W} {H}" width="100%" style="display:block">'
-            + bands + legend + "".join(y_lines) + "".join(x_lines) + env
-            + med_line + now_line + obs_line + obs_dots + '</svg>')
+            + bands + legend + "".join(y_lines) + "".join(x_lines)
+            + ayer_line + env
+            + med_line + now_line + hueco + obs_line + obs_dots + punto_now
+            + '</svg>')
 
 
 def build_top_max_bars(ensemble, top_n: int = 7):
@@ -456,7 +550,11 @@ def index():
 
     pr_time = snap.station_local.astimezone(PR_TZ).strftime("%H:%M")
     local_time = snap.station_local.strftime("%H:%M %Z")
-    day_chart_svg = build_day_chart_svg(snap.day_chart, snap.station_local.hour)
+    day_chart_svg = build_day_chart_svg(
+        snap.day_chart, snap.station_local.hour,
+        ayer=_curva_de_ayer(station.id, station.tz),
+        current_f=snap.current_temp_f,
+        current_hora_frac=snap.station_local.hour + snap.station_local.minute / 60)
 
     climate = snap.climatology
     climate_class, climate_word = "", ""
