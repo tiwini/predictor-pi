@@ -359,6 +359,27 @@ state: State | None = None
 _last_ts = [None]
 
 
+def _frescura_ahora(sid: str, obs_time) -> dict:
+    """{obs_nivel, obs_edad} calculados EN ESTE INSTANTE.
+
+    Se separa del fetch a propósito: con el warm selectivo (2026-08-21) una
+    tarjeta puede llevar rato sin refrescarse, y si la edad viniera del momento
+    del fetch se mostraría más fresca de lo que es. La edad tiene que medirse
+    contra el reloj de ahora, siempre.
+    """
+    if not sid or obs_time is None:
+        return {"obs_nivel": None, "obs_edad": None}
+    try:
+        edad = (datetime.now(timezone.utc) - obs_time).total_seconds() / 60.0
+        lo, hi = PEAK_HOURS.get(sid, (12, 17))
+        ahora = datetime.now(ZoneInfo(STATION_TZ[sid]))
+        queda = max(0.0, (hi - (ahora.hour + ahora.minute / 60)) * 60)
+        f = obs_freshness(edad, queda)
+        return {"obs_nivel": f["nivel"], "obs_edad": f["age_min"]}
+    except Exception:
+        return {"obs_nivel": None, "obs_edad": None}
+
+
 def _build_station_strip(active_sid: str):
     """F2b.4 — 8 station cards horizontal (max, band, difficulty, edge).
     Reads _stations_cache only (populated por _warm_cross_cache cada poll).
@@ -418,8 +439,7 @@ def _build_station_strip(active_sid: str):
             # Edad del dato de la estación (no la del snapshot). El snapshot va
             # parejo en todas; la observación varía 6×, y sin esto dos tarjetas
             # idénticas pueden estar a 16 y a 95 min de la realidad.
-            "obs_nivel": (r.get("frescura") or {}).get("nivel"),
-            "obs_edad": (r.get("frescura") or {}).get("age_min"),
+            **_frescura_ahora(r.get("station"), r.get("current_obs_time")),
         })
     # Con el enfoque de instrumento (2026-08-21), lo primero que hay que poder
     # ver es qué estaciones están al día. Las de dato muerto suben; dentro de
@@ -1013,7 +1033,27 @@ def api_station():
     with state_lock:
         state.set_station(new)
     threading.Thread(target=do_poll, daemon=True).start()
+    # Warm bajo demanda: con el warm selectivo (2026-08-21) la estación recién
+    # elegida puede llevar rato sin refrescarse, y su tarjeta se vería vieja
+    # justo al entrar. Sin esto, elegir una estación dormida se siente roto.
+    threading.Thread(
+        target=lambda: _warm_una(new.id), daemon=True).start()
     return redirect("/")
+
+
+def _warm_una(sid: str) -> None:
+    """Refresca una sola estación en el cache compartido."""
+    try:
+        nuevos = _compute_stations_results(solo={sid})
+        previos = {r.get("station"): r
+                   for r in (_stations_cache.get("results") or [])}
+        for r in nuevos:
+            previos[r.get("station")] = r
+        _stations_cache["computed_at"] = datetime.now(timezone.utc)
+        _stations_cache["results"] = [previos[s] for s in SUPPORTED_STATIONS
+                                      if s in previos]
+    except Exception as e:
+        print(f"warm_una {sid}: {e}", file=sys.stderr)
 
 
 _refresh_started_ts: datetime | None = None
@@ -2137,27 +2177,17 @@ def _cross_one(sid: str, day_offset: int = 0) -> dict:
     except Exception:
         div_info = None
 
-    # Frescura de la observación. El criterio es el mismo que el aviso
-    # OBSERVACIÓN VIEJA del CLI, importado de `predictor` — no reimplementado.
-    frescura = {"nivel": None, "limite_min": None, "age_min": None}
-    if day_offset == 0:
-        _obs_t = d.get("current_obs_time")
-        if _obs_t is not None:
-            try:
-                _edad = (datetime.now(timezone.utc)
-                         - _obs_t).total_seconds() / 60.0
-                _lo, _hi = PEAK_HOURS.get(sid, (12, 17))
-                _ahora = datetime.now(station.tz)
-                _queda = max(0.0, (_hi - (_ahora.hour + _ahora.minute / 60)) * 60)
-                frescura = obs_freshness(_edad, _queda)
-            except Exception:
-                pass
+    # La hora de la observación se guarda CRUDA; la frescura se calcula al
+    # PINTAR, en `_build_station_strip`. Calcularla aquí la congelaba con el
+    # fetch: una tarjeta cacheada 30 min mostraría una edad 30 min menor de la
+    # real, o sea subestimando el retraso justo en las estaciones que menos se
+    # refrescan. Importa desde que el warm es selectivo (2026-08-21).
 
     return {
         "station": sid,
         "name": station.name,
         "current_temp": d.get("current_temp"),
-        "frescura": frescura,
+        "current_obs_time": d.get("current_obs_time"),
         "max_obs": d.get("max_obs"),
         "p10": d["p10"], "p50": d["p50"], "p90": d["p90"],
         "p50_precise": p50_precise,
@@ -2287,11 +2317,15 @@ def _record_min_snapshots_curated() -> None:
             print(f"min snapshot {sid}: {e}", file=sys.stderr)
 
 
-def _compute_stations_results() -> list:
+def _compute_stations_results(solo: set | None = None) -> list:
     """Fetch _cross_one para todas las SUPPORTED_STATIONS en paralelo y devuelve
     la lista ordenada por dificultad. Usado tanto por la ruta /stations como por
     el pre-warm — comparten el mismo cache."""
     stations = list(SUPPORTED_STATIONS)
+    if solo is not None:
+        stations = [s for s in stations if s in solo]
+    if not stations:
+        return []
     with ThreadPoolExecutor(max_workers=max(1, len(stations))) as ex:
         results = list(ex.map(lambda s: _cross_one(s, 0), stations))
 
@@ -3543,6 +3577,57 @@ def do_poll():
           f"{t}  max={mx}  {snap.peak_status}")
 
 
+# Cuántos ciclos de warm se saltan las estaciones que no están en su ventana.
+# El warm corre en cada poll (3-10 min), así que 4 ciclos ≈ 12-40 min — muy por
+# debajo del TTL de 60 min del ensemble, o sea que no se pierde ninguna corrida
+# del GFS por esperar.
+CICLOS_FUERA_DE_VENTANA = 4
+_warm_tick = {"n": 0}
+
+
+def _estaciones_a_refrescar() -> set:
+    """Qué estaciones toca refrescar en este ciclo de warm.
+
+    Antes se refrescaban las 20 en cada poll. Medido el 2026-08-20: la cuota de
+    Open-Meteo iba al 17-22% y el grueso era esto. No era una emergencia, pero
+    es trabajo inútil de madrugada y CPU del Pi.
+
+    Reutiliza `_station_mode`, que YA clasifica para el polling — no se inventa
+    criterio nuevo:
+
+        observation  toggle manual        → siempre (se está mirando)
+        lost         mercado ya resuelto  → nunca (el día está hecho)
+        normal       según la ventana     → siempre dentro, 1 de cada N fuera
+
+    La estación ACTIVA se refresca siempre, esté como esté: es la que el
+    usuario tiene delante.
+
+    Que una tarjeta no se refresque es seguro **porque su edad se pinta**: el
+    badge de frescura la delata en cuanto se queda atrás. Sin ese badge esto
+    sería esconder datos viejos.
+    """
+    _warm_tick["n"] += 1
+    toca_lento = _warm_tick["n"] % CICLOS_FUERA_DE_VENTANA == 0
+    salida = set()
+    if state is not None and state.station is not None:
+        salida.add(state.station.id)
+    for sid in SUPPORTED_STATIONS:
+        try:
+            modo = _station_mode(sid)
+        except Exception:
+            modo = "normal"
+        if modo == "lost":
+            continue
+        if modo == "observation":
+            salida.add(sid)
+            continue
+        lo, hi = PEAK_HOURS.get(sid, (12, 17))
+        h = datetime.now(ZoneInfo(STATION_TZ[sid])).hour
+        if (lo - 1) <= h < (hi + 1) or toca_lento:
+            salida.add(sid)
+    return salida
+
+
 def _warm_cross_cache():
     """Pre-fetch ensemble + market + peak_window para SUPPORTED_STATIONS
     así /cross, /stations y la primera navegación por estación sirven
@@ -3553,9 +3638,17 @@ def _warm_cross_cache():
 
     Runs in a thread; failures are silent (cache miss just means slow page)."""
     try:
-        results = _compute_stations_results()
+        objetivo = _estaciones_a_refrescar()
+        nuevos = _compute_stations_results(solo=objetivo)
+        # Fusión: lo que no se refrescó conserva su entrada anterior. La
+        # tarjeta seguirá viéndose, pero con su edad real — que se calcula al
+        # pintar, no aquí.
+        previos = {r.get("station"): r for r in (_stations_cache.get("results") or [])}
+        for r in nuevos:
+            previos[r.get("station")] = r
         _stations_cache["computed_at"] = datetime.now(timezone.utc)
-        _stations_cache["results"] = results
+        _stations_cache["results"] = [previos[s] for s in SUPPORTED_STATIONS
+                                      if s in previos]
     except Exception as e:
         print(f"warm_cross_cache error: {e}", file=sys.stderr)
 
