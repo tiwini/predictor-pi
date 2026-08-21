@@ -42,28 +42,33 @@ def _inject_helpers():
     return {"station_label": station_label,
             "station_city": STATION_CITY if "STATION_CITY" in globals() else {}}
 
-WEATHER_STATIONS = [
-    ("KPHX", "Phoenix"),
-    ("KLAX", "Los Angeles"),
-    ("KLAS", "Las Vegas"),
-    ("KNYC", "New York (Central Park)"),
-    ("KBOS", "Boston"),
-    ("KMIA", "Miami"),
-    ("KMDW", "Chicago Midway"),
-    ("KIAH", "Houston"),
-    ("KSFO", "San Francisco"),
-    ("KAUS", "Austin"),
-    ("KDEN", "Denver"),
-    ("KSAT", "San Antonio"),
-    ("KDCA", "Washington DC"),
-    ("KDFW", "Dallas-Fort Worth"),
-    ("KPHL", "Philadelphia"),
-    ("KSEA", "Seattle"),
-    ("KATL", "Atlanta"),
-    ("KMSY", "New Orleans"),
-    ("KOKC", "Oklahoma City"),
-    ("KMSP", "Minneapolis-St. Paul"),
-]
+# Nombres cortos para la UI. NO es el roster: el roster sale de `stations.py`,
+# que es la fuente única. Aquí sólo se traduce id → nombre legible, y si falta
+# alguno se cae al propio id en vez de esconder la estación.
+_NOMBRE_CORTO = {
+    "KPHX": "Phoenix", "KLAX": "Los Angeles", "KLAS": "Las Vegas",
+    "KNYC": "New York (Central Park)", "KBOS": "Boston", "KMIA": "Miami",
+    "KMDW": "Chicago Midway", "KHOU": "Houston (Hobby)",
+    "KSFO": "San Francisco", "KAUS": "Austin", "KDEN": "Denver",
+    "KSAT": "San Antonio", "KDCA": "Washington DC",
+    "KDFW": "Dallas-Fort Worth", "KPHL": "Philadelphia", "KSEA": "Seattle",
+    "KATL": "Atlanta", "KMSY": "New Orleans", "KOKC": "Oklahoma City",
+    "KMSP": "Minneapolis-St. Paul",
+}
+
+# El roster estaba duplicado aquí con `KIAH`, la estación retirada el
+# 2026-07-25 cuando se descubrió que Houston liquida con Hobby y no con Bush.
+# Era la cuarta copia del roster y la última que quedaba viva: las otras tres
+# (peak_status, datos de mínima, alertas NWS) se mataron el 2026-08-18. Ninguna
+# fallaba ni avisaba — servían un roster equivocado con toda naturalidad.
+try:
+    import sys as _sys
+    _sys.path.insert(0, str(Path(__file__).resolve().parent / "weather-predictor"))
+    from stations import STATION_IDS as _IDS
+    WEATHER_STATIONS = [(sid, _NOMBRE_CORTO.get(sid, sid)) for sid in _IDS]
+except Exception as _e:                          # pragma: no cover
+    print(f"[dashboard] no se pudo leer stations.py: {_e}")
+    WEATHER_STATIONS = [(sid, n) for sid, n in _NOMBRE_CORTO.items()]
 
 CRYPTO_SYMBOLS = [
     ("BTCUSDT", "Bitcoin"),
