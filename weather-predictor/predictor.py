@@ -1546,10 +1546,14 @@ def build_snapshot(station: Station) -> Snapshot:
     # next 6h forecast distribution
     forecast = []
     for i, ts in next_6h_idx:
-        vals = sorted([t[i] for t in members.values() if t[i] is not None])
-        if vals:
-            n = len(vals)
-            forecast.append((ts, vals[n // 2], vals[int(n * 0.1)], vals[int(n * 0.9)]))
+        # Ponderado igual que la banda del gráfico: el usuario notó que este
+        # bloque "no se actualizaba", y era cierto — sin pesos sólo cambiaba
+        # con cada publicación del GFS.
+        pares = [(t[i], weights[mi] if mi < len(weights) else 0.0)
+                 for mi, t in enumerate(members[k] for k in member_keys)]
+        q = percentiles_ponderados(pares)
+        if q:
+            forecast.append((ts, q[1], q[0], q[2]))
 
     # day chart — 24 hourly entries with observed (if any) and forecast band
     hour_obs = {}  # local hour -> last observed temp that hour
@@ -1565,10 +1569,15 @@ def build_snapshot(station: Station) -> Snapshot:
         ts = datetime.fromisoformat(ts_str).replace(tzinfo=station.tz)
         if ts.date() != today:
             continue
-        vals = sorted([t[i] for t in members.values() if t[i] is not None])
-        if vals:
-            n = len(vals)
-            hour_fcst[ts.hour] = (vals[n // 2], vals[int(n * 0.1)], vals[int(n * 0.9)])
+        # PONDERADO por el reweight (2026-08-21). Antes eran percentiles
+        # crudos, así que la banda sólo cambiaba cuando publicaba el GFS —
+        # 4 veces al día— mientras los pesos se recalculan con cada
+        # observación. La banda decía menos de lo que el sistema sabía.
+        pares = [(t[i], weights[mi] if mi < len(weights) else 0.0)
+                 for mi, t in enumerate(members[k] for k in member_keys)]
+        q = percentiles_ponderados(pares)
+        if q:
+            hour_fcst[ts.hour] = (q[1], q[0], q[2])
     day_chart = []
     for h in range(24):
         obs = hour_obs.get(h)
@@ -1991,6 +2000,36 @@ def record_kalshi(snap: Snapshot, station: Station) -> None:
 STALE_FLOOR_MIN = 65.0
 # Fuera de la ventana de pico ya no hay "mitad de ventana" que calcular.
 STALE_CLOSED_MIN = 90.0
+
+
+def percentiles_ponderados(pares: list, ps: tuple = (0.10, 0.50, 0.90)):
+    """Percentiles de `[(valor, peso), ...]`, con los pesos del reweight.
+
+    Por qué existe (2026-08-21): la banda p10-p90 del gráfico y el "Pronóstico
+    próximas horas" se calculaban con `sorted(members.values())`, o sea **sin
+    pesos**. El reweight bayesiano recalcula los pesos con CADA observación,
+    pero esas dos vistas los ignoraban y enseñaban el ensemble crudo — que sólo
+    cambia cuando el GFS publica, 4 veces al día.
+
+    Es un caso directo del principio de que todo lo que consume un estimado
+    tiene que actualizarse con él ([[principio_todo_se_reajusta_2026_08_21]]):
+    los pesos existían y estas dos vistas no se enteraban.
+
+    Devuelve None si no hay pares con peso.
+    """
+    vivos = [(v, w) for v, w in pares if v is not None and w and w > 0]
+    if not vivos:
+        return None
+    vivos.sort(key=lambda x: x[0])
+    total = sum(w for _, w in vivos)
+    out, acc, i = [], 0.0, 0
+    for p in ps:
+        objetivo = p * total
+        while i < len(vivos) - 1 and acc + vivos[i][1] < objetivo:
+            acc += vivos[i][1]
+            i += 1
+        out.append(vivos[i][0])
+    return tuple(out)
 
 
 def obs_freshness(age_min: float | None,

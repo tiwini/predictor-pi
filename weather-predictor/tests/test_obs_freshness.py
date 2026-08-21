@@ -124,3 +124,38 @@ def test_la_etiqueta_dice_el_tramo(proximidad):
 def test_estacion_desconocida_no_revienta(proximidad):
     tramo, _, _ = proximidad("XXXX")
     assert tramo == 3, "cae al final en vez de lanzar"
+
+
+# ── Percentiles ponderados por el reweight ───────────────────────────────
+#
+# La banda p10-p90 del gráfico y el "Pronóstico próximas horas" se calculaban
+# con percentiles CRUDOS, así que sólo cambiaban cuando publicaba el GFS (4
+# veces al día) aunque los pesos del reweight se recalculan con cada
+# observación. El usuario lo notó como "no se actualiza".
+
+def test_sin_pesos_iguales_es_el_percentil_de_siempre():
+    from predictor import percentiles_ponderados
+    pares = [(v, 1.0) for v in (10, 20, 30, 40, 50)]
+    p10, p50, p90 = percentiles_ponderados(pares)
+    assert p50 == 30, "la mediana con pesos iguales es la de siempre"
+
+
+def test_el_peso_desplaza_la_mediana():
+    """Si el reweight concentra la masa abajo, la mediana baja."""
+    from predictor import percentiles_ponderados
+    pares = [(10, 10.0), (20, 10.0), (30, 1.0), (40, 1.0), (50, 1.0)]
+    _, p50, _ = percentiles_ponderados(pares)
+    assert p50 <= 20, f"la mediana debe caer hacia los miembros pesados, dio {p50}"
+
+
+def test_los_miembros_con_peso_cero_no_cuentan():
+    from predictor import percentiles_ponderados
+    pares = [(10, 1.0), (20, 1.0), (999, 0.0)]
+    _, _, p90 = percentiles_ponderados(pares)
+    assert p90 <= 20, "un miembro descartado no puede estirar la banda"
+
+
+def test_sin_pares_validos_devuelve_none():
+    from predictor import percentiles_ponderados
+    assert percentiles_ponderados([]) is None
+    assert percentiles_ponderados([(None, 1.0), (5, 0.0)]) is None
