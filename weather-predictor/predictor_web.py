@@ -3551,13 +3551,25 @@ def _check_settle_alerts(station, settled: list) -> None:
 def do_poll():
     if state is None:
         return
-    if _poll_interval_for(state.station) == PEAK_POLL_SEC:
-        invalidate_obs_cache(state.station.id)
+    # De qué estación es este poll. `build_snapshot` tarda segundos y el usuario
+    # puede cambiar de estación mientras tanto: si el resultado se guardara sin
+    # comprobar, el snapshot de la ANTERIOR aterrizaría sobre la nueva.
+    # Observado el 2026-08-21 al pasar de KPHX a KMDW: la home puso "80.00°F ↓
+    # -32.52°F", que es 112.52 (Phoenix) − 80.00 (Chicago). El delta no era de
+    # ninguna estación: era la resta de dos.
+    estacion = state.station
+    sid_al_empezar = estacion.id
+    if _poll_interval_for(estacion) == PEAK_POLL_SEC:
+        invalidate_obs_cache(sid_al_empezar)
     try:
-        snap = build_snapshot(state.station)
+        snap = build_snapshot(estacion)
     except Exception as e:
         print(f"poll error: {e}", file=sys.stderr)
         _record_poll_error(f"snapshot: {e}")
+        return
+    if state.station.id != sid_al_empezar:
+        # Cambió de estación mientras construíamos. Se descarta entero: mejor un
+        # ciclo sin dato que un dato de otra cosa.
         return
     POLL_STATS["last_ok_at"] = datetime.now(timezone.utc)
     POLL_STATS["ok_count"] += 1
