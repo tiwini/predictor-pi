@@ -187,7 +187,8 @@ def correr(desde, etiqueta):
     run_loc = defaultdict(lambda: None)
 
     viol = {"actual": 0, "A": 0, "B": 0}
-    viol_por_est = {"A": defaultdict(int), "B": defaultdict(int)}
+    viol_por_est = {"actual": defaultdict(int), "A": defaultdict(int),
+                    "B": defaultdict(int)}
     subidas, refutadas, n_snap = [], 0, 0
     dias = set()
 
@@ -228,6 +229,7 @@ def correr(desde, etiqueta):
         techo = settle + TOLERANCIA
         if p_act is not None and p_act > techo:
             viol["actual"] += 1
+            viol_por_est["actual"][sid] += 1
         if p_a is not None and p_a > techo:
             viol["A"] += 1
             viol_por_est["A"][sid] += 1
@@ -273,8 +275,16 @@ def correr(desde, etiqueta):
 
     print("\n--- VEREDICTO ---")
     add_b = viol["B"] - viol["actual"]
-    est_con_viol = len([s for s, c in viol_por_est["B"].items()
-                        if c > viol_por_est["A"].get(s, 0) * 0])
+    # ⚠ El criterio pre-registrado habla de violaciones AÑADIDAS, no totales.
+    # La primera versión contaba totales y daba 4 estaciones cuando las añadidas
+    # estaban en 1: KBOS/KPHX/KDCA ya violaban con el piso actual.
+    añadidas_est = {s: c - viol_por_est["actual"].get(s, 0)
+                    for s, c in viol_por_est["B"].items()}
+    añadidas_est = {s: c for s, c in añadidas_est.items() if c > 0}
+    est_con_viol = len(añadidas_est)
+    if añadidas_est:
+        print(f"  violaciones AÑADIDAS por estación: "
+              f"{sorted(añadidas_est.items(), key=lambda x: -x[1])}")
     if len(dias) < N_MINIMO:
         print(f"  ESPERAR — N={len(dias)} < {N_MINIMO} station-days")
     elif add_b == 0:
