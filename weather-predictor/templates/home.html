@@ -308,6 +308,14 @@
   .stcard-active { border-color: var(--cyan); background: rgba(137,220,235,0.05); }
   .stcard-sid { font-size: .95rem; font-weight: 700; color: var(--cyan);
                 letter-spacing: .02em; }
+  /* Edad del dato de la estación. Sólo aparece cuando hay algo que decir: por
+     debajo de 65 min no se pinta nada, porque esa oscilación la produce el
+     METAR horario por diseño y marcarla sería ruido. */
+  .obs-badge { font-size: .62rem; font-weight: 700; padding: .05rem .25rem;
+               border-radius: 4px; margin-left: .2rem;
+               font-variant-numeric: tabular-nums; vertical-align: middle; }
+  .obs-vieja  { background: rgba(249,226,175,.16); color: var(--yellow); }
+  .obs-muerta { background: rgba(243,139,168,.20); color: var(--red); }
   .stcard-max { font-size: 1.15rem; font-variant-numeric: tabular-nums;
                 color: var(--yellow); font-weight: 600; margin: .1rem 0 .05rem; }
   .stcard-band { font-size: .72rem; color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -407,7 +415,17 @@
       <a href="/station/{{ c.sid }}"
          class="stcard {% if c.is_active %}stcard-active{% endif %}"
          style="text-decoration:none;color:inherit">
-        <div class="stcard-sid">{{ c.sid }}</div>
+        <div class="stcard-sid">{{ c.sid }}
+          {# Edad del dato de la ESTACIÓN, no la del snapshot. Verde por debajo
+             de 65 min = lo que el METAR horario produce solo; ámbar por encima;
+             rojo pasado el umbral del aviso OBSERVACIÓN VIEJA, que es relativo
+             a la ventana restante. #}
+          {% if c.obs_nivel == 'muerta' %}<span class="obs-badge obs-muerta"
+            title="Sin dato nuevo desde hace {{ '%.0f'|format(c.obs_edad) }} min — supera el umbral de la ventana restante">{{ '%.0f'|format(c.obs_edad) }}′</span>
+          {% elif c.obs_nivel == 'vieja' %}<span class="obs-badge obs-vieja"
+            title="{{ '%.0f'|format(c.obs_edad) }} min sin dato nuevo — más de lo que el METAR horario produce solo">{{ '%.0f'|format(c.obs_edad) }}′</span>
+          {% endif %}
+        </div>
         {% if c.p50 is not none %}
         <div class="stcard-max">{{ '%.0f'|format(c.p50) }}°F</div>
         <div class="stcard-band">±{{ '%.1f'|format(c.band or 0) }}</div>

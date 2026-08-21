@@ -66,6 +66,11 @@ def day_forecast(station: Station, day_offset: int) -> dict:
             "eff_n": snap.ensemble_eff_n,
             "max_obs": snap.today_max_obs,
             "current_temp": snap.current_temp_f,
+            # Hora de la observación que produjo `current_temp`. Se expone para
+            # que las tarjetas del roster puedan mostrar la EDAD del dato: el
+            # snapshot es uniforme entre estaciones (6-8 min) pero la
+            # observación varía 6× — medido el 2026-08-19, de 16 a 95 min.
+            "current_obs_time": getattr(snap, "current_obs_time", None),
             "regime_breaks": len(snap.regime_break_hours),
         }
     return _day_distribution(station, day_offset)

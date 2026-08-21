@@ -1984,6 +1984,56 @@ def record_kalshi(snap: Snapshot, station: Station) -> None:
         console.print(f"[yellow]kalshi fetch error:[/] {e}")
 
 
+# ── Frescura de la observación ────────────────────────────────────────────
+# El METAR es horario y sale a las :53, así que la edad del último dato oscila
+# de 0 a ~65 min POR DISEÑO. Ese es el suelo: sin él vuelven los falsos
+# positivos que costaron tres iteraciones al construir el aviso.
+STALE_FLOOR_MIN = 65.0
+# Fuera de la ventana de pico ya no hay "mitad de ventana" que calcular.
+STALE_CLOSED_MIN = 90.0
+
+
+def obs_freshness(age_min: float | None,
+                  minutes_left_in_window: float | None) -> dict:
+    """Cómo de fresco es el último dato de una estación.
+
+    Portado desde `investigacion/lectura_estacion.py` (aviso OBSERVACIÓN VIEJA,
+    nacido del caso KNYC del 2026-08-14: 70 min sin publicar con el pico en
+    curso y la lectura de aspecto normal). Vivía sólo en una herramienta de
+    línea de comandos que hay que correr a mano por estación, y el uso medido
+    dice que nadie sale de la home — así que el aviso existía y no se veía.
+
+    Se centraliza aquí para que el web y el CLI usen LA MISMA función. Duplicar
+    el criterio es como se desalineó el pipeline de bins.
+
+    El umbral es **relativo a la ventana restante**, con suelo: quedarse ciego
+    70 min a media mañana es inocuo; con el pico ocurriendo es grave.
+
+        límite = max(65, restante/2)     con la ventana abierta
+        límite = 90                      con la ventana cerrada
+
+    Niveles, sin inventar ningún número nuevo:
+        fresca  edad <= 65   — dentro de lo que el METAR horario produce solo
+        vieja   65 < edad < límite — más de lo normal, aún sin alarma
+        muerta  edad >= límite — es el umbral del aviso ya validado
+
+    Devuelve {"nivel", "limite_min", "age_min"}; nivel None si no hay edad.
+    """
+    if age_min is None:
+        return {"nivel": None, "limite_min": None, "age_min": None}
+    if minutes_left_in_window and minutes_left_in_window > 0:
+        limite = max(STALE_FLOOR_MIN, minutes_left_in_window / 2.0)
+    else:
+        limite = STALE_CLOSED_MIN
+    if age_min >= limite:
+        nivel = "muerta"
+    elif age_min > STALE_FLOOR_MIN:
+        nivel = "vieja"
+    else:
+        nivel = "fresca"
+    return {"nivel": nivel, "limite_min": limite, "age_min": age_min}
+
+
 def obs_floor_from_snapshot(snap: Snapshot) -> float | None:
     """Piso de observación reconstruido desde un Snapshot ya construido.
 

@@ -21,7 +21,7 @@ from predictor import (
     fetch_station, build_snapshot, refresh_auto, eval_assertion,
     find_informative_bin, most_likely_max, movement_cents, parse_expr, log_snapshot,
     record_kalshi, invalidate_obs_cache, fetch_precip_context_12h,
-    obs_floor_from_snapshot, zero_impossible_bins,
+    obs_floor_from_snapshot, zero_impossible_bins, obs_freshness,
 )
 try:
     import calibration as _calibration
@@ -283,7 +283,17 @@ def _build_station_strip(active_sid: str):
             "is_active": r["station"] == active_sid,
             "peak_badge": pb.get("badge_text") if pb else None,
             "peak_kind": pb.get("badge_kind") if pb else None,
+            # Edad del dato de la estación (no la del snapshot). El snapshot va
+            # parejo en todas; la observación varía 6×, y sin esto dos tarjetas
+            # idénticas pueden estar a 16 y a 95 min de la realidad.
+            "obs_nivel": (r.get("frescura") or {}).get("nivel"),
+            "obs_edad": (r.get("frescura") or {}).get("age_min"),
         })
+    # Con el enfoque de instrumento (2026-08-21), lo primero que hay que poder
+    # ver es qué estaciones están al día. Las de dato muerto suben; dentro de
+    # cada grupo se conserva el orden geográfico E→O del roster.
+    _orden = {"muerta": 0, "vieja": 1}
+    cards.sort(key=lambda c: _orden.get(c["obs_nivel"], 2))
     return cards
 
 
@@ -1988,10 +1998,27 @@ def _cross_one(sid: str, day_offset: int = 0) -> dict:
     except Exception:
         div_info = None
 
+    # Frescura de la observación. El criterio es el mismo que el aviso
+    # OBSERVACIÓN VIEJA del CLI, importado de `predictor` — no reimplementado.
+    frescura = {"nivel": None, "limite_min": None, "age_min": None}
+    if day_offset == 0:
+        _obs_t = d.get("current_obs_time")
+        if _obs_t is not None:
+            try:
+                _edad = (datetime.now(timezone.utc)
+                         - _obs_t).total_seconds() / 60.0
+                _lo, _hi = PEAK_HOURS.get(sid, (12, 17))
+                _ahora = datetime.now(station.tz)
+                _queda = max(0.0, (_hi - (_ahora.hour + _ahora.minute / 60)) * 60)
+                frescura = obs_freshness(_edad, _queda)
+            except Exception:
+                pass
+
     return {
         "station": sid,
         "name": station.name,
         "current_temp": d.get("current_temp"),
+        "frescura": frescura,
         "max_obs": d.get("max_obs"),
         "p10": d["p10"], "p50": d["p50"], "p90": d["p90"],
         "p50_precise": p50_precise,

@@ -234,7 +234,12 @@ def main() -> int:
         try:
             _edad = (datetime.now(timezone.utc)
                      - datetime.fromisoformat(_obs_ts)).total_seconds() / 60
-            _lim = max(STALE_MIN_PISO, _queda_min / 2) if _queda_min > 0 else 90
+            # El criterio vive en `predictor.obs_freshness` desde el
+            # 2026-08-21: lo comparten esta herramienta y las tarjetas de la
+            # home. Antes existía sólo aquí, y el uso medido dice que nadie
+            # corre esto a mano — el aviso existía y no se veía.
+            from predictor import obs_freshness as _fresh
+            _lim = _fresh(_edad, _queda_min)["limite_min"]
             if _edad >= _lim:
                 print(f"  ⚠ OBSERVACIÓN VIEJA  el último dato es de hace "
                       f"{_edad:.0f} min y quedan {_queda_min:.0f} min de ventana")
