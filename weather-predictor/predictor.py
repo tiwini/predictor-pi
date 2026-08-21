@@ -11,6 +11,7 @@ import json
 import re
 import sys
 import threading
+import sqlite3
 import time
 import csv
 from collections import Counter
@@ -198,6 +199,14 @@ class Snapshot:
     # restante se queda corto, nunca largo. Columna aparte de `today_max_obs`
     # a propósito — esa serie histórica es la base de todas las mediciones
     # de gap y cambiarle la semántica a mitad de camino las invalidaría.
+    # 2026-08-21: MÁXIMO CORRIDO del feed de 5 min sobre el día local. Antes el
+    # piso miraba `current_temp_f` INSTANTÁNEO, así que el pico se usaba mientras
+    # duraba y se evaporaba al bajar la aguja — un máximo que baja. KMDW ese día:
+    # 80.6°F sostenido 20 min, `today_max_obs` en 78.08 (el pico cayó entre dos
+    # METARs horarios) y el piso volviendo a 78.08 a los diez minutos.
+    # Se persiste porque una guarda que lo necesita no puede depender de que el
+    # proceso siga vivo (doctrina compute-once del CLAUDE.md).
+    today_max_5min: float | None = None
     today_max_cli: float | None = None
     today_max_cli_ts: datetime | None = None   # UTC issuanceTime del report
     # L2 Fable 2026-07-20: TS/CB/TSRA/TCU/GR/VCTS en el METAR raw del current
@@ -327,6 +336,60 @@ CLI_WINDOW_LEAD_H = 0.5
 # No es un parámetro ajustado a los datos: sale de la resolución del
 # instrumento, y es el mismo valor que en backtest_fallback_5min.
 CURRENT_FLOOR_MARGIN_F = 0.9
+
+# Estaciones donde el máximo corrido del feed de 5 min NO entra en el piso.
+# Backtest pre-registrado `investigacion/backtest_piso_max5min.py` (2026-08-21),
+# N=420 station-days: las violaciones AÑADIDAS por el máximo corrido se
+# concentraron enteras en KMSP —un solo día, 2026-08-13, exceso +0.20°F— y las
+# otras 19 estaciones dieron riesgo añadido CERO. El criterio pre-registrado
+# mandaba excluir la estación, no la feature.
+#
+# Condición de reapertura, escrita ahora para que no se decida a ojo después:
+# reevaluar cuando KMSP acumule ≥30 station-days nuevos posteriores al
+# 2026-08-21. Si el exceso no reaparece, entra; si reaparece, se queda fuera y
+# se investiga el settle del 08-13 (un CLI mal parseado ya explicó un caso así
+# antes: bug_cli_record_suffix_parciales).
+MAX5MIN_EXCLUDED = frozenset({"KMSP"})
+
+_MAX5MIN_CACHE: dict = {}
+_MAX5MIN_TTL_SEC = 60.0
+
+
+def today_max_current_f(station_id: str, day_start_utc: datetime) -> float | None:
+    """Máximo de `current_f` registrado hoy para esta estación, desde analysis.db.
+
+    Es EXACTAMENTE la cantidad que midió el backtest —`MAX(current_f)` de
+    `station_snapshots` sobre el día local—, y por eso se lee de ahí en vez de
+    recalcularse de la serie cruda del NWS: la serie cruda incluye lecturas de
+    5 min que el poller nunca vio, o sea una regla distinta de la que se validó.
+
+    Leerlo de la DB en vez de un contador en memoria es lo que lo hace sobrevivir
+    a un reinicio: la sesión de la tarde no puede empezar creyendo que el día
+    lleva 0°F. La consulta usa `idx_ss_station_ts` y mide ~1 ms sobre los 770 MB.
+    """
+    clave = (station_id, day_start_utc.date().isoformat())
+    hit = _MAX5MIN_CACHE.get(clave)
+    ahora = time.time()
+    if hit is not None and ahora - hit[0] < _MAX5MIN_TTL_SEC:
+        return hit[1]
+    val = None
+    try:
+        db = Path(__file__).resolve().parent / "analysis.db"
+        if db.exists():
+            con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=5)
+            try:
+                row = con.execute(
+                    "SELECT MAX(current_f) FROM station_snapshots "
+                    "WHERE station = ? AND ts >= ?",
+                    (station_id, day_start_utc.isoformat())).fetchone()
+                if row and row[0] is not None and row[0] > -900:
+                    val = float(row[0])
+            finally:
+                con.close()
+    except Exception:
+        val = None
+    _MAX5MIN_CACHE[clave] = (ahora, val)
+    return val
 
 
 def cli_window_open(station_id: str, now_local: datetime) -> bool:
@@ -1129,9 +1192,37 @@ def build_snapshot(station: Station) -> Snapshot:
     # snapshots — mientras el |error| mediano baja de 1.400 a 1.283°F y las 1231
     # violaciones desaparecen. Ninguna estación empeora.
     # Backtest pre-registrado: investigacion/backtest_piso_current.py
+    #
+    # 2026-08-21 — de INSTANTÁNEO a MÁXIMO CORRIDO del día. El defecto: un máximo
+    # no puede bajar, y éste bajaba. KMDW marcó 80.6°F sostenido 20 minutos, el
+    # piso subió a 79.7 y volvió a 78.08 en cuanto se enfrió: el sistema vio el
+    # máximo del día y lo olvidó. `today_max_obs` no lo recogió porque sólo
+    # acepta METARs horarios y el pico cayó entre dos.
+    #
+    # `investigacion/backtest_piso_max5min.py`, pre-registrado, N=420 station-days
+    # (agosto, base fresca — julio lleva doce pasadas y no decide):
+    #     violaciones del piso (floor > settle+0.5)
+    #       actual                  10
+    #       + máx corrido día UTC  2857   ← arrastra la tarde de AYER
+    #       + máx corrido día LOCAL 131   ← +121, TODAS de KMSP (1 día, +0.20°F)
+    # Sube el piso en el 20.0% de los snapshots; mediana +0.90°F, p90 +2.16°F, y
+    # corrige 375 predicciones que el termómetro ya había refutado.
+    #
+    # La guarda del día LOCAL es lo que lo hace seguro, no el máximo en sí: a las
+    # 00Z son las ~19h local en husos americanos. Es la misma trampa que mordió
+    # al grupo ASOS de 6h el 08-20. `today_max_current_f` la hereda porque
+    # `start` ya se calcula en `station.tz`.
     curr_t_floor = current.get("temp_f")
-    if curr_t_floor is not None:
-        cand = curr_t_floor - CURRENT_FLOOR_MARGIN_F
+    max5_f = None
+    if station.id not in MAX5MIN_EXCLUDED:
+        max5_f = today_max_current_f(station.id, today_start_utc)
+        if curr_t_floor is not None:
+            max5_f = curr_t_floor if max5_f is None else max(max5_f, curr_t_floor)
+    # Fuera de la exclusión el piso usa el máximo corrido; dentro, el instantáneo
+    # de siempre — KMSP no pierde la guarda que ya tenía.
+    cand_src = max5_f if max5_f is not None else curr_t_floor
+    if cand_src is not None:
+        cand = cand_src - CURRENT_FLOOR_MARGIN_F
         floor_f = cand if floor_f is None else max(floor_f, cand)
 
     # N7 Fable veredicto R4: duración sin cambio + dirección último cambio.
@@ -1627,6 +1718,7 @@ def build_snapshot(station: Station) -> Snapshot:
         ext_shift_info=ext_shift_info,
         current_temp_stable_min=stable_min,
         current_temp_last_direction=last_dir,
+        today_max_5min=max5_f,
         today_max_asos_6h=asos_6h_f,
         today_max_asos_6h_ts=asos_6h_ts,
         today_max_cli=cli_max_f,
@@ -2101,9 +2193,17 @@ def obs_floor_from_snapshot(snap: Snapshot) -> float | None:
                 floor = asos if floor is None else max(floor, asos)
         except Exception:
             pass
+    # Máximo corrido del feed de 5 min. Se lee del campo PERSISTIDO, no se
+    # recalcula: si esta ruta consultara la DB por su cuenta, un snapshot viejo
+    # se releería con el máximo de AHORA y el piso diría una cosa al construirse
+    # y otra al releerse — el mismo divergir que ya se evitó con el ASOS de 6h.
+    # `today_max_5min` viene None en las estaciones excluidas y en los snapshots
+    # anteriores al 2026-08-21, y ahí se cae al instantáneo de siempre.
     cur = getattr(snap, "current_temp_f", None)
-    if cur is not None and cur > -900:
-        cand = cur - CURRENT_FLOOR_MARGIN_F
+    max5 = getattr(snap, "today_max_5min", None)
+    base = max5 if max5 is not None and max5 > -900 else cur
+    if base is not None and base > -900:
+        cand = base - CURRENT_FLOOR_MARGIN_F
         floor = cand if floor is None else max(floor, cand)
     return floor
 

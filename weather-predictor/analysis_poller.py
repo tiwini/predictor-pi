@@ -139,7 +139,11 @@ def _conn() -> sqlite3.Connection:
                      # hubo que reconstruirlo desde METARs crudos. Tercera vez
                      # que pasa, tras current_temp_stable_min y current_obs_ts.
                      ("today_max_asos_6h", "REAL"),
-                     ("today_max_asos_6h_ts", "TEXT")]:
+                     ("today_max_asos_6h_ts", "TEXT"),
+                     # 2026-08-21: máximo corrido del feed de 5 min. Se guarda
+                     # desde el primer día, no como las tres anteriores que hubo
+                     # que reconstruir a mano cuando se fue a medirlas.
+                     ("today_max_5min", "REAL")]:
         if col not in existing:
             c.execute(f"ALTER TABLE station_snapshots ADD COLUMN {col} {typ}")
     # 2026-07-27: `pred_calibrated_f` nunca estuvo calibrada — se poblaba con
@@ -475,7 +479,7 @@ def poll_one(station_id: str, c: sqlite3.Connection) -> None:
          pressure_inhg, pressure_trend_3h, dewpoint_f, humidity_pct,
          today_min_obs, convective_ambient, narrative_line,
          current_stable_min, current_obs_ts,
-         today_max_asos_6h, today_max_asos_6h_ts,
+         today_max_asos_6h, today_max_asos_6h_ts, today_max_5min,
          obs_floor_n, obs_floor_delta_f, today_max_cli, today_max_cli_ts,
          today_max_obs_ts,
          our_pred_f, pred_iso_med_f, bias_median_causal_f, bias_median_n,
@@ -490,7 +494,7 @@ def poll_one(station_id: str, c: sqlite3.Connection) -> None:
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (ts, station_id, snap.current_temp_f, snap.today_max_obs,
          med, p10, p90, json.dumps(maxes), snap.peak_status,
          regime_tag, regime_reason,
@@ -506,6 +510,7 @@ def poll_one(station_id: str, c: sqlite3.Connection) -> None:
          getattr(snap, "today_max_asos_6h", None),
          (snap.today_max_asos_6h_ts.isoformat()
           if getattr(snap, "today_max_asos_6h_ts", None) else None),
+         getattr(snap, "today_max_5min", None),
          snap.obs_floor_n, snap.obs_floor_delta_f,
          snap.today_max_cli,
          snap.today_max_cli_ts.isoformat() if snap.today_max_cli_ts else None,
