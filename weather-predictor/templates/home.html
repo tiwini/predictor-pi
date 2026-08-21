@@ -34,19 +34,7 @@
         border-bottom: 1px solid var(--surface2); }
   .kv:last-child { border-bottom: none; }
   .kv-k { color: var(--muted); }
-  .assertion { display: grid; grid-template-columns: 24px 1fr 70px 70px 110px;
-               gap: 0.4rem; align-items: center; padding: 0.6rem 0;
-               border-bottom: 1px solid var(--surface2); font-size: 0.95rem; }
-  .assertion:last-child { border-bottom: none; }
-  .cents { text-align: right; font-variant-numeric: tabular-nums; font-weight: 700;
-           font-size: 1.1rem; }
-  .mv-up { color: var(--green); text-align: right; font-size: 0.85rem; }
-  .mv-down { color: var(--red); text-align: right; font-size: 0.85rem; }
-  .mv-flat { color: var(--muted); text-align: right; font-size: 0.85rem; }
-  .stat { text-align: right; font-size: 0.85rem; }
-  .live { color: var(--cyan); }
-  .resuelta { color: var(--green); font-weight: 600; }
-  .fallida { color: var(--red); }
+  /* El CSS de las aserciones se retiró con su bloque (2026-08-21). */
   .peak-green { color: var(--green); }
   .peak-yellow { color: var(--yellow); }
   .peak-cyan { color: var(--cyan); }
@@ -697,39 +685,11 @@
     </div>
   </div>
 
-  {% if decision and decision.action == 'skip' %}
-  <details class="card skip-collapse">
-    <summary style="cursor:pointer;color:var(--muted);font-size:.85rem;font-weight:600">
-      Aserciones · auto modo: {{ auto_mode }} · dim en SKIP
-    </summary>
-  {% else %}
-  <div class="card">
-    <h3>Aserciones · auto modo: {{ auto_mode }}</h3>
-  {% endif %}
-    {% for slot in [1, 2, 3] %}
-    {% set a = assertions[slot] %}
-    <div class="assertion">
-      <span>{{ slot }}</span>
-      <span>{{ a.label }}</span>
-      <span class="cents {{ a.class }}">{% if a.label != '—' %}{{ a.cents }}¢{% endif %}</span>
-      <span class="{{ a.mv_class }}">{{ a.mv_str }}</span>
-      <span class="stat {{ a.class }}">{{ a.status }}</span>
-    </div>
-    {% endfor %}
-    <form method="POST" action="/api/set">
-      <select name="slot"><option value="1">Slot 1</option><option value="2">Slot 2</option></select>
-      <input name="expr" placeholder=">89F · =80F · 79-81" autocapitalize="off" autocomplete="off">
-      <button type="submit">Set</button>
-    </form>
-    <form method="POST" action="/api/clear">
-      <select name="slot"><option value="1">Slot 1</option><option value="2">Slot 2</option></select>
-      <button type="submit" class="danger">Borrar</button>
-    </form>
-  {% if decision and decision.action == 'skip' %}
-  </details>
-  {% else %}
-  </div>
-  {% endif %}
+  {# El bloque de ASERCIONES vivía aquí. Retirado el 2026-08-21 con el enfoque
+     de instrumento: la home es para VER qué está pasando, y las aserciones son
+     una herramienta de anotación manual que ya tiene su sitio en
+     /panel/analysis. Los endpoints /api/set y /api/clear siguen vivos; lo que
+     se retira es el hueco en la portada. #}
 
   <div class="card" style="margin-top:1rem">
     <h3>Temperatura hoy · observado + ensemble</h3>
