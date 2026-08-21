@@ -113,7 +113,9 @@ def _curva_de_ayer(station_id: str, tz) -> dict:
 def build_day_chart_svg(day_chart, current_hour: int,
                         ayer: dict | None = None,
                         current_f: float | None = None,
-                        current_hora_frac: float | None = None) -> str:
+                        current_hora_frac: float | None = None,
+                        pred_max: float | None = None,
+                        piso: float | None = None) -> str:
     """Inline SVG: observed line (verde, gruesa, con puntos) + ensemble
     envelope p10-p90 (banda azul) + median (línea fina punteada). Marcador
     'ahora' resaltado, eje Y con °F, eje X con horas clave.
@@ -134,8 +136,9 @@ def build_day_chart_svg(day_chart, current_hour: int,
     all_temps = [v for h, obs, med, p10, p90 in day_chart
                  for v in (obs, med, p10, p90) if v is not None]
     all_temps += [v for v in ayer.values() if v is not None]
-    if current_f is not None:
-        all_temps.append(current_f)
+    for v in (current_f, pred_max, piso):
+        if v is not None:
+            all_temps.append(v)
     if not all_temps:
         return "<p style='color:#a6adc8'>sin datos del día aún</p>"
     lo, hi = min(all_temps) - 1, max(all_temps) + 1
@@ -210,6 +213,39 @@ def build_day_chart_svg(day_chart, current_hour: int,
         if lo <= current_f <= hi:
             punto_now = (f'<circle cx="{x_now:.1f}" cy="{ypos(current_f):.1f}" '
                          f'r="4" fill="none" stroke="#f9e2af" stroke-width="2"/>')
+
+    # TECHO y SUELO del día, como líneas horizontales sobre la misma gráfica.
+    # Se añadió el 2026-08-21 en vez de una gráfica aparte: las tres cosas
+    # (curva, predicción, piso) están en °F, así que compartir ejes cuenta la
+    # historia entera de un vistazo — hacia dónde sube el día, qué máximo
+    # esperamos y por debajo de qué ya no puede quedar.
+    #
+    # Cuando la predicción y el piso coinciden, la predicción NO es un
+    # pronóstico: es el termómetro. Verlo aquí explica de golpe el "¿por qué
+    # lleva tres horas en el mismo número?".
+    lineas_ref = ""
+    clavado = (pred_max is not None and piso is not None
+               and abs(pred_max - piso) < 0.05)
+    if pred_max is not None and lo <= pred_max <= hi:
+        lineas_ref += (
+            f'<line x1="{pad_l}" y1="{ypos(pred_max):.1f}" x2="{W-pad_r}" '
+            f'y2="{ypos(pred_max):.1f}" stroke="#f9e2af" stroke-width="1.2" '
+            f'stroke-dasharray="6,4" opacity="0.8"/>'
+            f'<text x="{W-pad_r-2}" y="{ypos(pred_max)-4:.1f}" font-size="9" '
+            f'fill="#f9e2af" text-anchor="end">máx esperado '
+            f'{pred_max:.1f}°</text>')
+    if piso is not None and lo <= piso <= hi and not clavado:
+        lineas_ref += (
+            f'<line x1="{pad_l}" y1="{ypos(piso):.1f}" x2="{W-pad_r}" '
+            f'y2="{ypos(piso):.1f}" stroke="#f38ba8" stroke-width="1" '
+            f'stroke-dasharray="2,4" opacity="0.7"/>'
+            f'<text x="{W-pad_r-2}" y="{ypos(piso)+11:.1f}" font-size="9" '
+            f'fill="#f38ba8" text-anchor="end">piso {piso:.1f}°</text>')
+    elif clavado and lo <= piso <= hi:
+        lineas_ref += (
+            f'<text x="{W-pad_r-2}" y="{ypos(piso)+11:.1f}" font-size="9" '
+            f'fill="#f38ba8" text-anchor="end">= piso · la predicción es el '
+            f'termómetro</text>')
 
     # y-axis: rayitas cada 1°F (sin label) + label cada 5°F con grid line
     y_lines = []
@@ -286,7 +322,8 @@ def build_day_chart_svg(day_chart, current_hour: int,
     return (f'<svg viewBox="0 0 {W} {H}" width="100%" style="display:block">'
             + bands + legend + "".join(y_lines) + "".join(x_lines)
             + ayer_line + env
-            + med_line + now_line + hueco + obs_line + obs_dots + punto_now
+            + med_line + lineas_ref + now_line + hueco + obs_line
+            + obs_dots + punto_now
             + '</svg>')
 
 
@@ -550,11 +587,14 @@ def index():
 
     pr_time = snap.station_local.astimezone(PR_TZ).strftime("%H:%M")
     local_time = snap.station_local.strftime("%H:%M %Z")
+    _dist_ord = sorted(snap.ensemble_daily_maxes)
     day_chart_svg = build_day_chart_svg(
         snap.day_chart, snap.station_local.hour,
         ayer=_curva_de_ayer(station.id, station.tz),
         current_f=snap.current_temp_f,
-        current_hora_frac=snap.station_local.hour + snap.station_local.minute / 60)
+        current_hora_frac=snap.station_local.hour + snap.station_local.minute / 60,
+        pred_max=(_dist_ord[len(_dist_ord) // 2] if _dist_ord else None),
+        piso=obs_floor_from_snapshot(snap))
 
     climate = snap.climatology
     climate_class, climate_word = "", ""
