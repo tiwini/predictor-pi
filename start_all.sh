@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Arranca weather :8000, crypto :8001 y dashboard tras reboot.
+# Arranca weather :8000 (con el panel montado en /panel) y crypto :8001
+# tras reboot. El dashboard en :8080 se retiro el 2026-08-21.
 # Uso: ./start_all.sh (desde el dir del repo)
 set -u
 
@@ -134,7 +135,10 @@ start_btc_quarter_poller() {
 wait_dns api.weather.gov 300
 start_weather_with_retry
 #start_crypto  # comentado 2026-07-08: crypto migrado a systemd (crypto-predictor.service)
-start_dashboard
+# start_dashboard  # apagado 2026-08-21: /analysis, /ai y /btc-quarter
+#                 se sirven desde :8000/panel (predictor_web._montar_panel).
+#                 dashboard.py se conserva porque ES el codigo que sirve
+#                 esas paginas; lo que se retira es el segundo puerto.
 start_analysis_poller
 start_btc_quarter_poller
 start_kalshi_fast_poller
@@ -143,7 +147,6 @@ sleep 2
 log "estado:"
 is_up 8000 && log "  ✓ weather :8000 responde" || log "  ✗ weather :8000 NO responde"
 is_up 8001 && log "  ✓ crypto  :8001 responde" || log "  ✗ crypto  :8001 NO responde"
-pgrep -f "python.*dashboard\.py" > /dev/null && log "  ✓ dashboard corre" || log "  ✗ dashboard NO corre"
 pgrep -f "python.*analysis_poller\.py" > /dev/null && log "  ✓ analysis_poller corre" || log "  ✗ analysis_poller NO corre"
 pgrep -f "python.*btc_quarter_poller\.py" > /dev/null && log "  ✓ btc_quarter_poller corre" || log "  ✗ btc_quarter_poller NO corre"
 pgrep -f "python.*kalshi_fast_poller\.py" > /dev/null && log "  ✓ kalshi_fast_poller corre" || log "  ✗ kalshi_fast_poller NO corre"
