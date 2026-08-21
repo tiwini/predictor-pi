@@ -3607,6 +3607,11 @@ def _estaciones_a_refrescar() -> set:
     sería esconder datos viejos.
     """
     _warm_tick["n"] += 1
+    # ARRANQUE EN FRÍO: con el cache vacío hay que traerlas todas o la home se
+    # queda sin tarjetas hasta el primer ciclo lento. Pasó al desplegar el
+    # 2026-08-21: sólo salían 2 de 20.
+    if not (_stations_cache.get("results") or []):
+        return set(SUPPORTED_STATIONS)
     toca_lento = _warm_tick["n"] % CICLOS_FUERA_DE_VENTANA == 0
     salida = set()
     if state is not None and state.station is not None:
