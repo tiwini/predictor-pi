@@ -119,14 +119,19 @@ N_MINIMO = 200
 
 
 def _parse(ts):
+    """`ts` viene en ISO-8601 con zona: '2026-08-21T21:58:04.465793+00:00'.
+
+    ⚠ Truncar la cadena antes de parsear se come el '+00:00' y devuelve None
+    para TODAS las filas — el backtest reporta 0 snapshots y parece que no hay
+    datos, en vez de fallar. Por eso `fromisoformat` sobre la cadena entera.
+    """
     if not ts:
         return None
-    for f in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S.%f"):
-        try:
-            return datetime.strptime(str(ts)[:26], f).replace(tzinfo=ZoneInfo("UTC"))
-        except ValueError:
-            continue
-    return None
+    try:
+        d = datetime.fromisoformat(str(ts))
+    except ValueError:
+        return None
+    return d if d.tzinfo else d.replace(tzinfo=ZoneInfo("UTC"))
 
 
 def cargar_settles():
@@ -194,7 +199,7 @@ def correr(desde, etiqueta):
             continue
         tz = tzs[sid]
         dia_loc = t.astimezone(tz).date().isoformat()
-        dia_utc = t.date().isoformat()
+        dia_utc = t.astimezone(ZoneInfo("UTC")).date().isoformat()
 
         if cur is not None and cur > -900:
             for clave, d in ((("u", sid, dia_utc), run_utc), (("l", sid, dia_loc), run_loc)):
