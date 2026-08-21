@@ -3574,7 +3574,47 @@ def main():
     print(f"   Laptop:  http://localhost:{port}")
     print(f"   iPad:    http://{ip}:{port}    (misma WiFi)")
     print(f"\n   Ctrl+C para detener\n")
-    app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
+    app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False,
+            **_wsgi_kwargs())
+
+
+def _montar_panel():
+    """Cuelga el dashboard de :8080 bajo /panel, en ESTE mismo proceso.
+
+    Consolidación pedida el 2026-08-21: una sola web para todo weather. Se
+    monta en vez de mover las rutas porque mover 271 líneas y dos plantillas
+    crea, durante la migración, dos copias de la misma lógica — y este proyecto
+    ya sabe cómo acaba eso (el pipeline de bins estuvo triplicado y las tres
+    copias se desalinearon). Montando, la lógica sigue existiendo UNA vez.
+
+        :8000/                 el predictor
+        :8000/panel/analysis   las 20 estaciones + aserciones
+        :8000/panel/ai         budget, briefing, decisiones del agente
+        :8000/panel/btc-quarter  se queda accesible aunque sea de cripto
+
+    `dashboard.py` es importable sin efectos (su `app.run` vive bajo
+    `__main__`), así que esto no arranca nada por su cuenta. Devuelve None si
+    no se puede importar: la consolidación es una comodidad, no una dependencia
+    del predictor.
+    """
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        import dashboard as _dash
+        return _dash.app
+    except Exception as e:                        # pragma: no cover
+        print(f"[panel] no se pudo montar el dashboard: {e}", file=sys.stderr)
+        return None
+
+
+def _wsgi_kwargs() -> dict:
+    """`app.run(**kwargs)` con el panel montado, o vacío si no se pudo."""
+    panel = _montar_panel()
+    if panel is None:
+        return {}
+    from werkzeug.middleware.dispatcher import DispatcherMiddleware
+    app.wsgi_app = DispatcherMiddleware(app.wsgi_app, {"/panel": panel})
+    print("   Panel:   /panel/analysis · /panel/ai")
+    return {}
 
 
 # ============================================================
