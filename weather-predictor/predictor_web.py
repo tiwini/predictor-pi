@@ -12,6 +12,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from flask import Flask, Response, jsonify, redirect, render_template, request
 
@@ -2252,6 +2253,7 @@ def _health_badge() -> tuple[str, str]:
 
 
 from stations import STATION_IDS as SUPPORTED_STATIONS  # noqa: E402
+from stations import STATION_TZ  # noqa: E402
 
 
 # Cache de Station objects por id. fetch_station hace GET a NWS API — no
@@ -2273,21 +2275,63 @@ def _get_cached_station(sid: str):
     return st
 
 
+def _peak_proximity(sid: str) -> tuple[int, float, str]:
+    """(tramo, desempate, etiqueta) según dónde está la estación respecto a su
+    ventana de pico. Ordena el selector por relevancia horaria.
+
+    Las 20 estaciones cubren cuatro husos, así que a cualquier hora unas están
+    en pleno pico y otras de madrugada. Ordenar alfabéticamente hace que haya
+    que buscar. Tres tramos:
+
+        0  DENTRO de la ventana   — está ocurriendo ahora
+        1  antes de abrir         — ordenadas por lo que falta
+        2  ya cerró               — las que picaron hace más, al final
+
+    El desempate dentro de cada tramo: en el 0, lo que queda para cerrar (lo
+    más urgente arriba); en el 1, lo que falta para abrir; en el 2, lo que hace
+    que cerró.
+    """
+    try:
+        lo, hi = PEAK_HOURS.get(sid, (12, 17))
+        ahora = datetime.now(ZoneInfo(STATION_TZ[sid]))
+        h = ahora.hour + ahora.minute / 60.0
+        if lo <= h < hi:
+            queda = (hi - h) * 60
+            return (0, queda, f"pico ahora · {queda / 60:.1f}h")
+        if h < lo:
+            falta = (lo - h) * 60
+            return (1, falta, f"abre en {falta / 60:.1f}h")
+        return (2, (h - hi) * 60, "cerrada")
+    except Exception:
+        return (3, 0.0, "")
+
+
 def _supported_stations() -> list:
     """Return [(id, name), ...] for the curated Kalshi stations.
-    Includes the active station even if it's not in the curated list,
-    so the dropdown never hides where the user currently is."""
+
+    Ordenadas por **cercanía a la ventana de pico** (2026-08-21), no
+    alfabéticamente: lo que está ocurriendo ahora va arriba y lo que ya picó al
+    final. La etiqueta dice en qué tramo está cada una, así que el propio
+    desplegable informa en vez de sólo listar.
+
+    Incluye la estación activa aunque no esté en el roster, para que el
+    desplegable nunca esconda dónde está el usuario.
+    """
     out = []
     seen = set()
     for sid in SUPPORTED_STATIONS:
         s = _get_cached_station(sid)
         if s is None:
             continue
-        out.append((sid, s.name))
+        tramo, desempate, etiqueta = _peak_proximity(sid)
+        out.append((tramo, desempate, sid, s.name, etiqueta))
         seen.add(sid)
+    out.sort(key=lambda x: (x[0], x[1]))
+    res = [(sid, f"{name} · {et}" if et else name)
+           for _, _, sid, name, et in out]
     if state is not None and state.station.id not in seen:
-        out.insert(0, (state.station.id, state.station.name))
-    return out
+        res.insert(0, (state.station.id, state.station.name))
+    return res
 
 
 def _market_name(station_id: str) -> str:

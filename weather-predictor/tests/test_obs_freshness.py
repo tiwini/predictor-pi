@@ -76,3 +76,51 @@ def test_el_suelo_no_baja_de_65_por_mucho_que_cierre():
 def test_sin_edad_no_inventa_nivel():
     r = obs_freshness(None, 120)
     assert r["nivel"] is None and r["limite_min"] is None
+
+
+# ── Orden del selector por cercanía a la ventana de pico ─────────────────
+#
+# Las 20 estaciones cubren cuatro husos: a cualquier hora unas están en pleno
+# pico y otras de madrugada. Alfabético obliga a buscar; por cercanía, lo que
+# está ocurriendo va arriba (pedido del usuario, 2026-08-21).
+
+@pytest.fixture(scope="module")
+def proximidad():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "_pw_prox", BASE / "predictor_web.py")
+    m = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(m)
+    except Exception as e:                      # pragma: no cover
+        pytest.skip(f"predictor_web no importable: {e}")
+    return m._peak_proximity
+
+
+def test_los_tres_tramos_se_ordenan_bien(proximidad, monkeypatch):
+    """Dentro de ventana < antes de abrir < ya cerrada."""
+    import importlib
+    prox = proximidad
+    tramos = {}
+    from stations import STATION_IDS
+    for sid in STATION_IDS:
+        tramos[sid] = prox(sid)[0]
+    # A cualquier hora del día, todo tramo válido está en {0,1,2}
+    assert set(tramos.values()) <= {0, 1, 2}, tramos
+
+
+def test_la_etiqueta_dice_el_tramo(proximidad):
+    from stations import STATION_IDS
+    for sid in STATION_IDS:
+        tramo, _, et = proximidad(sid)
+        if tramo == 0:
+            assert "pico ahora" in et
+        elif tramo == 1:
+            assert "abre en" in et
+        elif tramo == 2:
+            assert et == "cerrada"
+
+
+def test_estacion_desconocida_no_revienta(proximidad):
+    tramo, _, _ = proximidad("XXXX")
+    assert tramo == 3, "cae al final en vez de lanzar"
