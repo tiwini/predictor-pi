@@ -31,7 +31,7 @@ escriben en el momento.
 | 2026-08-02 | Propagar el piso a la distribución por bin | bins imposibles a cero | criterio correcto es `floor > hi+0.5` | ✅ ADOPTADO [[bugs_piso_no_propagado]] |
 | 2026-08-14 | Guarda de techo físico | vetar bins que el día ya no alcanza | la vía p90 casi nunca veta | ✅ ADOPTADO [[physical_gate_implementado]] |
 | 2026-08-20 | Grupo ASOS de 6h en el piso, con guarda de ventana | violaciones ≤ actual, N≥200 | N=605, riesgo cero **con** guarda; sin ella 35 violaciones vs 4 | ✅ ADOPTADO variante B [[backtest_piso_asos6h]] |
-| 2026-08-21 | Máximo **corrido** del feed de 5 min en el piso | violaciones añadidas == 0, N≥200 station-days | ⏳ corriendo | ⏳ `backtest_piso_max5min.py` |
+| 2026-08-21 | Máximo **corrido** del feed de 5 min en el piso | violaciones añadidas == 0; concentradas en 1-2 estaciones ⇒ excluir esa; ≥3 ⇒ rechazar; N≥200 | N=420 station-days. Añadidas: día UTC +2847, día LOCAL +121 y **todas de KMSP** (1 día, +0.20°F). Sube el piso en el 20.0% de snapshots, mediana +0.90°F, p90 +2.16°F; corrige 375 predicciones ya refutadas por el termómetro | ✅ ADOPTADO con **KMSP excluida** [[piso_max5min]] |
 
 ## Corrección de nivel y sesgo
 
@@ -83,3 +83,25 @@ escriben en el momento.
 | 2026-07-06 | El ROI +53% del ledger | auditoría | artefacto; 5 fixes P0-P2 + safe mode | ⚠ INVALIDÓ lo anterior [[weather_ledger_broken]] |
 | 2026-07-10 | Tail-negation bets | validado sobre el ledger… roto | — | ⚠ INVALIDADA; no readmitir sin N≥100 post-fix [[feedback_tail_negation_bets]] |
 | 2026-08-18 | El ROI +49% de `/bets` | recorte al ledger post-fix | 94% de la muestra era pre-fix; real −10.4% con N=38 | 🔴 ARTEFACTO [[bugs_bets_ledger]] |
+
+---
+
+## Notas de método que salieron de estas corridas
+
+**El criterio se aplica a las violaciones AÑADIDAS, no a las totales.** En la
+corrida del 2026-08-21 la primera implementación contaba totales y reportaba 4
+estaciones afectadas → RECHAZAR. El diagnóstico por día mostró que KBOS, KPHX y
+KDCA tenían **cero** días de exceso: ya violaban con el piso vigente y no
+añadían nada. Las añadidas estaban enteras en una estación → EXCLUIR. El
+criterio estaba bien escrito; la que estaba mal era su implementación.
+
+**Un backtest de una regla intradía tiene que ser intradía.** El del ASOS de 6h
+se analizó por DÍA y fue correcto allí. Aplicar la misma plantilla al máximo
+corrido habría sido un sinsentido: a nivel de día `MAX(current_f)` **es** el
+máximo corrido, así que las dos variantes salen idénticas por construcción y el
+backtest no puede fallar. Un backtest que no puede fallar no mide nada.
+
+**Lo que se despliega tiene que ser lo que se midió.** El máximo corrido se lee
+de `station_snapshots.current_f` —la cantidad exacta que evaluó el backtest— y
+no de la serie cruda del NWS, que incluye lecturas de 5 min que el poller nunca
+vio. Serían dos reglas distintas con el mismo nombre.
