@@ -1,6 +1,32 @@
 #!/usr/bin/env python3
 """¿Puede el ASOS de 1 minuto tapar la ventana ciega de KDEN (12h-18h)?
 
+╔════════════════════════════════════════════════════════════════════════════╗
+║ RESULTADO (2026-08-22): 🔴 NO. Predicción estructural CONFIRMADA.           ║
+║                                                                            ║
+║   latencia del archivo   29.6 h   (idéntica pidiendo 48h o 96h, o sea que  ║
+║                                    es el archivo y no la consulta)          ║
+║   última obs disponible  2026-08-20 21:04Z, con el reloj en 08-22 02:42Z    ║
+║   tres sondeos en vivo   cero filas, las tres veces                         ║
+║                                                                            ║
+║ Y AQUÍ ESTÁ LO AMARGO: el dato es EXACTAMENTE el que hace falta.            ║
+║   hora   hueco actual   con 1-min   cerrado   n                             ║
+║    14h       +4.82        +0.40       92%    14                             ║
+║    15h       +2.90        −0.10      103%    14                             ║
+║    16h       +2.40        −0.10      104%    14                             ║
+║ Cierra la ventana ciega entera. Y llega día y medio tarde.                  ║
+║                                                                            ║
+║ Hallazgo lateral que importaría si algún día hay feed en vivo:              ║
+║   max(1-min) − settle = +1.00°F de mediana (n=15, cero violaciones tras     ║
+║   el margen de 0.9). El 1-min captura transitorios que el promedio de 5     ║
+║   min con el que liquida el NWS suaviza. El margen los absorbe, pero justo: ║
+║   +1.00 − 0.9 = +0.10 contra una tolerancia de +0.5.                        ║
+║                                                                            ║
+║ CONSECUENCIA: la ventana ciega de KDEN se queda ABIERTA. No hay vía         ║
+║ identificada. Lo honesto para el instrumento es MOSTRARLA, no taparla.      ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+
 CONTEXTO
 --------
 Cadena de tres medidas que llevan hasta aquí:

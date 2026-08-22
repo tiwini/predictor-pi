@@ -31,6 +31,7 @@ escriben en el momento.
 | 2026-08-02 | Propagar el piso a la distribución por bin | bins imposibles a cero | criterio correcto es `floor > hi+0.5` | ✅ ADOPTADO [[bugs_piso_no_propagado]] |
 | 2026-08-14 | Guarda de techo físico | vetar bins que el día ya no alcanza | la vía p90 casi nunca veta | ✅ ADOPTADO [[physical_gate_implementado]] |
 | 2026-08-20 | Grupo ASOS de 6h en el piso, con guarda de ventana | violaciones ≤ actual, N≥200 | N=605, riesgo cero **con** guarda; sin ella 35 violaciones vs 4 | ✅ ADOPTADO variante B [[backtest_piso_asos6h]] |
+| 2026-08-22 | ASOS 1-min de Mesonet para la ventana ciega de KDEN | latencia ≤30 min **y** cierra ≥50% del hueco a las 15h **y** cero violaciones | Latencia **29.6 h** (igual pidiendo 48h o 96h ⇒ es el archivo). Tres sondeos en vivo: cero filas. El aporte sería 92-104% —el dato es exactamente el que hace falta— pero llega día y medio tarde | 🔴 RECHAZADO. Predicción estructural CONFIRMADA. La ventana ciega de KDEN queda abierta [[asos1min_kden]] |
 | 2026-08-21 | ¿Tapa el ASOS 6h el gap de KDEN y KNYC? | el grupo limpio llega en o antes del cierre de PEAK_HOURS en ≥50% de días **y** cierra ≥50% del gap | KNYC cierra 82-92% desde las 14h ✅. KDEN cierra **0%** entre 14-16h y sólo 101% a las 18h. Mecanismo: mismas horas UTC, distinto huso — KNYC recibe a las 13:53 local, KDEN a las 17:53 | ⚠ El criterio dio ✅ a las dos y **para KDEN era falso**: su métrica de aporte comparaba magnitudes distintas. KNYC ✅ · KDEN 🔴 ciego 12-18h [[asos6h_kden_knyc]] |
 | 2026-08-21 | Máximo **corrido** del feed de 5 min en el piso | violaciones añadidas == 0; concentradas en 1-2 estaciones ⇒ excluir esa; ≥3 ⇒ rechazar; N≥200 | N=420 station-days. Añadidas: día UTC +2847, día LOCAL +121 y **todas de KMSP** (1 día, +0.20°F). Sube el piso en el 20.0% de snapshots, mediana +0.90°F, p90 +2.16°F; corrige 375 predicciones ya refutadas por el termómetro | ✅ ADOPTADO con **KMSP excluida** [[piso_max5min]] |
 
@@ -88,6 +89,13 @@ escriben en el momento.
 ---
 
 ## Notas de método que salieron de estas corridas
+
+**La latencia se mide antes que la calidad.** Dos corridas seguidas (ASOS 6h en
+KDEN, ASOS 1-min en KDEN) murieron por *cuándo* llega el dato, no por lo bueno
+que es. El 1-min cierra el 92-104% de la ventana ciega y aun así es inservible:
+llega 29.6 h tarde. Para cualquier fuente nueva, la primera pregunta es a qué
+hora está disponible, y sólo si pasa esa se mira si sirve.
+
 
 **Un criterio pre-registrado puede estar bien escrito y medir lo que no es.** El
 del ASOS en KDEN/KNYC (2026-08-21) dio ✅ a las dos estaciones; en KDEN era falso.
