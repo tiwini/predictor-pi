@@ -240,3 +240,69 @@ if __name__ == "__main__":
             analizar(s)
         except Exception as e:
             print(f"{s}: error {type(e).__name__}: {e}")
+
+
+# =========================================================================
+# SEGUIMIENTO (2026-08-21, escrito DESPUÉS de ver el resultado y etiquetado
+# como tal). La corrida pre-registrada da ✅ por su propio criterio, pero su
+# métrica de APORTE compara dos cosas distintas y hay que decirlo:
+#
+#   · "sube +1.17°F sobre max_obs a las 11.9h" mide un LEVANTE DEL PISO A
+#     MEDIODÍA, producido por el grupo que cubre la ventana de la MAÑANA.
+#   · el gap de −1.06°F que motivó todo es del MÁXIMO DEL DÍA, que lo pone el
+#     pico de la TARDE.
+#
+# El grupo de la mañana no puede saber nada del pico de la tarde. Que cierre
+# "el 110% del gap" es una coincidencia numérica entre magnitudes que no se
+# corresponden, no una respuesta.
+#
+# Esto mide lo alineado: cuánto del hueco contra el SETTLE queda tapado en el
+# momento que importa. Sin criterio de decisión — es descriptivo, y cualquier
+# cambio que salga de aquí lleva su propio pre-registro.
+# =========================================================================
+def seguimiento(sid: str) -> None:
+    tz = ZoneInfo(STATION_TZ[sid])
+    cierre = PEAK_HOURS[sid][1]
+    lecturas = descargar(sid, DESDE, date.today())
+    st = settles(sid)
+
+    temps, grupos = defaultdict(list), defaultdict(list)
+    for ts, raw in lecturas:
+        loc = ts.astimezone(tz)
+        t = temp_f_del_metar(raw)
+        if t is not None:
+            temps[loc.date()].append((loc.hour + loc.minute / 60.0, t))
+        c6 = parse_metar_6h_max_c(raw)
+        if c6 is not None:
+            ini = (ts - timedelta(hours=6)).astimezone(tz)
+            if ini.date() == loc.date():
+                grupos[loc.date()].append((loc.hour + loc.minute / 60.0, c_to_f(c6)))
+
+    print(f"\n--- {sid}: hueco contra el settle, por hora local ---")
+    print(f"{'hora':>6} {'sin ASOS':>10} {'con ASOS':>10} {'cerrado':>9} {'n':>4}")
+    for h in (12, 14, 15, 16, cierre):
+        sin_l, con_l = [], []
+        for d in sorted(temps):
+            k = d.isoformat()
+            if k not in st:
+                continue
+            mo = max((t for hh, t in temps[d] if hh <= h), default=None)
+            if mo is None:
+                continue
+            g = max((v for hh, v in grupos.get(d, []) if hh <= h), default=None)
+            sin_l.append(st[k] - mo)
+            con_l.append(st[k] - (mo if g is None else max(mo, g)))
+        if not sin_l:
+            continue
+        a, b = statistics.median(sin_l), statistics.median(con_l)
+        pct = 100 * (a - b) / a if a > 0 else 0.0
+        print(f"{h:>5}h {a:>+10.2f} {b:>+10.2f} {pct:>8.0f}% {len(sin_l):>4}")
+    print("  (hueco = settle − piso; más cerca de 0 es mejor)")
+
+
+if __name__ == "__main__" and "--seguimiento" in sys.argv:
+    for s in ESTACIONES:
+        try:
+            seguimiento(s)
+        except Exception as e:
+            print(f"{s}: error {type(e).__name__}: {e}")
