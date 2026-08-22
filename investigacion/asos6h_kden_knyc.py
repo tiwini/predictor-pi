@@ -1,6 +1,36 @@
 #!/usr/bin/env python3
 """¿Cuánto del gap de KDEN y KNYC recupera el grupo ASOS de 6h, y CUÁNDO llega?
 
+╔════════════════════════════════════════════════════════════════════════════╗
+║ RESULTADO (2026-08-21) — la respuesta es DISTINTA en cada estación          ║
+║                                                                            ║
+║   hueco contra el settle (settle − piso), mediana por hora local            ║
+║              KDEN                        KNYC                              ║
+║        sin ASOS  con ASOS          sin ASOS  con ASOS                       ║
+║   12h    +7.60    +6.00   21%        +3.40    +3.40    0%                   ║
+║   14h    +2.20    +2.20    0%        +1.70    +0.14   92%                   ║
+║   15h    +1.80    +1.80    0%        +1.20    +0.14   88%                   ║
+║   16h    +1.60    +1.60    0%        +0.80    +0.14   82%                   ║
+║   18h    +1.40    −0.02  101%        +0.70    +0.08   89%                   ║
+║                                                                            ║
+║ KNYC ✅  el ASOS ya tapa el hueco durante la ventana de pico.               ║
+║ KDEN 🔴  aporta CERO entre las 14h y las 16h — justo el pico — y sólo       ║
+║          cierra a las 18h, con el día decidido.                            ║
+║                                                                            ║
+║ MECANISMO, verificado (no supuesto): los grupos salen a las MISMAS horas    ║
+║ UTC para todos, y el huso decide dónde caen en hora solar.                  ║
+║     KNYC (UTC−4)  publica 13:53 local  cubre 07:53→13:53   ← útil           ║
+║     KDEN (UTC−6)  publica 17:53 local  cubre 11:53→17:53   ← tarde          ║
+║ Denver queda CIEGO de 12h a 18h, que es exactamente su pico.                ║
+║                                                                            ║
+║ ⚠ EL CRITERIO PRE-REGISTRADO DIO ✅ PARA LAS DOS, Y PARA KDEN ERA FALSO.    ║
+║ Su métrica de APORTE medía el levante del piso a mediodía (grupo de la      ║
+║ MAÑANA) contra el gap del máximo del día (pico de la TARDE): dos            ║
+║ magnitudes que no se corresponden. La predicción estructural que iba        ║
+║ escrita arriba era CORRECTA para KDEN y el criterio la tapó.                ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+
 CONTEXTO
 --------
 Medido el 2026-08-21 (`gap_feed5min_vs_cli.py`, N=520 station-days): el máximo de
@@ -72,7 +102,10 @@ LO QUE NO RESPONDE
   - Si conviene alguna otra fuente (ASOS 1-min de Mesonet, CLI más temprano).
     Eso es otra pregunta y va aparte.
   - Nada sobre las otras 18 estaciones: el gap grande es de estas dos.
-  - El grupo de 3h (`2sTTT`), que existe en algunas estaciones y no se mira aquí.
+  - ⚠ CORRECCIÓN post-corrida: aquí decía «el grupo de 3h (`2sTTT`)». Es falso:
+    `2sTTT` es el MÍNIMO de 6h, no un máximo de 3h. No existe grupo de 3h que
+    salve a KDEN — el candidato real es el ASOS de 1 min de Iowa Mesonet, el
+    que resolvió el caso KPHL del 2026-07-23.
 =============================================================================
 """
 from __future__ import annotations

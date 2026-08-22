@@ -31,6 +31,7 @@ escriben en el momento.
 | 2026-08-02 | Propagar el piso a la distribución por bin | bins imposibles a cero | criterio correcto es `floor > hi+0.5` | ✅ ADOPTADO [[bugs_piso_no_propagado]] |
 | 2026-08-14 | Guarda de techo físico | vetar bins que el día ya no alcanza | la vía p90 casi nunca veta | ✅ ADOPTADO [[physical_gate_implementado]] |
 | 2026-08-20 | Grupo ASOS de 6h en el piso, con guarda de ventana | violaciones ≤ actual, N≥200 | N=605, riesgo cero **con** guarda; sin ella 35 violaciones vs 4 | ✅ ADOPTADO variante B [[backtest_piso_asos6h]] |
+| 2026-08-21 | ¿Tapa el ASOS 6h el gap de KDEN y KNYC? | el grupo limpio llega en o antes del cierre de PEAK_HOURS en ≥50% de días **y** cierra ≥50% del gap | KNYC cierra 82-92% desde las 14h ✅. KDEN cierra **0%** entre 14-16h y sólo 101% a las 18h. Mecanismo: mismas horas UTC, distinto huso — KNYC recibe a las 13:53 local, KDEN a las 17:53 | ⚠ El criterio dio ✅ a las dos y **para KDEN era falso**: su métrica de aporte comparaba magnitudes distintas. KNYC ✅ · KDEN 🔴 ciego 12-18h [[asos6h_kden_knyc]] |
 | 2026-08-21 | Máximo **corrido** del feed de 5 min en el piso | violaciones añadidas == 0; concentradas en 1-2 estaciones ⇒ excluir esa; ≥3 ⇒ rechazar; N≥200 | N=420 station-days. Añadidas: día UTC +2847, día LOCAL +121 y **todas de KMSP** (1 día, +0.20°F). Sube el piso en el 20.0% de snapshots, mediana +0.90°F, p90 +2.16°F; corrige 375 predicciones ya refutadas por el termómetro | ✅ ADOPTADO con **KMSP excluida** [[piso_max5min]] |
 
 ## Corrección de nivel y sesgo
@@ -87,6 +88,19 @@ escriben en el momento.
 ---
 
 ## Notas de método que salieron de estas corridas
+
+**Un criterio pre-registrado puede estar bien escrito y medir lo que no es.** El
+del ASOS en KDEN/KNYC (2026-08-21) dio ✅ a las dos estaciones; en KDEN era falso.
+La métrica de "aporte" medía cuánto sube el piso a mediodía —por el grupo de la
+mañana— y lo comparaba contra el gap del máximo del día, que lo pone el pico de
+la tarde. Dos magnitudes que no se corresponden, y el número salía bonito.
+
+Lo que lo salvó fue haber escrito **una predicción estructural falsable** además
+del criterio: decía que el grupo llegaría tarde para el pico. El criterio la dio
+por refutada; la medición alineada mostró que era CORRECTA para KDEN. Cuando la
+predicción y el criterio se contradicen, hay que ir a mirar por qué antes de
+quedarse con el veredicto.
+
 
 **El criterio se aplica a las violaciones AÑADIDAS, no a las totales.** En la
 corrida del 2026-08-21 la primera implementación contaba totales y reportaba 4
