@@ -22,9 +22,11 @@ def test_empate_se_reporta_como_cuenta_no_como_top3():
 
 
 def test_atrasadas_son_las_que_pasan_el_umbral():
-    cards = [_card("KBOS", 30.0), _card("KNYC", 79.0), _card("KDEN", 77.0)]
+    # Ojo: KNYC y KDEN ya no sirven de ejemplo aquí — desde el 2026-08-25 son
+    # horarias por diseño y salen en su propia fila, no como atrasadas.
+    cards = [_card("KBOS", 30.0), _card("KMDW", 79.0), _card("KPHX", 77.0)]
     r = predictor_web._resumen_frescura(cards)
-    assert [a["sid"] for a in r["atrasadas"]] == ["KNYC", "KDEN"], "peor primero"
+    assert [a["sid"] for a in r["atrasadas"]] == ["KMDW", "KPHX"], "peor primero"
     assert r["n_atrasadas"] == 2
 
 
