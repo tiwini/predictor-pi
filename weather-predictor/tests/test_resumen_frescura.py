@@ -44,3 +44,36 @@ def test_mediana_ignora_los_outliers():
     cards += [_card("KNYC", 200.0), _card("KDEN", 300.0)]
     r = predictor_web._resumen_frescura(cards)
     assert r["mediana"] == 30.0, "dos muertas no deben ensuciar la referencia"
+
+
+# --- Estaciones sin feed de 5 min (2026-08-25) -----------------------------
+# KDEN y KNYC sólo publican METAR horarios: 26-28 obs/día contra 112-118 del
+# resto, medido sobre 8 días de nuestro propio poller. Su edad cicla 0-60 min
+# por diseño, así que contarlas como "atrasadas" es una falsa alarma diaria.
+
+def test_las_horarias_no_cuentan_como_atrasadas():
+    cards = [_card("KBOS", 30.0), _card("KDEN", 85.0), _card("KNYC", 87.0)]
+    r = predictor_web._resumen_frescura(cards)
+    assert r["n_atrasadas"] == 0, "no van tarde, van a otra cadencia"
+    assert {h["sid"] for h in r["horarias"]} == {"KDEN", "KNYC"}
+
+
+def test_una_de_5min_atrasada_si_se_marca():
+    """La separación no puede desactivar el aviso real."""
+    cards = [_card("KBOS", 30.0), _card("KDEN", 85.0), _card("KMDW", 95.0)]
+    r = predictor_web._resumen_frescura(cards)
+    assert [a["sid"] for a in r["atrasadas"]] == ["KMDW"]
+    assert r["n_atrasadas"] == 1
+
+
+def test_la_mediana_ignora_las_horarias():
+    """Mezclar cadencias mueve la mediana y deja de responder a la pregunta."""
+    cards = [_card(f"K{i:02d}", 30.0) for i in range(10)]
+    cards += [_card("KDEN", 85.0), _card("KNYC", 87.0)]
+    r = predictor_web._resumen_frescura(cards)
+    assert r["mediana"] == 30.0
+
+
+def test_el_roster_horario_exige_medicion():
+    assert predictor_web.ESTACIONES_HORARIAS == frozenset({"KDEN", "KNYC"}), (
+        "añadir una exige contar sus obs/día; se nota porque se cuadruplican")

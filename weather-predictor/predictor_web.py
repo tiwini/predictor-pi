@@ -380,6 +380,26 @@ def _frescura_ahora(sid: str, obs_time) -> dict:
         return {"obs_nivel": None, "obs_edad": None}
 
 
+# Estaciones SIN feed de 5 minutos: sólo publican METAR horarios. Medido el
+# 2026-08-25 sobre 8 días de `current_obs_ts` en station_snapshots — la cuenta
+# es de nuestro propio poller, no de una API externa:
+#
+#     KDEN      26 obs distintas/día
+#     KNYC      28 obs distintas/día
+#     las 18   112-118 obs distintas/día
+#
+# Muestreamos su pico 4× menos que el resto. Es la causa raíz de que sean
+# justo las dos con más hueco contra el CLI (−1.60 y −1.04 de media,
+# gap_feed5min_vs_cli.py) y de que salgan crónicamente como "atrasadas" en la
+# frescura: no van tarde, van a otra cadencia. Marcarlas en rojo cada día es
+# gritar lobo sobre lo que no se puede cambiar, y así es como una alerta deja
+# de mirarse.
+#
+# Si alguna empieza a publicar 5-min, sale de aquí — se nota porque su cuenta
+# de obs/día se cuadruplica.
+ESTACIONES_HORARIAS = frozenset({"KDEN", "KNYC"})
+
+
 def _resumen_frescura(cards: list) -> dict:
     """Qué estaciones tienen el dato más al día, y cuáles van más atrás.
 
@@ -404,17 +424,26 @@ def _resumen_frescura(cards: list) -> dict:
     minima = con_edad[0][0]
     # Mismo umbral que el badge de las tarjetas: por debajo, la estación va al día.
     en_minimo = [sid for e, sid in con_edad if e - minima < 1.0]
+    # Las horarias se separan en vez de contarse como atrasadas: a 60 min de
+    # cadencia, pasar de STALE_FLOOR_MIN es su comportamiento normal, no un aviso.
     atrasadas = [{"sid": sid, "min": e} for e, sid in reversed(con_edad)
-                 if e > STALE_FLOOR_MIN]
+                 if e > STALE_FLOOR_MIN and sid not in ESTACIONES_HORARIAS]
+    horarias = [{"sid": sid, "min": e} for e, sid in reversed(con_edad)
+                if sid in ESTACIONES_HORARIAS]
 
     return {
         "n": len(con_edad),
-        "mediana": statistics.median([e for e, _ in con_edad]),
+        # La mediana sólo sobre las de 5 min: mezclar cadencias la mueve ~8 min
+        # y deja de responder a la pregunta "¿va bien el roster ahora mismo?".
+        "mediana": statistics.median(
+            [e for e, sid in con_edad if sid not in ESTACIONES_HORARIAS]
+            or [e for e, _ in con_edad]),
         "min": minima,
         "n_en_minimo": len(en_minimo),
         "frescas": en_minimo[:6],
         "atrasadas": atrasadas[:4],
         "n_atrasadas": len(atrasadas),
+        "horarias": horarias,
     }
 
 

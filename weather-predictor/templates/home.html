@@ -302,6 +302,7 @@
                  min-width: 68px; }
   .frescura-et.ok  { color: var(--green); }
   .frescura-et.mal { color: var(--red); }
+  .frescura-et.hor { color: var(--cyan); }
   .frescura-item { font-variant-numeric: tabular-nums; color: var(--muted); }
   .frescura-item b { color: var(--cyan); font-weight: 600; }
   .stationstrip { margin-bottom: 1rem; }
@@ -434,6 +435,17 @@
     {% else %}
     <div class="frescura-fila"><span class="frescura-et ok">ninguna</span>
       <span class="frescura-item">por encima de 65′</span></div>
+    {% endif %}
+    {# Horarias aparte (2026-08-25). No van tarde: no tienen feed de 5 min y su
+       edad cicla 0-60 por diseño. Marcarlas en rojo cada día es gritar lobo. #}
+    {% if frescura_resumen.horarias %}
+    <div class="frescura-fila">
+      <span class="frescura-et hor">horarias</span>
+      {% for f in frescura_resumen.horarias %}<span class="frescura-item"><b>{{ f.sid }}</b>
+        {{ '%.0f'|format(f.min) }}′</span>{% endfor %}
+      <span class="frescura-item muted">· sin feed de 5 min · 26-28 obs/día
+        contra 112-118 del resto</span>
+    </div>
     {% endif %}
   </div>
   {% endif %}
