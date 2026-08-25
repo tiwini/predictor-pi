@@ -580,6 +580,72 @@ def _build_decision_pill(station, market, difficulty,
             "detail": f"{band_str} · bin {bin_lbl} · edge {edge_pp:+.1f}pp"}
 
 
+# Horas UTC en que el METAR :53 lleva el grupo 1sTTT de 6h. Verificado el
+# 2026-08-21 sobre 51 días de METARs crudos de KDEN y KNYC: los grupos salen
+# SIEMPRE a estas horas para todas las estaciones, y el huso decide en qué hora
+# solar caen. Ahí está el problema de Denver.
+PUBLICACIONES_6H_UTC = (5, 11, 17, 23)
+PUBLICACION_MINUTO = 53
+
+# Ventanas ciegas MEDIDAS, no supuestas. Sólo entra aquí una estación con su
+# corrida propia. KDEN: `investigacion/asos6h_kden_knyc.py` (n=27) — el grupo
+# que cubre su pico no se publica hasta las 17:53 local, así que entre las 14h
+# y las 16h el ASOS aporta CERO. Y el ASOS de 1 min, que lo taparía entero,
+# llega 29.6 h tarde (`investigacion/asos1min_kden.py`): no hay vía conocida.
+# Por eso se MUESTRA en vez de taparse.
+VENTANAS_CIEGAS_MEDIDAS = {
+    "KDEN": {
+        "desde": 14, "hasta": 17,
+        "nota": "el grupo que cubre el pico no llega hasta las 17:53",
+        "medido": "aporte 0% a las 14h, 15h y 16h · n=27",
+    },
+}
+
+
+def _cobertura_settle(station, ahora_utc=None) -> dict:
+    """Hasta cuándo llega la fuente con la que liquida el NWS, y qué falta.
+
+    El feed de 5 min ve la temperatura de AHORA, pero la fuente de liquidación
+    —el grupo ASOS de 6h— sólo cubre hasta su última publicación. Entre una y
+    otra hay un hueco en el que ninguna fuente con autoridad de settle está
+    mirando, y hasta ahora ese hueco no se veía en ninguna parte.
+
+    Se calcula del RELOJ, no de `today_max_asos_6h`: ese campo viene None cuando
+    el grupo no supera a `max_obs`, y entonces parecería que no hay cobertura
+    cuando sí la hay. Son dos preguntas distintas —qué dice el grupo, y hasta
+    cuándo llega— y sólo la segunda es ésta.
+    """
+    tz = station.tz
+    ahora = ahora_utc or datetime.now(timezone.utc)
+    cands = []
+    for delta in (-1, 0, 1):
+        dia = ahora.date() + timedelta(days=delta)
+        for h in PUBLICACIONES_6H_UTC:
+            cands.append(datetime(dia.year, dia.month, dia.day, h,
+                                  PUBLICACION_MINUTO, tzinfo=timezone.utc))
+    # Sólo cuenta la última publicación cuya ventana de 6h cae ENTERA en el día
+    # local — la misma guarda que aplica el piso. Sin ella se contaría como
+    # cobertura un grupo que mide la tarde de AYER.
+    ultima = None
+    for c in sorted((c for c in cands if c <= ahora), reverse=True):
+        if (c - timedelta(hours=6)).astimezone(tz).date() == c.astimezone(tz).date():
+            ultima = c
+            break
+    prox = min(c for c in cands if c > ahora)
+
+    out = {"proxima": prox.astimezone(tz).strftime("%H:%M"),
+           "cubierto_hasta": None, "minutos": None}
+    if ultima is not None:
+        out["cubierto_hasta"] = ultima.astimezone(tz).strftime("%H:%M")
+        out["minutos"] = int((ahora - ultima).total_seconds() / 60)
+
+    ciega = VENTANAS_CIEGAS_MEDIDAS.get(station.id)
+    if ciega:
+        h_local = ahora.astimezone(tz).hour
+        out["ciega"] = dict(ciega, activa=ciega["desde"] <= h_local <= ciega["hasta"])
+    return out
+
+
 @app.route("/")
 def index():
     # `?station=KMDW` llevaba desde siempre a la estación ACTIVA, fuera cual
@@ -958,6 +1024,7 @@ def index():
         "home.html", station=station, snap=snap, dash=dash, hero=hero,
         max_obs_ts_local=max_obs_ts_local,
         asos_6h_display=asos_6h_display,
+        cobertura=_cobertura_settle(station),
         cli_display=cli_display,
         settle_hint_f=settle_hint_f,
         current_over_max_note=current_over_max_note,

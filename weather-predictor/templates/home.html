@@ -283,6 +283,13 @@
                     font-size: 1rem; padding: .1rem .3rem; cursor: pointer; }
   .quickask-clear:hover { color: var(--red); }
   /* F2b.4 — Station strip (horizontal scroll, click swaps active station) */
+  .cobertura { font-size: .78rem; color: var(--muted); margin-top: .25rem;
+               display: block; }
+  .cobertura b { color: var(--text); font-variant-numeric: tabular-nums; }
+  .cobertura-ciega { color: var(--yellow); }
+  .cobertura-aviso { display: block; color: var(--yellow); margin-top: .15rem;
+                     font-size: .76rem; }
+  .cobertura-aviso .muted { color: var(--muted); }
   .frescura { background: var(--surface); border: 1px solid var(--surface2);
               border-radius: 12px; padding: .6rem .8rem; margin-bottom: .8rem; }
   .frescura-hdr { font-size: .68rem; color: var(--muted); text-transform: uppercase;
@@ -696,6 +703,22 @@
           <span class="muted" style="font-size:.8em;margin-top:.2rem;display:block"
                 title="Grupo `1sTTT` del METAR remarks — max 6h computado por ASOS a partir del feed 1-minute (misma fuente que NWS CLI settle). Supera nuestro max del feed 5-min: captura un spike <5min.">
             · ASOS 1-min: {{ asos_6h_display }}</span>
+          {% endif %}
+          {# Cobertura de liquidación (2026-08-22). El feed de 5 min ve la
+             temperatura de AHORA, pero la fuente con la que liquida el NWS sólo
+             cubre hasta su última publicación. Ese hueco no se veía en ninguna
+             parte, y en KDEN dura seis horas y se traga el pico entero. #}
+          {% if cobertura and cobertura.cubierto_hasta %}
+          <span class="cobertura{% if cobertura.ciega and cobertura.ciega.activa %} cobertura-ciega{% endif %}"
+                title="El grupo ASOS de 6h es la fuente con la que liquida el NWS. Sólo cubre hasta su última publicación; desde entonces sólo mira el feed de 5 min, que no es fuente de settle.">
+            fuente de settle cubre hasta las <b>{{ cobertura.cubierto_hasta }}</b>
+            · hace {{ cobertura.minutos // 60 }}h{{ '%02d'|format(cobertura.minutos % 60) }}
+            · próxima {{ cobertura.proxima }}
+            {% if cobertura.ciega and cobertura.ciega.activa %}
+            <span class="cobertura-aviso">⚠ ventana ciega · {{ cobertura.ciega.nota }}
+              <span class="muted">({{ cobertura.ciega.medido }})</span></span>
+            {% endif %}
+          </span>
           {% endif %}
           {% if cli_display %}
           <span class="muted" style="font-size:.8em;margin-top:.2rem;display:block"
