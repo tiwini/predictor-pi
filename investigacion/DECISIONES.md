@@ -71,6 +71,17 @@ escriben en el momento.
 | 2026-07-27 | `ext_diff` matinal como predictor del error | monotonía | N=483 monotónico: >+3°F a las 08h ⇒ sobre-predecimos 92% | ✅ [[ext_diff_matinal_predice_error]] |
 | 2026-08-10 | Fiabilidad por estación × hora | operable pre-CLI | sólo KSEA (13h) y KPHX (15h); KSFO acierta 6% | ✅ acotado [[fiabilidad_estaciones]] |
 
+## Reweight y dispersión del ensemble
+
+| Fecha | Decisión | Criterio pre-registrado | Medido | Veredicto |
+|---|---|---|---|---|
+| 2026-07-27 | `eff_N` como predictor del \|error\| | ρ>0.30, N≥100, p<0.01 | N=164, ρ=+0.070, p=0.373 | 🔴 DESCARTADO — **no reabrir sin mecanismo nuevo** [[backtest_difficulty_componentes]] |
+| 2026-08-28 | ¿Un reweight colapsado deja de **aprender**? (caso KDEN 2026-08-25) | Unidad: par de snapshots consecutivos (≤20 min) de la misma estación-día donde `today_max_obs` sube ≥1.0°F **y el piso no ata** (`ens_med` > max(max_obs, current−0.9) + 0.5 en ambos extremos, para no medir el clamp). Respuesta `r` = Δ(ens_med sin bias) / Δmax_obs. CONFIRMADO si (1) N≥100 pares con eff_N<3 y N≥100 con eff_N>18.6, (2) mediana de `r` del colapsado ≤ **0.5×** la del sano, y (3) el signo se repite en ≥2/3 de las estaciones con ≥10 pares en ambos grupos. GRIS si la razón queda entre 0.5 y 0.8. REFUTADO si >0.8 o el signo no se sostiene por estación. Control obligatorio por hora local: eff_N y el margen de error caen los dos según avanza la tarde | ⏳ | ⏳ corriendo [[reweight_colapsado]] |
+
+⚠ Esta fila **no** reabre la de arriba: aquella medía si `eff_N` predice el
+**nivel del error**, ésta mide si predice la **respuesta a un dato nuevo**. Son
+cantidades distintas y la segunda nunca se ha medido.
+
 ## Roster y configuración
 
 | Fecha | Decisión | Criterio pre-registrado | Medido | Veredicto |

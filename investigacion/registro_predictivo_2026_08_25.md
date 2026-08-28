@@ -61,3 +61,32 @@ de 0.5°F afirma una certeza que el día no respalda.
 Si el settle confirma ≥85, esto pide una corrida propia y pre-registrada sobre
 el colapso del reweight: cada cuánto pasa, y si `eff_N` bajo predice el error
 (al contrario que `difficulty`, que ya se midió y **no** lo predice, N=505).
+
+---
+
+## ✅ PUNTUADO el 2026-08-28 — settle **85.0°F** (NWS CLI, `day_outcomes`)
+
+**La predicción acertó, y era contra nosotros mismos.** El settle cae en el bin
+85-86, que el mercado tenía al 42% y nuestro `our_p` al 3% — un 3% que además
+era el piso del calibrador, porque el ensemble crudo le daba **cero**.
+
+```
+mercado    85-86 al 42%   ✅ acertó
+nosotros   83-84 al 88%   🔴 falló, con banda de 0.5°F
+ens_med    83.5    →  error +1.5°F bajo el settle
+techo físico 87.0        (nuestro propio techo SÍ contenía el resultado)
+```
+
+El día terminó 3.0°F por encima del miembro más caliente de las 500 corridas.
+La incoherencia interna que señalaba la nota queda confirmada por el
+termómetro: el techo físico y la distribución del ensemble salen del **mismo
+snapshot** y sólo uno de los dos contenía el resultado.
+
+⚠ Un acierto de N=1 no valida el ojo. Lo que sí queda medido es el **defecto**,
+que no dependía del settle: `max_obs` saltó 3.9°F y `ens_med` no se movió.
+
+**Consecuencia**: se abre la corrida pre-registrada sobre el colapso del
+reweight — pero **no** sobre `eff_N` como predictor del error, que ya se midió
+y se descartó (N=164, rho=+0.070, p=0.373, [[backtest_difficulty_componentes]]).
+La pregunta viva es la otra mitad: si un reweight colapsado deja de **aprender**
+de las observaciones nuevas. Ver la fila del 2026-08-28 en `DECISIONES.md`.
