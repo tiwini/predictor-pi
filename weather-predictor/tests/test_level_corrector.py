@@ -111,9 +111,53 @@ def test_solo_estaciones_habilitadas():
     assert lc.bias_info_for("KDCA", date(2026, 7, 10)) is None
     # KNYC añadida 2026-08-15: backtest_corrector_knyc.py, N=16 frescos.
     # KMIA añadida 2026-08-28: backtest_corrector_kmia_klas.py, N=24, y es la
-    # primera con corrección NEGATIVA. KLAS se midió con ella y NO entró.
-    assert lc.ENABLED_STATIONS == {"KLAX", "KSFO", "KNYC", "KMIA"}
-    assert lc.bias_info_for("KLAS", date(2026, 7, 10)) is None
+    # primera con corrección NEGATIVA.
+    # KLAS añadida 2026-08-28 pero SÓLO 9-13h: ventana_horaria_klas.py.
+    assert lc.ENABLED_STATIONS == {"KLAX", "KSFO", "KNYC", "KMIA", "KLAS"}
+    assert lc.ENABLED_HOURS == {"KLAS": (9, 13)}
+
+
+def test_ventana_horaria_de_klas():
+    """KLAS lleva el corrector a ratos: fuera de 9-13h no aplica.
+
+    Las horas 14-17 están medidas y el corrector EMPEORA allí, así que el gate
+    no es cosmético: es la mitad de la decisión.
+    """
+    for h in (9, 10, 12, 13):
+        assert lc.hora_habilitada("KLAS", h), f"{h}h debería estar dentro"
+    for h in (0, 8, 14, 17, 23):
+        assert not lc.hora_habilitada("KLAS", h), f"{h}h debería estar fuera"
+
+
+def test_sin_ventana_todas_las_horas_valen():
+    for h in (0, 9, 14, 23):
+        assert lc.hora_habilitada("KLAX", h)
+        assert lc.hora_habilitada("KMIA", h)
+
+
+def test_hora_none_es_la_de_referencia_del_backtest():
+    """`local_hour=None` significa peak_lo−2, que en KLAS son las 12h: dentro.
+
+    Si el gate tratara None como 'fuera', el backtest y cualquier herramienta
+    que no pase hora dejarían de ver el corrector sin decir por qué.
+    """
+    assert lc.hora_habilitada("KLAS", None)
+
+
+def test_el_gate_corta_antes_de_tocar_la_base(monkeypatch):
+    """Fuera de ventana devuelve None sin mirar las DBs.
+
+    Se apunta a un fichero que no existe: si el gate no cortara, la consulta
+    fallaría y `bias_info_for` devolvería None por la razón equivocada — que es
+    justo lo que no se quiere poder confundir.
+    """
+    llamadas = []
+    monkeypatch.setattr(lc, "median_level_bias",
+                        lambda *a, **k: llamadas.append(a) or (None, 0))
+    assert lc.bias_info_for("KLAS", date(2026, 7, 10), local_hour=14) is None
+    assert llamadas == []
+    lc.bias_info_for("KLAS", date(2026, 7, 10), local_hour=12)
+    assert len(llamadas) == 1
 
 
 def test_deshace_el_bias_aplicado_ese_dia(tmp_path, monkeypatch):

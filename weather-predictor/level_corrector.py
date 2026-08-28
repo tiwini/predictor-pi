@@ -68,10 +68,12 @@ sumarle. Salió de la medición de dispersión del mismo día
     nunca al pronóstico, y cambiar un gate revisado sin medirlo sería
     justamente lo que este archivo evita.
 
-KLAS se evaluó a la vez y **NO entra**: a la hora primaria se queda en ESPERAR
-(|err| 2.29 → 1.63, mejora 0.66 contra los 0.75 pedidos; acerca 17/25 con
-p=0.054) y a las 14h —la hora a la que se opera— el corrector **empeora**
-(1.49 → 1.74, acerca 11/25, acierto de bin 14 → 9). Se revisa con más días.
+KLAS se evaluó a la vez y de día completo **no entraba**: a la hora primaria se
+quedaba en ESPERAR (|err| 2.29 → 1.63, mejora 0.66 contra los 0.75 pedidos) y a
+las 14h el corrector **empeora** (1.49 → 1.74, acierto de bin 14 → 9). Entra el
+mismo día **sólo en su ventana horaria medida** (9-13h), por decisión del
+usuario y con la frontera barrida hora a hora — ver `ENABLED_HOURS`. Es la
+primera estación que lo lleva a ratos, y por eso el gate horario existe.
 
 MISMA FUENTE QUE EL BACKTEST
 ----------------------------
@@ -100,7 +102,27 @@ MIN_PREV_DAYS = 5
 
 # Estaciones donde el corrector sustituye al EWMA. Cada una entra con su propio
 # backtest pre-registrado, nunca por extrapolación del pool.
-ENABLED_STATIONS: set[str] = {"KLAX", "KSFO", "KNYC", "KMIA"}
+ENABLED_STATIONS: set[str] = {"KLAX", "KSFO", "KNYC", "KMIA", "KLAS"}
+
+# Ventana horaria local, inclusive, para las estaciones que sólo lo llevan parte
+# del día. Sin entrada aquí, el corrector aplica a todas las horas.
+#
+# KLAS (2026-08-28): su corrida de entrada dio ESPERAR de día completo —mejora
+# 0.66°F contra los 0.75 pedidos— y a las 14h el corrector **empeoraba**
+# (1.49 → 1.74). El usuario decidió habilitarla sólo en su hora primaria, y
+# `investigacion/ventana_horaria_klas.py` midió la frontera en vez de suponerla:
+#
+#     9h  −0.77°F  18/24 (75%)      14h  +0.25°F  11/25 (44%)   ← estorba
+#    10h  −0.74    17/24 (71%)      15h  +0.05    11/25 (44%)
+#    11h  −0.74    18/25 (72%)      16h  +0.07    10/25 (40%)
+#    12h  −0.66    17/25 (68%)      17h  −0.07    14/25 (56%)
+#    13h  −0.58    17/25 (68%)
+#
+# ⚠ Encender y apagar el corrector mueve la serie publicada: a las 14h la
+# predicción de KLAS baja ~1.8°F de golpe al dejar de corregirse, justo cuando
+# abre su ventana de pico. Es el precio de no aplicarlo donde está medido que
+# estorba, y se decidió a sabiendas.
+ENABLED_HOURS: dict[str, tuple[int, int]] = {"KLAS": (9, 13)}
 
 # Guarda de cordura: un corrector de nivel legítimo vive en pocos grados. Si
 # sale algo mayor es que la historia está contaminada, y es preferible caer al
@@ -206,6 +228,30 @@ def median_level_bias(station_id: str, today: _date,
     return out
 
 
+def hora_habilitada(station_id: str, local_hour: Optional[int]) -> bool:
+    """¿Aplica el corrector a esta hora local en esta estación?
+
+    Sin entrada en `ENABLED_HOURS`, todas las horas. Con entrada, sólo el tramo
+    medido, inclusive por los dos extremos.
+
+    `local_hour=None` significa "la hora de referencia del backtest"
+    (`peak_lo − HOURS_BEFORE_PEAK`), la misma convención que usa
+    `median_level_bias`. Resolverlo aquí evita que el gate diga que no a una
+    llamada que en realidad apunta a la hora primaria.
+    """
+    ventana = ENABLED_HOURS.get(station_id)
+    if ventana is None:
+        return True
+    if local_hour is None:
+        try:
+            from stations import PEAK_HOURS
+            local_hour = PEAK_HOURS[station_id][0] - HOURS_BEFORE_PEAK
+        except Exception:
+            return False
+    lo, hi = ventana
+    return lo <= local_hour <= hi
+
+
 def bias_info_for(station_id: str, today: _date,
                   local_hour: Optional[int] = None) -> Optional[dict]:
     """`bias_info` compatible con el del tracker, o None si no aplica.
@@ -214,6 +260,8 @@ def bias_info_for(station_id: str, today: _date,
     historia insuficiente o valor fuera de rango.
     """
     if station_id not in ENABLED_STATIONS:
+        return None
+    if not hora_habilitada(station_id, local_hour):
         return None
     med, n = median_level_bias(station_id, today, local_hour)
     if med is None:
