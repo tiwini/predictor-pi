@@ -46,7 +46,7 @@ escriben en el momento.
 | 2026-08-11 | `pred_iso_med_f` como predicción principal | umbral +2pp | +1.96pp | 🔴 RECHAZADO, bajo el umbral [[revision_2026_08_11]] |
 | 2026-08-17 | Criterio de vigilancia del corrector (escrito con N=1) | con N≥10: 🔴 revertir si ≥7 de los últimos 10 errores publicados son negativos **y** \|err\| ≥ el de sin corrector; 🟡 revisar si sólo se vuelca el signo; 🟢 seguir si no | vive en `investigacion/seguimiento_corrector.py`, importado por el watchdog para que no diverja | ✅ VIGENTE [[corrector_watchdog]] |
 | 2026-08-28 | Cierre del seguimiento en vivo de KNYC | el de arriba, aplicado al llegar a N≥10 | N=12 días con settle a las 12h local: \|err\| publicado **1.53°F** vs **3.73°F** sin corrector (−2.20); 5 de los últimos 10 negativos ⇒ signos repartidos | ✅ CONFIRMADO en producción, 🟢 SEGUIR. Cierra la vigilancia abierta el 08-15; el corrector sigue sin verificar fuera del verano [[backtest_corrector_knyc]] |
-| 2026-08-28 | ¿Recortar la corrección en KLAX? (🟡 desde el 08-26) | se cambia sólo si un MISMO parámetro —recorte k o ventana W de la mediana— (1) mejora el \|err\| de KLAX ≥0.20°F, (2) no empeora KSFO ni KNYC >0.10°F cada una, y (3) se sostiene en la vecindad del óptimo (k±0.1, W±5 días). Si no lo cumple: ruido de N pequeño, no se toca | ⏳ | ⏳ corriendo [[amarillo_klax]] |
+| 2026-08-28 | ¿Recortar la corrección en KLAX? (🟡 desde el 08-26) | se cambia sólo si un MISMO parámetro —recorte k o ventana W de la mediana— (1) mejora el \|err\| de KLAX ≥0.20°F, (2) no empeora KSFO ni KNYC >0.10°F cada una, y (3) se sostiene en la vecindad del óptimo (k±0.1, W±5 días). Si no lo cumple: ruido de N pequeño, no se toca | N=22. La sobre-corrección es **real pero pequeña**: corrección media +2.64 contra sesgo crudo +2.00 ⇒ exceso **+0.63°F**; 8 de 10 negativos, pero test de signos **p=0.109**. Barrido k: óptimo en k=0.8 ⇒ 1.14→**1.04** (mejora 0.10, la mitad del umbral), y ese mismo k empeora KSFO 2.97→3.46 (+0.49) y KNYC 1.53→1.62. Barrido de ventana: **no decide** —la réplica difiere 0.46°F de la corrección desplegada y las diferencias entre ventanas son de 0.04-0.24°F | 🔴 NO SE TOCA — falla (1) y (2). Sigue el watchdog. **Hallazgo lateral**: la estación a mirar no es KLAX sino **KSFO**, corregida DE MENOS en 1.86°F (\|err\| 2.97, la peor de las tres) y con el sesgo crudo creciendo semana a semana (+3.59 → +7.90) [[amarillo_klax]] |
 
 ## Señales evaluadas y descartadas
 
@@ -125,6 +125,26 @@ se analizó por DÍA y fue correcto allí. Aplicar la misma plantilla al máximo
 corrido habría sido un sinsentido: a nivel de día `MAX(current_f)` **es** el
 máximo corrido, así que las dos variantes salen idénticas por construcción y el
 backtest no puede fallar. Un backtest que no puede fallar no mide nada.
+
+**Un parámetro global mide la estación equivocada.** El criterio de vigilancia
+del corrector (2026-08-17) decía que ante un amarillo «la salida probablemente
+sea recortar la mediana». Medido el 08-28: KLAX quiere k=0.8, KNYC k≈1.0 y KSFO
+k>1.2. El corrector **ya es por estación** —es la mediana de su propia
+historia—, así que un recorte global habría empeorado dos para arreglar media.
+
+Y la estación que peor está no es la que dio la alarma: KSFO lleva \|err\| 2.97
+contra 1.14 de KLAX, y no salta ningún aviso porque el criterio vigila el
+**signo** y sub-corregir no vuelca signos. Una guarda que sólo mira una
+dirección del error deja la otra sin vigilancia.
+
+**La réplica de una regla no es la regla desplegada.** El barrido de ventana de
+esa misma corrida quedó sin poder decidir: reproducir la mediana causal a una
+hora fija difiere 0.46°F de media (máx 2.50) de la corrección que se aplicó de
+verdad, porque el corrector se llama con la hora del snapshot y el sesgo decae
+hora a hora (KLAX +3.45 a las 10h → +2.40 a las 13h). El efecto que se buscaba
+—0.04-0.24°F entre ventanas— cabía entero dentro del error de la réplica. Antes
+de barrer un parámetro hay que comprobar que la réplica reproduce lo desplegado
+con margen menor que el efecto buscado.
 
 **Lo que se despliega tiene que ser lo que se midió.** El máximo corrido se lee
 de `station_snapshots.current_f` —la cantidad exacta que evaluó el backtest— y
