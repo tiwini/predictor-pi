@@ -44,6 +44,9 @@ escriben en el momento.
 | 2026-08-14 | Jubilar el EWMA | su fuente sólo cubre la estación activa del web | 49.7% = azar | 🔴 JUBILADO [[bias_ewma_muerto]] |
 | 2026-08-15 | Corrector de nivel en KNYC | backtest propio | \|err\| 3.21→1.72°F; 16/16 días sobre-prediciendo; bin 2/16→10/16 a las 14h | ✅ ADOPTADO [[backtest_corrector_knyc]] |
 | 2026-08-11 | `pred_iso_med_f` como predicción principal | umbral +2pp | +1.96pp | 🔴 RECHAZADO, bajo el umbral [[revision_2026_08_11]] |
+| 2026-08-17 | Criterio de vigilancia del corrector (escrito con N=1) | con N≥10: 🔴 revertir si ≥7 de los últimos 10 errores publicados son negativos **y** \|err\| ≥ el de sin corrector; 🟡 revisar si sólo se vuelca el signo; 🟢 seguir si no | vive en `investigacion/seguimiento_corrector.py`, importado por el watchdog para que no diverja | ✅ VIGENTE [[corrector_watchdog]] |
+| 2026-08-28 | Cierre del seguimiento en vivo de KNYC | el de arriba, aplicado al llegar a N≥10 | N=12 días con settle a las 12h local: \|err\| publicado **1.53°F** vs **3.73°F** sin corrector (−2.20); 5 de los últimos 10 negativos ⇒ signos repartidos | ✅ CONFIRMADO en producción, 🟢 SEGUIR. Cierra la vigilancia abierta el 08-15; el corrector sigue sin verificar fuera del verano [[backtest_corrector_knyc]] |
+| 2026-08-28 | ¿Recortar la corrección en KLAX? (🟡 desde el 08-26) | se cambia sólo si un MISMO parámetro —recorte k o ventana W de la mediana— (1) mejora el \|err\| de KLAX ≥0.20°F, (2) no empeora KSFO ni KNYC >0.10°F cada una, y (3) se sostiene en la vecindad del óptimo (k±0.1, W±5 días). Si no lo cumple: ruido de N pequeño, no se toca | ⏳ | ⏳ corriendo [[amarillo_klax]] |
 
 ## Señales evaluadas y descartadas
 
