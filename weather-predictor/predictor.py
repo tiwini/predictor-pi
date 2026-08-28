@@ -290,6 +290,38 @@ def parse_convective_flags(raw: str) -> bool:
     return bool(_CONVECTIVE_TS_RE.search(raw)) or bool(_CONVECTIVE_CB_TCU_RE.search(raw))
 
 
+# Dispersión mínima añadida a la distribución, por estación. Cada una entra con
+# su propia corrida pre-registrada, igual que `level_corrector.ENABLED_STATIONS`.
+#
+# KMIA (2026-08-28, `investigacion/ensanche_kmia_klas.py`): con el corrector de
+# nivel ya puesto, su banda p10-p90 seguía cubriendo el 46% en vez del 80%, y el
+# 33% de los días llegaba con menos de 0.3°F de ancho. Con m=1.0 la cobertura
+# pasa a 83% y el ancho mediano a 2.16°F, estable entre mitades del mes.
+#
+# ⚠ KLAS se midió a la vez y NO entra: su residuo tiene mediana +1.92°F, o sea
+# que su banda no es estrecha sino DESCENTRADA. Ensancharla habría tapado un
+# sesgo de nivel con una banda de 7.6°F, que cubre por rendición.
+SPREAD_MIN_F: dict[str, float] = {"KMIA": 1.0}
+
+
+def widen_min_spread(daily_maxes: list, m: float | None) -> list:
+    """Añade ±m°F de dispersión replicando cada miembro con offsets simétricos.
+
+    Por qué aditivo y no un factor: el factor multiplica la anchura que ya hay,
+    y cuando la distribución llega degenerada —un tercio de los días de KMIA
+    tienen la banda por debajo de 0.3°F— multiplicar cero sigue dando cero. El
+    barrido lo enseñó: la cobertura de KMIA se satura en 58% por más que se
+    suba el factor, y con el aditivo llega al 83% con ±1.0°F.
+
+    La mezcla es simétrica (−m, 0, 0, +m), así que **la mediana no se mueve**:
+    sólo cambia la anchura. El piso se re-impone justo después, en
+    `apply_obs_floor`, que es quien sabe de `floor_f`.
+    """
+    if not m or not daily_maxes:
+        return daily_maxes
+    return [v + o for v in daily_maxes for o in (-m, 0.0, 0.0, m)]
+
+
 def apply_obs_floor(daily_maxes: list, floor: float | None) -> tuple:
     """Re-impone el piso físico: el máximo del día no puede quedar por debajo
     del máximo ya observado.
@@ -1532,6 +1564,10 @@ def build_snapshot(station: Station) -> Snapshot:
             }
     except Exception:
         ext_shift_info = None
+
+    # Dispersión mínima por estación, justo antes del piso: se ensancha y el
+    # piso recorta lo que sobre por abajo, que es el orden en que se midió.
+    daily_maxes = widen_min_spread(daily_maxes, SPREAD_MIN_F.get(station.id))
 
     # Último paso de la cadena de ajustes: re-imponer el piso de la observación.
     # Va acá a propósito — después de seasonal, clima, bias y ext_shift, que son

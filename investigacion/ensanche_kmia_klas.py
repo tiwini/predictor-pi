@@ -77,14 +77,19 @@ def con_corrector(regs: list[dict], st: str) -> list[dict]:
     """
     out = []
     sesgos: list[float] = []
+    habilitada = st in lc.ENABLED_STATIONS
     for r in regs:
         crudo = r["med"] - r["settle"]
-        if st in lc.ENABLED_STATIONS and len(sesgos) >= MIN_PREV:
-            b = statistics.median(sesgos)
-        else:
-            b = 0.0
+        listo = len(sesgos) >= MIN_PREV
+        b = statistics.median(sesgos) if (habilitada and listo) else 0.0
         sesgos.append(crudo)
         if not r["miembros"]:
+            continue
+        # Los días de calentamiento —sin historia suficiente— NO cuentan para
+        # una estación habilitada: en producción ya no ocurren, y contarlos
+        # mete días sin corregir en la cobertura del corrector. (Se coló en la
+        # primera corrida y hundía KMIA 5 días de 29.)
+        if habilitada and not listo:
             continue
         piso = r["max_obs"] if r["max_obs"] is not None else -999.0
         miembros = [max(v - b, piso) for v in r["miembros"]]
@@ -111,6 +116,39 @@ def cobertura_k(regs: list[dict], k: float) -> tuple[float, float, float, float]
             cub += 1
     n = len(regs)
     return cub / n, arr / n, aba / n, statistics.median(anchos)
+
+
+def cobertura_m(regs: list[dict], m: float) -> tuple[float, float, float, float]:
+    """Igual que `cobertura_k` pero con el operador ADITIVO.
+
+    Cada miembro se replica con offsets (−m, 0, 0, +m): una mezcla que añade
+    ±m de dispersión ocurra lo que ocurra con la distribución de base. Es lo
+    que hace falta cuando la banda está degenerada —el 33% de los días de KMIA
+    tienen ancho <0.3°F— porque ahí multiplicar por k deja el cero en cero.
+    """
+    cub = arr = aba = 0
+    anchos = []
+    for r in regs:
+        piso = r["max_obs"] if r["max_obs"] is not None else -999.0
+        v = sorted(max(x + o, piso)
+                   for x in r["miembros"] for o in (-m, 0.0, 0.0, m))
+        p10, p90 = v[int(len(v) * 0.1)], v[int(len(v) * 0.9)]
+        anchos.append(p90 - p10)
+        if r["settle"] > p90:
+            arr += 1
+        elif r["settle"] < p10:
+            aba += 1
+        else:
+            cub += 1
+    n = len(regs)
+    return cub / n, arr / n, aba / n, statistics.median(anchos)
+
+
+def m_minimo(regs: list[dict]) -> float | None:
+    for i in range(1, 25):
+        if cobertura_m(regs, i / 4)[0] >= 0.80:
+            return i / 4
+    return None
 
 
 def k_minimo(regs: list[dict]) -> float | None:
@@ -153,9 +191,50 @@ def main() -> int:
             print(f"  {k:5.1f} {100*c2:6.0f}% {100*a2:6.0f}% {100*b2:6.0f}% "
                   f"{w2:7.2f}")
 
+        # ── Operador ADITIVO ─────────────────────────────────────────────
+        # Pre-registrado el 2026-08-28 tras ver que el multiplicativo se satura
+        # en KMIA. Criterio: el m más pequeño con (a) cobertura 70-90%,
+        # (b) m estable entre mitades <=25%, (c) ancho resultante <=8.0°F y
+        # (d) NUEVO: |mediana del residuo| <= 0.75°F. Si el residuo está
+        # descentrado, el problema es de NIVEL y ensanchar sólo lo tapa.
+        res = sorted(r["settle"] - r["med"] for r in regs)
+        centro = statistics.median(res)
+        print(f"\n  {'m':>5s} {'cubre':>7s} {'>p90':>7s} {'<p10':>7s} {'ancho':>7s}"
+              "     (aditivo)")
+        for i in range(2, 13, 2):
+            m = i / 4
+            c4, a4, b4, w4 = cobertura_m(regs, m)
+            print(f"  {m:5.2f} {100*c4:6.0f}% {100*a4:6.0f}% {100*b4:6.0f}% "
+                  f"{w4:7.2f}")
+        m = m_minimo(regs)
+        if m is not None:
+            c5, _, _, w5 = cobertura_m(regs, m)
+            mitad = len(regs) // 2
+            m1, m2 = m_minimo(regs[:mitad]), m_minimo(regs[mitad:])
+            est_m = (abs(m1 - m2) / max(m1, m2)) if (m1 and m2) else None
+            print(f"\n  ── CRITERIO (aditivo) ──")
+            print(f"  m mínimo que llega al 80%: ±{m}°F  (cubre {100*c5:.0f}%, "
+                  f"ancho {w5:.2f}°F)")
+            print(f"  (a) cobertura en 70-90%        {100*c5:.0f}%"
+                  f"        {'SÍ' if 0.70 <= c5 <= 0.90 else 'NO'}")
+            print(f"  (b) m estable entre mitades    {m1} vs {m2}"
+                  + (f" ({100*est_m:.0f}%)" if est_m is not None else "")
+                  + f"   {'SÍ' if (est_m is not None and est_m <= 0.25) else 'NO'}")
+            print(f"  (c) ancho <= {ANCHO_MAX}°F             {w5:.2f}"
+                  f"          {'SÍ' if w5 <= ANCHO_MAX else 'NO'}")
+            print(f"  (d) residuo centrado (<=0.75)  {centro:+.2f}"
+                  f"         {'SÍ' if abs(centro) <= 0.75 else 'NO — es NIVEL, no anchura'}")
+            ok_m = (0.70 <= c5 <= 0.90 and est_m is not None and est_m <= 0.25
+                    and w5 <= ANCHO_MAX and abs(centro) <= 0.75)
+            print(f"\n  VEREDICTO ADITIVO {st}: "
+                  + (f"ADOPTAR m=±{m}°F" if ok_m
+                     else "NO ADOPTAR — no cumple las cuatro"))
+        else:
+            print("\n  ningún m<=6°F llega al 80%")
+
         k = k_minimo(regs)
         if k is None:
-            print("\n  ⇒ 🔴 ningún k<=8 llega al 80%: no es sólo anchura\n")
+            print("\n  ⇒ multiplicativo: ningún k<=8 llega al 80%\n")
             continue
         c3, _, _, w3 = cobertura_k(regs, k)
         mitad = len(regs) // 2
