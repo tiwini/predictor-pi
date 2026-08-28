@@ -121,7 +121,7 @@ def main() -> int:
     an.row_factory = sqlite3.Row
 
     filas = an.execute(
-        """SELECT ts, station, current_f, today_max_obs, ens_med, bias_f,
+        """SELECT ts, station, current_f, today_max_obs, ens_med, ens_p10, bias_f,
                   bias_applied, difficulty_reasons_json
            FROM station_snapshots
            WHERE ens_med IS NOT NULL AND today_max_obs IS NOT NULL
@@ -204,8 +204,15 @@ def main() -> int:
                 continue
             raw_a = a["ens_med"] + ((a["bias_f"] or 0.0) if a["bias_applied"] else 0.0)
             raw_b = b["ens_med"] + ((b["bias_f"] or 0.0) if b["bias_applied"] else 0.0)
+            # Distancia del dato nuevo al borde bajo de la distribución. Cada
+            # miembro vale max(max_obs, su pronóstico), así que `ens_p10` NUNCA
+            # puede caer por debajo de max_obs: la pregunta útil no es si lo
+            # supera —imposible— sino cuánto le falta para tocarlo.
+            hueco = (b["ens_p10"] - b["today_max_obs"]
+                     if b["ens_p10"] is not None else None)
             pares.append((st, franja(lb.hour + lb.minute / 60), g,
-                          (raw_b - raw_a) / d_obs, raw_b - raw_a, d_obs))
+                          (raw_b - raw_a) / d_obs, raw_b - raw_a, d_obs,
+                          hueco, abs(raw_b - raw_a) > 1e-9))
 
     print(f"B. Pares construidos: {len(pares)}")
     print("   descartados: " + " · ".join(f"{k} {v}" for k, v in
@@ -213,8 +220,8 @@ def main() -> int:
 
     def resumen(sel, etiqueta):
         por_g = defaultdict(list)
-        for st, f, g, r, d, do in sel:
-            por_g[g].append((r, d))
+        for pr in sel:
+            por_g[pr[2]].append((pr[3], pr[4]))
         print(f"   {etiqueta}")
         print(f"      {'grupo':10s} {'N':>6s} {'r mediana':>10s} "
               f"{'Δens med':>10s} {'r>0':>7s}")
@@ -278,6 +285,24 @@ def main() -> int:
               "y no se actúa")
     else:
         print("   ⇒ 🔴 REFUTADO por el criterio")
+    # ---------- F. Post-hoc: ¿por qué no se mueve? NO decide nada ----------
+    print("\nF. Post-hoc (descriptivo, NO parte del criterio): ¿dónde cae el "
+          "dato nuevo?")
+    print("   Cada miembro vale max(max_obs, pronóstico restante). Un max_obs "
+          "por\n   debajo del miembro no puede moverlo, por construcción.\n")
+    print(f"      {'p10 − max_obs':22s} {'N':>6s} {'mueve ens_med':>14s} "
+          f"{'Δens med mediana':>17s}")
+    for etiqueta, lo, hi in (("toca (≤0.1°F)", -99.0, 0.1),
+                             ("0.1 – 1°F", 0.1, 1.0),
+                             ("1 – 3°F", 1.0, 3.0),
+                             ("más de 3°F", 3.0, 999.0)):
+        sel = [pr for pr in pares
+               if pr[6] is not None and lo < pr[6] <= hi]
+        if not sel:
+            continue
+        mueve = 100 * sum(1 for pr in sel if pr[7]) / len(sel)
+        print(f"      {etiqueta:22s} {len(sel):6d} {mueve:13.0f}% "
+              f"{statistics.median([pr[4] for pr in sel]):17.2f}")
     return 0
 
 

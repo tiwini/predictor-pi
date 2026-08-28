@@ -76,7 +76,7 @@ escriben en el momento.
 | Fecha | Decisión | Criterio pre-registrado | Medido | Veredicto |
 |---|---|---|---|---|
 | 2026-07-27 | `eff_N` como predictor del \|error\| | ρ>0.30, N≥100, p<0.01 | N=164, ρ=+0.070, p=0.373 | 🔴 DESCARTADO — **no reabrir sin mecanismo nuevo** [[backtest_difficulty_componentes]] |
-| 2026-08-28 | ¿Un reweight colapsado deja de **aprender**? (caso KDEN 2026-08-25) | Unidad: par de snapshots consecutivos (≤20 min) de la misma estación-día donde `today_max_obs` sube ≥1.0°F **y el piso no ata** (`ens_med` > max(max_obs, current−0.9) + 0.5 en ambos extremos, para no medir el clamp). Respuesta `r` = Δ(ens_med sin bias) / Δmax_obs. CONFIRMADO si (1) N≥100 pares con eff_N<3 y N≥100 con eff_N>18.6, (2) mediana de `r` del colapsado ≤ **0.5×** la del sano, y (3) el signo se repite en ≥2/3 de las estaciones con ≥10 pares en ambos grupos. GRIS si la razón queda entre 0.5 y 0.8. REFUTADO si >0.8 o el signo no se sostiene por estación. Control obligatorio por hora local: eff_N y el margen de error caen los dos según avanza la tarde | ⏳ | ⏳ corriendo [[reweight_colapsado]] |
+| 2026-08-28 | ¿Un reweight colapsado deja de **aprender**? (caso KDEN 2026-08-25) | Unidad: par de snapshots consecutivos (≤20 min) de la misma estación-día donde `today_max_obs` sube ≥1.0°F **y el piso no ata** (`ens_med` > max(max_obs, current−0.9) + 0.5 en ambos extremos, para no medir el clamp). Respuesta `r` = Δ(ens_med sin bias) / Δmax_obs. CONFIRMADO si (1) N≥100 pares con eff_N<3 y N≥100 con eff_N>18.6, (2) mediana de `r` del colapsado ≤ **0.5×** la del sano, y (3) el signo se repite en ≥2/3 de las estaciones con ≥10 pares en ambos grupos. GRIS si la razón queda entre 0.5 y 0.8. REFUTADO si >0.8 o el signo no se sostiene por estación. Control obligatorio por hora local: eff_N y el margen de error caen los dos según avanza la tarde | **N=2849 pares** (2026-07-28 a 08-28, 20 estaciones; 71.021 descartados por no traer dato nuevo, 271 porque ataba el piso). Colapsado 192 · sano 1380. Mediana de `r` = **0.000 en los cuatro grupos**, y por estación el signo va **2 de 7** a favor (p=0.453). El control horario no cambia nada: la mediana es 0.000 en las cuatro franjas | 🔴 **REFUTADO** — el colapso no discrimina. Pero queda medido lo que **sí** pasa: el `ens_med` publicado **no se mueve en el 52%** de las veces que entra un dato nuevo que sube el máximo del día ≥1.0°F, en cualquier grupo. Y el propio flag es un reloj: eff_N<3 en 0.5% de los snapshots antes de las 10h contra **45.9%** pasadas las 16h [[reweight_colapsado]] |
 
 ⚠ Esta fila **no** reabre la de arriba: aquella medía si `eff_N` predice el
 **nivel del error**, ésta mide si predice la **respuesta a un dato nuevo**. Son
@@ -136,6 +136,22 @@ se analizó por DÍA y fue correcto allí. Aplicar la misma plantilla al máximo
 corrido habría sido un sinsentido: a nivel de día `MAX(current_f)` **es** el
 máximo corrido, así que las dos variantes salen idénticas por construcción y el
 backtest no puede fallar. Un backtest que no puede fallar no mide nada.
+
+**Un flag que dispara con la hora no es una señal.** «Reweight colapsado»
+(eff_N<3) pasa del **0.5%** de los snapshots antes de las 10h al **45.9%**
+pasadas las 16h. No marca días raros: marca **tardes**, porque el reweight lleva
+acumuladas horas de residuales y concentrar los pesos es lo que le toca hacer.
+Medido el 2026-08-28. Cualquier criterio que lo use como gate está usando el
+reloj disfrazado de diagnóstico — la misma familia que
+[[difficulty_max_anomalia]].
+
+**Un corte que sólo puede salir por un lado no mide nada.** En esa misma corrida
+el primer análisis post-hoc preguntaba si el dato nuevo superaba el `ens_p10`.
+Es **imposible por construcción**: cada miembro vale `max(max_obs, pronóstico
+restante)`, así que `ens_p10 ≥ max_obs` siempre. El resultado —2849 de 2849
+casos «por debajo»— lo delató. Antes de cortar por una variable, comprobar que
+el corte puede caer de los dos lados. Es el primo del backtest que no puede
+fallar.
 
 **Un parámetro global mide la estación equivocada.** El criterio de vigilancia
 del corrector (2026-08-17) decía que ante un amarillo «la salida probablemente
