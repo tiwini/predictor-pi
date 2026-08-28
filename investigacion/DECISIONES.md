@@ -78,7 +78,7 @@ escriben en el momento.
 | 2026-07-27 | `eff_N` como predictor del \|error\| | ρ>0.30, N≥100, p<0.01 | N=164, ρ=+0.070, p=0.373 | 🔴 DESCARTADO — **no reabrir sin mecanismo nuevo** [[backtest_difficulty_componentes]] |
 | 2026-08-28 | ¿Un reweight colapsado deja de **aprender**? (caso KDEN 2026-08-25) | Unidad: par de snapshots consecutivos (≤20 min) de la misma estación-día donde `today_max_obs` sube ≥1.0°F **y el piso no ata** (`ens_med` > max(max_obs, current−0.9) + 0.5 en ambos extremos, para no medir el clamp). Respuesta `r` = Δ(ens_med sin bias) / Δmax_obs. CONFIRMADO si (1) N≥100 pares con eff_N<3 y N≥100 con eff_N>18.6, (2) mediana de `r` del colapsado ≤ **0.5×** la del sano, y (3) el signo se repite en ≥2/3 de las estaciones con ≥10 pares en ambos grupos. GRIS si la razón queda entre 0.5 y 0.8. REFUTADO si >0.8 o el signo no se sostiene por estación. Control obligatorio por hora local: eff_N y el margen de error caen los dos según avanza la tarde | **N=2849 pares** (2026-07-28 a 08-28, 20 estaciones; 71.021 descartados por no traer dato nuevo, 271 porque ataba el piso). Colapsado 192 · sano 1380. Mediana de `r` = **0.000 en los cuatro grupos**, y por estación el signo va **2 de 7** a favor (p=0.453). El control horario no cambia nada: la mediana es 0.000 en las cuatro franjas | 🔴 **REFUTADO** — el colapso no discrimina. Pero queda medido lo que **sí** pasa: el `ens_med` publicado **no se mueve en el 52%** de las veces que entra un dato nuevo que sube el máximo del día ≥1.0°F, en cualquier grupo. Y el propio flag es un reloj: eff_N<3 en 0.5% de los snapshots antes de las 10h contra **45.9%** pasadas las 16h [[reweight_colapsado]] |
 
-| 2026-08-28 | ¿La banda p10-p90 es honesta? (caso KDEN 2026-08-25) | Unidad: station-day al snapshot de las 12h locales (±45 min); settle del CLI. **MAL CALIBRADA** si la cobertura de p10-p90 < 65% (nominal 80%) con N≥200 **y** el déficit se repite en ≥2/3 de las estaciones con N≥10. Se propone un factor `k` **sólo si** (a) el mismo k deja la cobertura en 70-90% en ≥2/3 de las estaciones y (b) el k de la 1ª mitad y el de la 2ª difieren ≤25%; si no, se reporta la miscalibración **sin parámetro** —un k inestable es sobreajuste a un mes de verano. La FORMA del arreglo la decide `rho(ancho, |err|)` dentro de estación: ≤0.15 ⇒ ensanche uniforme, >0.30 ⇒ proporcional | ⏳ | ⏳ corriendo [[dispersion_banda]] |
+| 2026-08-28 | ¿La banda p10-p90 es honesta? (caso KDEN 2026-08-25) | Unidad: station-day al snapshot de las 12h locales (±45 min); settle del CLI. **MAL CALIBRADA** si la cobertura de p10-p90 < 65% (nominal 80%) con N≥200 **y** el déficit se repite en ≥2/3 de las estaciones con N≥10. Se propone un factor `k` **sólo si** (a) el mismo k deja la cobertura en 70-90% en ≥2/3 de las estaciones y (b) el k de la 1ª mitad y el de la 2ª difieren ≤25%; si no, se reporta la miscalibración **sin parámetro** —un k inestable es sobreajuste a un mes de verano. La FORMA del arreglo la decide `rho(ancho, |err|)` dentro de estación: ≤0.15 ⇒ ensanche uniforme, >0.30 ⇒ proporcional | **12h (N=586)**: cobertura **54.6%** · 21.5% por encima del p90 · 23.9% por debajo del p10. Ancho mediano 3.40°F contra un p90 del \|error\| de 3.90°F. **PIT en U**: 23.9% en el decil más bajo y 21.5% en el más alto, contra 10% nominal. El settle cae **fuera de los 500 miembros el 30.4% de los días** (14.0% bajo el más frío, 16.4% sobre el más caliente, mediana +1.14°F). **15h (N=600)**: peor — cobertura **47.0%**, ancho mediano 2.10°F y el p10 de los anchos es **0.00°F**; ningún k≤10 llega al 80%. Por estación: 13 de 20 bajo el 65%, y sólo **2 de 20** (KSAT 93%, KAUS 86%) alcanzan el 80% nominal. k global = 2.6, estable entre mitades (2.7 vs 2.5, 7%) pero deja sólo **9 de 20** estaciones en 70-90%. Sharpness: mediana de rho **+0.077** (14/20 positivas, p=0.115) | 🟡 **La banda no es honesta**, pero el criterio **no se cumple por la letra**: pedía el déficit en ≥2/3 de las estaciones y salieron 13 de 20 (hacían falta 13.34) — falla por una. **NO se propone parámetro global**, como mandaba el pre-registro: falla la condición (a). El arreglo es **por estación**. Extremos: KMIA 93% por encima del p90 con banda de 0.90°F y KLAS 77%, las dos **fuera** del corrector de nivel; por abajo KSFO 67% y KNYC 59%, las dos ya dentro [[dispersion_banda]] |
 
 ⚠ Distinta de la del 07-27, que preguntaba si el **ancho predice el error**
 (rho=+0.047, descartado como gate). Ésta pregunta si el ancho es **honesto**:
@@ -143,6 +143,23 @@ se analizó por DÍA y fue correcto allí. Aplicar la misma plantilla al máximo
 corrido habría sido un sinsentido: a nivel de día `MAX(current_f)` **es** el
 máximo corrido, así que las dos variantes salen idénticas por construcción y el
 backtest no puede fallar. Un backtest que no puede fallar no mide nada.
+
+**La banda se estrecha más rápido que el error.** Medido el 2026-08-28: a las
+12h el ancho mediano es 3.40°F contra un p90 del \|error\| de 3.90; a las 15h el
+ancho baja a 2.10 y el p90 del error sólo a 3.10 — y el 10% de los
+station-days llega a las 15h con la banda a **0.00°F de ancho**. El sistema
+afirma más certeza según avanza el día y sólo se gana una parte. Es la versión
+medida de [[bug_hero_clavado_piso]]: una banda de cero se lee como certeza y es
+un artefacto del piso aplastando a los 500 miembros contra `max_obs`.
+
+**Una condición de repetición pedida por encima del listón de alarma.** El
+criterio de la banda exigía que el déficit se repitiera en ≥2/3 de las
+estaciones **usando el umbral de alarma (65%)**, no el nominal (80%). O sea:
+para contar, una estación tenía que estar *muy* mal calibrada. Salieron 13 de 20
+bajo el 65% —falla por una— pero **18 de 20** están por debajo del 80% nominal.
+El veredicto se queda como cayó; la lección es para el próximo criterio: la
+condición de repetición se mide contra el **nominal**, y el umbral de alarma
+decide sólo la severidad.
 
 **Un flag que dispara con la hora no es una señal.** «Reweight colapsado»
 (eff_N<3) pasa del **0.5%** de los snapshots antes de las 10h al **45.9%**
