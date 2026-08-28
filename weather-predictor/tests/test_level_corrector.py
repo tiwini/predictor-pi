@@ -110,7 +110,10 @@ def test_solo_estaciones_habilitadas():
     assert lc.bias_info_for("KPHX", date(2026, 7, 10)) is None
     assert lc.bias_info_for("KDCA", date(2026, 7, 10)) is None
     # KNYC añadida 2026-08-15: backtest_corrector_knyc.py, N=16 frescos.
-    assert lc.ENABLED_STATIONS == {"KLAX", "KSFO", "KNYC"}
+    # KMIA añadida 2026-08-28: backtest_corrector_kmia_klas.py, N=24, y es la
+    # primera con corrección NEGATIVA. KLAS se midió con ella y NO entró.
+    assert lc.ENABLED_STATIONS == {"KLAX", "KSFO", "KNYC", "KMIA"}
+    assert lc.bias_info_for("KLAS", date(2026, 7, 10)) is None
 
 
 def test_deshace_el_bias_aplicado_ese_dia(tmp_path, monkeypatch):

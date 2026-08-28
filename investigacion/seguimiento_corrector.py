@@ -18,16 +18,25 @@ backtest— sino que **sobre-corrija**: que al centrar el error lo pase al otro
 lado. La señal es el signo, no la magnitud.
 
   🔴 REVERTIR la estación si, con N>=10 días:
-       (a) el error publicado es NEGATIVO en >=7 de los últimos 10, Y
+       (a) el error publicado cae EN CONTRA DE LA CORRECCIÓN en >=7 de los
+           últimos 10, Y
        (b) |error| medio publicado >= |error| medio sin corrector
-     Las dos: sub-predecir sistemáticamente no es problema si aun así queda
-     más cerca que no corregir.
+     Las dos: pasarse sistemáticamente no es problema si aun así queda más
+     cerca que no corregir.
 
-  🟡 REVISAR a mano si el signo se vuelca (>=7 de 10 negativos) pero el
+  🟡 REVISAR a mano si el signo se vuelca (>=7 de 10 en contra) pero el
      |error| sigue siendo mejor. Es corrección excesiva que todavía compensa;
      la salida probablemente sea recortar la mediana, no apagarla.
 
   🟢 SEGUIR si el |error| publicado es menor y los signos están repartidos.
+
+  ⚠ «En contra de la corrección», no «negativo» (corregido el 2026-08-28 al
+  entrar KMIA). Hasta ese día las tres estaciones habilitadas sobre-predecían y
+  el corrector RESTABA, así que pasarse producía errores negativos y bastaba con
+  contar ésos. KMIA es la primera a la que se SUMA: allí pasarse produce errores
+  POSITIVOS, y la guarda escrita con el signo fijo no habría visto nunca una
+  sobre-corrección. Contar el lado equivocado es no vigilar nada — el mismo
+  agujero que dejó a KSFO sin aviso llevando el peor |error| de las tres.
 
 N<10 no decide nada, se imprime y ya. La hora de referencia es la de decisión
 (mediodía local), no la de la ventana de pico: dentro de la ventana el piso de
@@ -51,7 +60,9 @@ from stations import STATION_TZ   # noqa: E402
 import level_corrector as lc      # noqa: E402
 
 UTC = ZoneInfo("UTC")
-HORA = int(sys.argv[1]) if len(sys.argv) > 1 else 12
+# La hora se lee en main(), no aquí: al importar el módulo desde un test
+# `sys.argv[1]` es el path que pytest recibió y el int() reventaba la colección.
+HORA = 12
 VENTANA_MIN = 45
 
 
@@ -107,6 +118,32 @@ def fila_del_dia(an, cal, st: str, dia: str) -> dict | None:
             "sin": r["ens_med"] + b, "corr": b, "mk": mk}
 
 
+def veredicto_por_signos(e_pub: list[float], corr_mediana: float,
+                         m_pub: float, m_sin: float) -> tuple[str, str, int]:
+    """(estado, texto, n_en_contra) — la regla de vigilancia, aislada y pura.
+
+    Vive aparte para poder testearla sin montar dos bases de datos, y para que
+    el umbral tenga UN solo sitio donde vivir.
+
+    Sobre-corregir empuja el error al lado CONTRARIO al de la corrección: si se
+    resta (corr>0) aparece sub-predicción (errores negativos); si se suma
+    (corr<0), sobre-predicción (errores positivos). Por eso el conteo se hace
+    contra el signo de la corrección y no contra un signo fijo.
+    """
+    ult = e_pub[-10:]
+    signo = 1.0 if corr_mediana >= 0 else -1.0
+    contra = sum(1 for e in ult if e * signo < 0)
+    if len(e_pub) < 10:
+        return ("n_bajo", f"N={len(e_pub)} — no decide, "
+                          f"faltan {10 - len(e_pub)} días", contra)
+    if contra >= 7 and m_pub >= m_sin:
+        return "rojo", "🔴 REVERTIR — sobre-corrige y ya no compensa", contra
+    if contra >= 7:
+        return ("amarillo",
+                "🟡 REVISAR — vuelca el signo pero aún queda más cerca", contra)
+    return "verde", "🟢 SEGUIR", contra
+
+
 def estado_de(an, cal, st: str, hora: int = None) -> dict:
     """Estado del corrector en una estación: filas, métricas y veredicto.
 
@@ -132,22 +169,13 @@ def estado_de(an, cal, st: str, hora: int = None) -> dict:
 
     e_pub = [f["pub"] - f["settle"] for f in filas]
     e_sin = [f["sin"] - f["settle"] for f in filas]
-    neg = sum(1 for e in e_pub[-10:] if e < 0)
     m_pub = statistics.mean([abs(e) for e in e_pub])
     m_sin = statistics.mean([abs(e) for e in e_sin])
-
-    if len(filas) < 10:
-        estado, v = "n_bajo", (f"N={len(filas)} — no decide, "
-                               f"faltan {10 - len(filas)} días")
-    elif neg >= 7 and m_pub >= m_sin:
-        estado, v = "rojo", "🔴 REVERTIR — sobre-corrige y ya no compensa"
-    elif neg >= 7:
-        estado, v = "amarillo", "🟡 REVISAR — vuelca el signo pero aún queda más cerca"
-    else:
-        estado, v = "verde", "🟢 SEGUIR"
+    corr_med = statistics.median([f["corr"] for f in filas])
+    estado, v, neg = veredicto_por_signos(e_pub, corr_med, m_pub, m_sin)
 
     return {"st": st, "estado": estado, "veredicto": v, "desde": desde,
-            "n": len(filas), "filas": filas, "neg": neg,
+            "n": len(filas), "filas": filas, "neg": neg, "corr_med": corr_med,
             "n_reciente": len(e_pub[-10:]), "m_pub": m_pub, "m_sin": m_sin}
 
 
@@ -166,12 +194,18 @@ def render(e: dict) -> str:
                    f"{f['sin'] - f['settle']:+6.1f} {dmk}")
     out.append(f"   |error| medio   publicado {e['m_pub']:.2f}   "
                f"sin corrector {e['m_sin']:.2f}   ({e['m_pub'] - e['m_sin']:+.2f})")
-    out.append(f"   signo: {e['neg']} de los últimos {e['n_reciente']} negativos")
+    lado = "negativos" if e.get("corr_med", 0.0) >= 0 else "positivos"
+    out.append(f"   signo: {e['neg']} de los últimos {e['n_reciente']} en contra "
+               f"de la corrección ({lado}; corrección mediana "
+               f"{e.get('corr_med', 0.0):+.2f}°F)")
     out.append(f"   {e['veredicto']}\n")
     return "\n".join(out)
 
 
 def main() -> int:
+    global HORA
+    if len(sys.argv) > 1:
+        HORA = int(sys.argv[1])
     an = sqlite3.connect(f"file:{BASE / 'analysis.db'}?mode=ro", uri=True)
     an.row_factory = sqlite3.Row
     cal = sqlite3.connect(f"file:{BASE / 'calibration.db'}?mode=ro", uri=True)

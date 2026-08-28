@@ -49,6 +49,30 @@ historia cabe en julio-agosto, así que el sesgo NO está verificado fuera del
 verano. Si en otoño el corrector empieza a alejar, ésa es la causa a mirar
 primero.
 
+KMIA se añade el 2026-08-28 y es la PRIMERA con corrección NEGATIVA: las tres
+anteriores sobre-predicen y se les resta; a Miami la sub-predecimos y hay que
+sumarle. Salió de la medición de dispersión del mismo día
+(`investigacion/dispersion_banda.py`): el settle quedaba por encima del p90 el
+**93% de los días**, con una banda de 0.90°F. Backtest de entrada en
+`investigacion/backtest_corrector_kmia_klas.py`, sobre 24 días a las 12h local:
+
+    publicado 2.39 → causal 0.78°F   acerca 21/24 (p=0.0001)
+    acierto de bin  3/24 → 14/24     corrección mediana −2.37°F
+
+⚠ Dos consecuencias del signo, verificadas antes de habilitarla:
+  · `cap_by_floor` no actúa con bias<0 (sólo recorta correcciones que hunden la
+    mediana bajo el piso), así que no interfiere.
+  · El cold-bias guard de `agent_signals` bloquea YES cold/mid cuando el bias
+    baja de −0.7°F. Con KMIA en −2.4 quedará **siempre activo** para esa
+    estación. Se deja como está a propósito: sólo afecta a apuestas simuladas,
+    nunca al pronóstico, y cambiar un gate revisado sin medirlo sería
+    justamente lo que este archivo evita.
+
+KLAS se evaluó a la vez y **NO entra**: a la hora primaria se queda en ESPERAR
+(|err| 2.29 → 1.63, mejora 0.66 contra los 0.75 pedidos; acerca 17/25 con
+p=0.054) y a las 14h —la hora a la que se opera— el corrector **empeora**
+(1.49 → 1.74, acerca 11/25, acierto de bin 14 → 9). Se revisa con más días.
+
 MISMA FUENTE QUE EL BACKTEST
 ----------------------------
 Lee `analysis.db.station_snapshots` con las mismas constantes (2 h antes del
@@ -76,7 +100,7 @@ MIN_PREV_DAYS = 5
 
 # Estaciones donde el corrector sustituye al EWMA. Cada una entra con su propio
 # backtest pre-registrado, nunca por extrapolación del pool.
-ENABLED_STATIONS: set[str] = {"KLAX", "KSFO", "KNYC"}
+ENABLED_STATIONS: set[str] = {"KLAX", "KSFO", "KNYC", "KMIA"}
 
 # Guarda de cordura: un corrector de nivel legítimo vive en pocos grados. Si
 # sale algo mayor es que la historia está contaminada, y es preferible caer al
