@@ -90,6 +90,8 @@ escriben en el momento.
 con bins mentirosos sería [[principio_todo_se_reajusta]] fallando otra vez. La
 mediana, el piso y el techo físico no cambian, y eso se comprueba con un test.
 
+| 2026-08-30 | Mapa: ¿qué le falta a cada una de las 20? | **Descriptivo, no decide nada** — produce la tabla con la que después se pre-registra estación por estación. Se mide con la configuración de HOY: se deshace el bias del día, se aplica el corrector causal a las habilitadas (con su ventana horaria), la dispersión mínima a las que la tengan y el piso al final. Clasificación: cobertura 70-90% ⇒ nada; \|mediana del residuo\| > 0.75°F ⇒ NIVEL; centrado pero por debajo del 70% ⇒ ANCHURA | N=24-30 por estación, 12h local. **Ya calibradas 6**: KATL KAUS KDFW **KMIA** KSAT KSEA. **Falta NIVEL 9**: KHOU (+2.6) KMSP (+2.3) KMSY (+1.8) KOKC (+1.4) KPHX (−1.0) KDEN (−0.9) KBOS (+0.9) KSFO (+0.9) KPHL (−0.8). **Falta ANCHURA 5**: KNYC (±3.0) KLAS (±2.75) KDCA (±2.5) KLAX (±2.5) KMDW (±1.5) | 🗺 MAPA. Dos lecturas: **KMIA sale de la lista** (79% de cobertura, residuo +0.15, \|err\| 0.72) — el corrector + la dispersión la calibraron, que valida las dos herramientas y el criterio para elegir entre ellas. Y **KLAX se reclasifica**: residuo +0.40, o sea el nivel está bien y lo roto es la banda — mejor explicación de su 🟡 que la hipótesis de sobre-corrección medida y descartada el 08-28. ⚠ KSFO ya lleva corrector y aún le faltan +0.9°F: sub-corregida, coherente con lo visto el 08-28 [[diagnostico_20]] |
+
 ⚠ Distinta de la del 07-27, que preguntaba si el **ancho predice el error**
 (rho=+0.047, descartado como gate). Ésta pregunta si el ancho es **honesto**:
 una banda del 80% tiene que contener el resultado el 80% de las veces, y eso
