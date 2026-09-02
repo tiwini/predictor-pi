@@ -6,7 +6,7 @@ gate ACERTÓ, así que la guarda NO debe bloquearlo. Si algún día un cambio ha
 que KLAS se bloquee, la guarda se ha vuelto demasiado agresiva.
 """
 import sys
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
@@ -21,11 +21,24 @@ from stations import STATION_TZ  # noqa: E402
 
 
 def _snap(st, hora, minuto=0, max_obs=None, cur=None, peak=None, estable=None):
+    """Snapshot sintético. La fecha es AYER, nunca una literal.
+
+    Tenía `datetime(2026, 8, 14, ...)` fijo y el 2026-09-01 el test de la vía 3
+    empezó a fallar solo: `analysis.db` conserva una ventana móvil (hoy va de
+    08-01 en adelante), así que los días ANTERIORES al 14 de agosto se quedaron
+    por debajo del mínimo de historia y `ceiling_f` devolvía None.
+
+    Es el mismo error que ya documentamos al sembrar datos, con un matiz nuevo:
+    no basta con que la fecha exista, tiene que seguir cayendo dentro de la
+    ventana que la base conserva.
+    """
     tz = ZoneInfo(STATION_TZ[st])
+    ayer = date.today() - timedelta(days=1)
     return SimpleNamespace(
         today_max_obs=max_obs, current_temp_f=cur, peak_state=peak,
         current_temp_stable_min=estable,
-        station_local=datetime(2026, 8, 14, hora, minuto, tzinfo=tz))
+        station_local=datetime(ayer.year, ayer.month, ayer.day,
+                               hora, minuto, tzinfo=tz))
 
 
 @pytest.fixture(autouse=True)
@@ -99,10 +112,16 @@ def test_plana_con_poca_ventana_acota():
     assert "plana" in why
 
 
-def test_la_ventana_ancha_no_dispara_la_via_plana_demasiado_pronto():
+def test_la_ventana_ancha_no_dispara_la_via_plana_demasiado_pronto(monkeypatch):
     """Regresión de la recalibración: con (13,18), a las 15h quedan 3 h y una
     meseta NO significa que el día esté hecho. Antes, con (13,16), la misma
-    hora acotaba a max_obs+2.0 y daba el día por cerrado dos horas antes."""
+    hora acotaba a max_obs+2.0 y daba el día por cerrado dos horas antes.
+
+    El p90 se fija en vez de leerlo de la base: lo que se comprueba es que NO
+    se dispare la vía plana, y eso no debe depender de cuánta historia haya
+    hoy ni de cuánto subieron los últimos días.
+    """
+    monkeypatch.setattr(pg, "_p90_subida_restante", lambda *a, **k: 5.0)
     c, why = pg.ceiling_f("KNYC", _snap("KNYC", 15, 3, max_obs=82.9, cur=82.9,
                                         estable=67))
     assert c > 82.9 + pg.FLAT_HEADROOM_F, "no debe acotar tan pronto"

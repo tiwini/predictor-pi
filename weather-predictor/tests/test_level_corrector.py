@@ -113,7 +113,11 @@ def test_solo_estaciones_habilitadas():
     # KMIA añadida 2026-08-28: backtest_corrector_kmia_klas.py, N=24, y es la
     # primera con corrección NEGATIVA.
     # KLAS añadida 2026-08-28 pero SÓLO 9-13h: ventana_horaria_klas.py.
-    assert lc.ENABLED_STATIONS == {"KLAX", "KSFO", "KNYC", "KMIA", "KLAS"}
+    # KHOU añadida 2026-09-01: backtest_corrector_nivel8.py, 1 de 8 candidatas.
+    assert lc.ENABLED_STATIONS == {"KLAX", "KSFO", "KNYC", "KMIA", "KLAS", "KHOU"}
+    # Las que el mismo backtest rechazó NO deben colarse.
+    for st in ("KBOS", "KDEN", "KOKC", "KPHL", "KMSP", "KMSY"):
+        assert st not in lc.ENABLED_STATIONS
     assert lc.ENABLED_HOURS == {"KLAS": (9, 13)}
 
 

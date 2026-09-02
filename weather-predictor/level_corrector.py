@@ -75,6 +75,21 @@ mismo día **sólo en su ventana horaria medida** (9-13h), por decisión del
 usuario y con la frontera barrida hora a hora — ver `ENABLED_HOURS`. Es la
 primera estación que lo lleva a ratos, y por eso el gate horario existe.
 
+KHOU entra el 2026-09-01, única superviviente de las ocho candidatas que el
+mapa del 08-30 marcó con el nivel descentrado
+(`investigacion/backtest_corrector_nivel8.py`). Sobre 23 días:
+
+    12h (primaria)  publicado 2.57 → causal 1.26°F   acerca 20/23 (p=0.0002)
+                    acierto de bin  4/23 → 10/23
+    14h (se opera)  publicado 2.34 → causal 1.16°F   acerca 19/23 (p=0.0013)
+
+Pasa a las dos horas, así que entra el día completo y sin ventana horaria.
+
+⚠ Las otras siete fallaron: KBOS, KDEN, KOKC y KPHL empeoran o no se mueven;
+KMSP, KMSY y KPHX se quedan cerca. El mapa dice DÓNDE está el problema, no si
+la mediana causal puede capturarlo: un sesgo puede ser real y no ser predecible
+desde los días anteriores.
+
 MISMA FUENTE QUE EL BACKTEST
 ----------------------------
 Lee `analysis.db.station_snapshots` con las mismas constantes (2 h antes del
@@ -102,7 +117,7 @@ MIN_PREV_DAYS = 5
 
 # Estaciones donde el corrector sustituye al EWMA. Cada una entra con su propio
 # backtest pre-registrado, nunca por extrapolación del pool.
-ENABLED_STATIONS: set[str] = {"KLAX", "KSFO", "KNYC", "KMIA", "KLAS"}
+ENABLED_STATIONS: set[str] = {"KLAX", "KSFO", "KNYC", "KMIA", "KLAS", "KHOU"}
 
 # Ventana horaria local, inclusive, para las estaciones que sólo lo llevan parte
 # del día. Sin entrada aquí, el corrector aplica a todas las horas.
