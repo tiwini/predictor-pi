@@ -119,6 +119,32 @@ MIN_PREV_DAYS = 5
 # backtest pre-registrado, nunca por extrapolación del pool.
 ENABLED_STATIONS: set[str] = {"KLAX", "KSFO", "KNYC", "KMIA", "KLAS", "KHOU"}
 
+# Estaciones CONGELADAS: siguen dentro del corrector y se les calcula la
+# corrección a la hora del snapshot, pero NO se aplica a la predicción
+# publicada. El valor que se habría aplicado —ya capeado por el piso— se
+# persiste en `station_snapshots.bias_frozen_f` para que la vigilancia siga
+# midiendo. Congelar sin ese registro apaga la vigilancia: `seguimiento_
+# corrector` lee lo PUBLICADO, y en una estación apagada ahí ya no hay nada
+# que comparar.
+#
+# KLAX y KSFO (2026-09-07), tras el giro de régimen de septiembre. El watchdog
+# las tenía en 🟡 —"vuelca el signo pero aún queda más cerca"— porque la media
+# la dominaba agosto. Mirando sólo lo reciente:
+#
+#            |err| publicado   |err| sin corrector
+#   KLAX 10d      2.02               1.45     ← el corrector ya hace daño
+#   KSFO 10d      2.73               4.04     ← todavía ayudaba a 10 días
+#   KSFO  5d      2.84               1.72     ← pero no desde el 09-01
+#
+# KSFO se congela con la evidencia más floja de las dos: a 10 días el corrector
+# aún ganaba y su giro arranca el 09-01, cuando la corrección cae sola de +7.54
+# a +2.20. Queda escrito por si el seguimiento lo desmiente.
+#
+# No es una retirada: los tres mecanismos que se probaron contra este mismo
+# giro (ventana móvil, recorte por desacuerdo, detectar el régimen roto) se
+# refutaron por falta de muestra, no porque el sesgo haya desaparecido.
+FROZEN_STATIONS: set[str] = {"KLAX", "KSFO"}
+
 # Ventana horaria local, inclusive, para las estaciones que sólo lo llevan parte
 # del día. Sin entrada aquí, el corrector aplica a todas las horas.
 #
@@ -281,9 +307,14 @@ def bias_info_for(station_id: str, today: _date,
     med, n = median_level_bias(station_id, today, local_hour)
     if med is None:
         return None
+    # Congelada: se devuelve el mismo dict con `applied=False`. Así el llamante
+    # no cae al bias_tracker (jubilado) ni corrige, y `bias_path` sigue siendo
+    # `median_causal`, que es de donde `primer_dia_activo` lee la fecha de alta.
+    congelada = station_id in FROZEN_STATIONS
     return {
         "bias": med,
-        "applied": True,
+        "applied": not congelada,
+        "frozen": congelada,
         "n": n,
         "mode": "median_level",
         # OJO: la clave es `bias_path`, que es la que lee
@@ -291,7 +322,8 @@ def bias_info_for(station_id: str, today: _date,
         # la columna queda NULL y luego no hay forma de saber qué
         # días usaron el corrector.
         "bias_path": "median_causal",
-        "reason": (f"mediana causal de {n} días previos"
+        "reason": (("CONGELADA — " if congelada else "")
+                   + f"mediana causal de {n} días previos"
                    + (f" a las {local_hour}h local" if local_hour is not None
                       else "")),
     }

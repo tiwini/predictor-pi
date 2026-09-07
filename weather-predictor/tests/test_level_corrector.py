@@ -19,14 +19,21 @@ import level_corrector as lc  # noqa: E402
 from stations import STATION_TZ, PEAK_HOURS  # noqa: E402
 
 ST = "KLAX"
+# KLAX está CONGELADA desde el 2026-09-07: se le calcula la corrección pero no
+# se le aplica. Los tests que comprueban que la corrección SALE necesitan una
+# estación activa, y se toma del propio roster para que congelar otra mañana no
+# los rompa ni, peor, los deje pasando por el motivo equivocado.
+ST_ACTIVA = sorted(lc.ENABLED_STATIONS - lc.FROZEN_STATIONS)[0]
 
 
-def _mk_dbs(tmp_path, monkeypatch, dias, hora=None):
+def _mk_dbs(tmp_path, monkeypatch, dias, hora=None, st=None):
     """dias = [(date_str, ens_med, settle)] -> escribe ambas DBs.
 
     `hora` = hora local del snapshot sembrado; por defecto la de referencia
     del backtest (peak_lo - HOURS_BEFORE_PEAK).
+    `st` = estación sembrada; por defecto KLAX.
     """
+    st = st or ST
     an_p = tmp_path / "analysis.db"
     cal_p = tmp_path / "calibration.db"
     an = sqlite3.connect(an_p)
@@ -37,16 +44,16 @@ def _mk_dbs(tmp_path, monkeypatch, dias, hora=None):
     cal.execute("""CREATE TABLE day_outcomes (
         station_id TEXT, date TEXT, max_obs_f REAL)""")
 
-    tz = ZoneInfo(STATION_TZ[ST])
-    ref_h = (PEAK_HOURS[ST][0] - lc.HOURS_BEFORE_PEAK) if hora is None else hora
+    tz = ZoneInfo(STATION_TZ[st])
+    ref_h = (PEAK_HOURS[st][0] - lc.HOURS_BEFORE_PEAK) if hora is None else hora
     for ds, ens, settle in dias:
         d = datetime.strptime(ds, "%Y-%m-%d").date()
         ts = (datetime.combine(d, datetime.min.time(), tz)
               + timedelta(hours=ref_h)).astimezone(timezone.utc)
         an.execute("INSERT INTO station_snapshots (ts, station, ens_med, "
                    "bias_f, bias_applied) VALUES (?,?,?,?,?)",
-                   (ts.strftime("%Y-%m-%dT%H:%M:%S"), ST, ens, 0.0, 0))
-        cal.execute("INSERT INTO day_outcomes VALUES (?,?,?)", (ST, ds, settle))
+                   (ts.strftime("%Y-%m-%dT%H:%M:%S"), st, ens, 0.0, 0))
+        cal.execute("INSERT INTO day_outcomes VALUES (?,?,?)", (st, ds, settle))
     an.commit(); cal.commit(); an.close(); cal.close()
 
     monkeypatch.setattr(lc, "DB_PATH", an_p)
@@ -119,6 +126,41 @@ def test_solo_estaciones_habilitadas():
     for st in ("KBOS", "KDEN", "KOKC", "KPHL", "KMSP", "KMSY"):
         assert st not in lc.ENABLED_STATIONS
     assert lc.ENABLED_HOURS == {"KLAS": (9, 13)}
+    # Congeladas 2026-09-07 tras el giro de régimen de septiembre. Siguen en
+    # ENABLED —el corrector se les calcula y se registra— pero no corrigen.
+    assert lc.FROZEN_STATIONS == {"KLAX", "KSFO"}
+    assert lc.FROZEN_STATIONS <= lc.ENABLED_STATIONS, \
+        "una congelada fuera del roster no se calcularía, y la vigilancia " \
+        "se quedaría sin nada que medir"
+
+
+def test_congelada_calcula_pero_no_aplica(tmp_path, monkeypatch):
+    """El congelado tiene que dejar el número a la vista y la predicción quieta.
+
+    Si `bias_info_for` devolviera None, `predictor` caería al bias_tracker y
+    nadie registraría lo que el corrector habría hecho: al descongelar no
+    habría con qué decidir. Y si devolviera applied=True, seguiría corrigiendo.
+    """
+    dias = [(f"2026-07-{d:02d}", 83.0, 80.0) for d in range(1, 7)]
+    _mk_dbs(tmp_path, monkeypatch, dias, st="KLAX")
+    info = lc.bias_info_for("KLAX", date(2026, 7, 10))
+    assert info is not None, "una congelada no puede caer al bias_tracker"
+    assert info["applied"] is False
+    assert info["frozen"] is True
+    assert info["bias"] == pytest.approx(3.0, abs=0.01), \
+        "el valor se sigue calculando: es lo que se mide en sombra"
+    assert info["bias_path"] == "median_causal", \
+        "primer_dia_activo lee de aquí la fecha de alta histórica"
+    assert "CONGELADA" in info["reason"]
+
+
+def test_activa_no_se_marca_congelada(tmp_path, monkeypatch):
+    """El flag no puede contagiarse al resto del roster."""
+    dias = [(f"2026-07-{d:02d}", 83.0, 80.0) for d in range(1, 7)]
+    _mk_dbs(tmp_path, monkeypatch, dias, st=ST_ACTIVA)
+    info = lc.bias_info_for(ST_ACTIVA, date(2026, 7, 10))
+    assert info["applied"] is True
+    assert info["frozen"] is False
 
 
 def test_ventana_horaria_de_klas():
@@ -206,8 +248,8 @@ def test_bias_info_usa_la_clave_que_lee_el_poller(tmp_path, monkeypatch):
     queda a NULL y dentro de una semana no se puede medir si el corrector
     ayudó — que es justo para lo que se encendió."""
     dias = [(f"2026-07-{d:02d}", 83.0, 80.0) for d in range(1, 7)]
-    _mk_dbs(tmp_path, monkeypatch, dias)
-    info = lc.bias_info_for(ST, date(2026, 7, 10))
+    _mk_dbs(tmp_path, monkeypatch, dias, st=ST_ACTIVA)
+    info = lc.bias_info_for(ST_ACTIVA, date(2026, 7, 10))
     assert info is not None
     assert info["bias_path"] == "median_causal"
     assert info["applied"] is True
@@ -323,8 +365,8 @@ def test_el_corrector_de_nivel_no_queda_afectado(tmp_path, monkeypatch):
     """La jubilación del EWMA no puede llevarse por delante el corrector, que
     llega por otra vía y sí está validado."""
     dias = [(f"2026-07-{d:02d}", 83.0, 80.0) for d in range(1, 7)]
-    _mk_dbs(tmp_path, monkeypatch, dias)
-    info = lc.bias_info_for(ST, date(2026, 7, 10))
+    _mk_dbs(tmp_path, monkeypatch, dias, st=ST_ACTIVA)
+    info = lc.bias_info_for(ST_ACTIVA, date(2026, 7, 10))
     assert info is not None
     assert info["applied"] is True
     assert info["bias_path"] == "median_causal"

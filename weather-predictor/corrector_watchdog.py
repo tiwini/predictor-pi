@@ -107,14 +107,17 @@ def main() -> int:
         except json.JSONDecodeError:
             previo = {}
 
-    rojos = [st for st, e in estados.items() if e["estado"] == "rojo"]
+    # `retirar` es el rojo de una estación congelada: el corrector habría
+    # empeorado medio grado con N>=20. Alerta por el mismo canal.
+    rojos = [st for st, e in estados.items()
+             if e["estado"] in ("rojo", "retirar")]
     cambios = [f"{st}: {previo[st]} → {e['estado']}"
                for st, e in estados.items()
                if st in previo and previo[st] != e["estado"]]
 
     if rojos:
         _push_ntfy(
-            f"🔴 Corrector: revertir {', '.join(rojos)}",
+            f"🔴 Corrector: revisar {', '.join(rojos)}",
             "\n".join(estados[st]["veredicto"] for st in rojos)
             + "\n\nSobre-corrige y ya no compensa. Ver "
               f"corrector_watchdog/corrector_{hoy}.md")

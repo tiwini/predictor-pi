@@ -1510,6 +1510,20 @@ def build_snapshot(station: Station) -> Snapshot:
             except Exception:
                 pass
             daily_maxes = [v - bias_correction_f for v in daily_maxes]
+        elif bias_info.get("frozen"):
+            # Congelada: se registra lo que el corrector HABRÍA aplicado —misma
+            # hora, mismo capeo por el piso— sin tocar la distribución. Tiene
+            # que pasar por cap_by_floor o el contrafactual sería otra regla:
+            # la sombra de `bias_median_causal_f` es de día completo y difiere
+            # hasta 3°F del valor que se aplicaba de verdad.
+            try:
+                import level_corrector as _lc3
+                _frozen_f, _ = _lc3.cap_by_floor(
+                    bias_info["bias"], daily_maxes, floor_f, station.id,
+                    now_local)
+                bias_info["bias_frozen_f"] = _frozen_f
+            except Exception:
+                pass
     except Exception:
         bias_info = None
 

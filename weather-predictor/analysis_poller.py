@@ -120,6 +120,13 @@ def _conn() -> sqlite3.Connection:
                      # contra el EWMA antes de decidir si lo sustituye.
                      ("bias_median_causal_f", "REAL"),
                      ("bias_median_n", "INTEGER"),
+                     # 2026-09-07: corrección que el corrector habría aplicado
+                     # en una estación CONGELADA (misma hora y mismo capeo por
+                     # el piso que si estuviera activa). NULL cuando la estación
+                     # corrige de verdad —ahí el valor vive en `bias_f`— o
+                     # cuando no lleva corrector. Es lo que mantiene viva la
+                     # vigilancia mientras la estación está apagada.
+                     ("bias_frozen_f", "REAL"),
                      # 2026-08-14: minutos que current lleva sin cambiar, de la
                      # serie METAR aceptada. Se persiste porque physical_gate lo
                      # necesita y derivarlo de los snapshots del poller pierde
@@ -301,6 +308,7 @@ def _compute_signals(station_id: str, snap) -> dict:
     out: dict = {
         "our_pred_f": None, "pred_iso_med_f": None,
         "bias_median_causal_f": None, "bias_median_n": None,
+        "bias_frozen_f": None,
         "bias_f": None, "bias_applied": None,
         "bias_path": None, "ext_med_f": None, "ext_spread_f": None,
         "ext_diff_f": None, "ext_below_floor_f": None,
@@ -327,6 +335,7 @@ def _compute_signals(station_id: str, snap) -> dict:
         bi = snap.bias_info or {}
         out["bias_applied"] = 1 if bi.get("applied") else 0
         out["bias_path"] = bi.get("bias_path")
+        out["bias_frozen_f"] = bi.get("bias_frozen_f")
     except Exception as e:
         errors.append(f"bias:{e}")
 
@@ -483,7 +492,7 @@ def poll_one(station_id: str, c: sqlite3.Connection) -> None:
          obs_floor_n, obs_floor_delta_f, today_max_cli, today_max_cli_ts,
          today_max_obs_ts,
          our_pred_f, pred_iso_med_f, bias_median_causal_f, bias_median_n,
-         bias_f, bias_applied, bias_path,
+         bias_f, bias_applied, bias_path, bias_frozen_f,
          ext_med_f, ext_spread_f, ext_diff_f, ext_below_floor_f,
          difficulty_score, difficulty_label, difficulty_reasons_json,
          cold_bias_block, streak_block_hot, streak_block_cold,
@@ -493,7 +502,7 @@ def poll_one(station_id: str, c: sqlite3.Connection) -> None:
          brier_us_7d, brier_kalshi_7d, signal_error)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (ts, station_id, snap.current_temp_f, snap.today_max_obs,
          med, p10, p90, json.dumps(maxes), snap.peak_status,
@@ -518,6 +527,7 @@ def poll_one(station_id: str, c: sqlite3.Connection) -> None:
          sig["our_pred_f"], sig["pred_iso_med_f"],
          sig["bias_median_causal_f"], sig["bias_median_n"],
          sig["bias_f"], sig["bias_applied"], sig["bias_path"],
+         sig["bias_frozen_f"],
          sig["ext_med_f"], sig["ext_spread_f"], sig["ext_diff_f"],
          sig["ext_below_floor_f"],
          sig["difficulty_score"], sig["difficulty_label"], sig["difficulty_reasons_json"],

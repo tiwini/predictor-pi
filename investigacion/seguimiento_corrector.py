@@ -74,14 +74,16 @@ def primer_dia_activo(an, st: str) -> str | None:
     return r[0] if r and r[0] else None
 
 
-def fila_del_dia(an, cal, st: str, dia: str) -> dict | None:
+def fila_del_dia(an, cal, st: str, dia: str,
+                 frozen: bool = False) -> dict | None:
     tz = ZoneInfo(STATION_TZ[st])
     d = datetime.strptime(dia, "%Y-%m-%d").date()
     ref = datetime.combine(d, datetime.min.time(), tz) + timedelta(hours=HORA)
     lo = (ref - timedelta(minutes=VENTANA_MIN)).astimezone(UTC)
     hi = (ref + timedelta(minutes=VENTANA_MIN)).astimezone(UTC)
     r = an.execute(
-        """SELECT ts, ens_med, bias_f, bias_applied FROM station_snapshots
+        """SELECT ts, ens_med, bias_f, bias_applied, bias_frozen_f
+           FROM station_snapshots
            WHERE station=? AND ts>=? AND ts<=? AND ens_med IS NOT NULL
            ORDER BY ABS(JULIANDAY(ts) - JULIANDAY(?)) LIMIT 1""",
         (st, lo.strftime("%Y-%m-%dT%H:%M:%S"), hi.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -93,7 +95,14 @@ def fila_del_dia(an, cal, st: str, dia: str) -> dict | None:
     # antes del deploy salen con bias_applied=0 y compararlos contra sí mismos
     # mete un día de delta cero que diluye la métrica. Ojo: `bias_f` = 0.00 con
     # applied=1 sí es un día válido — es el corrector diciendo "no corrijo".
-    if not r["bias_applied"]:
+    if frozen:
+        # Congelada: lo publicado NO lleva corrección, y el contrafactual es lo
+        # que el corrector habría hecho (`bias_frozen_f`, registrado por el
+        # poller ya capeado por el piso). Los papeles se invierten respecto al
+        # modo activo, por eso la columna se llama `alt` y no `sin`.
+        if r["bias_applied"] or r["bias_frozen_f"] is None:
+            return None
+    elif not r["bias_applied"]:
         return None
     settle = cal.execute(
         "SELECT max_obs_f FROM day_outcomes WHERE station_id=? AND date=?",
@@ -101,7 +110,11 @@ def fila_del_dia(an, cal, st: str, dia: str) -> dict | None:
     if settle is None or settle[0] is None:
         return None
 
-    b = r["bias_f"] if (r["bias_applied"] and r["bias_f"] is not None) else 0.0
+    if frozen:
+        b = r["bias_frozen_f"]
+    else:
+        b = (r["bias_f"] if (r["bias_applied"] and r["bias_f"] is not None)
+             else 0.0)
     bins = an.execute(
         """SELECT bin_lo, bin_hi, yes_mid FROM kalshi_snapshots
            WHERE station=? AND ts=(SELECT ts FROM kalshi_snapshots
@@ -114,8 +127,29 @@ def fila_del_dia(an, cal, st: str, dia: str) -> dict | None:
         blo, bhi = top["bin_lo"], top["bin_hi"]
         mk = ((blo + bhi) / 2 if abs(blo) < 1e8 and abs(bhi) < 1e8
               else (bhi if abs(blo) > 1e8 else blo))
-    return {"dia": dia, "settle": settle[0], "pub": r["ens_med"],
-            "sin": r["ens_med"] + b, "corr": b, "mk": mk}
+    fila = {"dia": dia, "settle": settle[0], "pub": r["ens_med"],
+            "alt": r["ens_med"] - b if frozen else r["ens_med"] + b,
+            "corr": b, "mk": mk, "frozen": frozen}
+    if not frozen:
+        # Nombre histórico de la columna alternativa; lo lee
+        # `investigacion/amarillo_klax.py`. Sólo existe en modo activo, donde
+        # significa "sin corrector".
+        fila["sin"] = fila["alt"]
+    return fila
+
+
+def primer_dia_congelado(an, st: str) -> str | None:
+    """Primer día con la estación congelada, del primer `bias_frozen_f`.
+
+    El congelado abre una fase NUEVA: los días de antes ya los juzgó la guarda
+    de sobre-corrección y su veredicto es lo que llevó aquí. Mezclarlos
+    invertiría el significado de la columna a mitad de tabla.
+    """
+    r = an.execute(
+        """SELECT MIN(date(datetime(ts, 'localtime'))) FROM station_snapshots
+           WHERE station=? AND bias_frozen_f IS NOT NULL""",
+        (st,)).fetchone()
+    return r[0] if r and r[0] else None
 
 
 def veredicto_por_signos(e_pub: list[float], corr_mediana: float,
@@ -144,6 +178,62 @@ def veredicto_por_signos(e_pub: list[float], corr_mediana: float,
     return "verde", "🟢 SEGUIR", contra
 
 
+def veredicto_congelado(e_pub: list[float], e_alt: list[float],
+                        corr_mediana: float) -> tuple[str, str, int]:
+    """(estado, texto, n_a_favor) — cuándo se descongela una estación.
+
+    ======================= CRITERIO DE REACTIVACIÓN ========================
+    Escrito el 2026-09-07, el día del congelado, con N=0 días medidos.
+
+    Congelar no es retirar: los tres mecanismos probados contra el giro de
+    régimen de septiembre se refutaron por falta de muestra, no porque el
+    sesgo haya dejado de existir. Así que hay que decidir a la vuelta, y el
+    listón se escribe ahora para que el dato no lo elija después.
+
+      🟢 REACTIVAR con N>=10 días congelados, si se cumplen LAS DOS:
+         · el corrector habría dejado |err| menor en >= 0.50°F de media, y
+         · >= 7 de los últimos 10 días con el error publicado del lado que la
+           corrección arregla.
+
+      🔴 RETIRAR (sacarla de ENABLED_STATIONS, no sólo congelarla) con N>=20
+         si el corrector habría EMPEORADO >= 0.50°F de media. Veinte días y
+         medio grado de daño es que el sesgo que medía ya no está.
+
+      🔵 SIGUE CONGELADA en cualquier otro caso, incluido el intermedio.
+
+    Por qué 0.50°F y no el 0.75 que se pide para entrar: el listón es que el
+    beneficio sea al menos tan grande como el daño que motivó el congelado
+    (KLAX iba +0.57°F peor con corrector en sus últimos 10 días). Entrar de
+    cero exige más que volver a algo que ya estuvo medido.
+
+    Las dos condiciones son AND a propósito. La media sola premia a quien
+    acierta mucho un día raro; el conteo de signos solo no distingue arreglar
+    de rozar. Ninguna de las dos, por separado, dice lo que se quiere saber.
+    """
+    ult_pub = e_pub[-10:]
+    signo = 1.0 if corr_mediana >= 0 else -1.0
+    a_favor = sum(1 for e in ult_pub if e * signo > 0)
+    m_pub = statistics.mean([abs(e) for e in e_pub])
+    m_alt = statistics.mean([abs(e) for e in e_alt])
+    mejora = m_pub - m_alt
+    if len(e_pub) < 10:
+        return ("congelado_n_bajo",
+                f"🔵 CONGELADA — N={len(e_pub)}, faltan "
+                f"{10 - len(e_pub)} días para decidir", a_favor)
+    if mejora >= 0.50 and a_favor >= 7:
+        return ("reactivar",
+                f"🟢 REACTIVAR — habría mejorado {mejora:.2f}°F y "
+                f"{a_favor}/10 días con el sesgo del lado que corrige",
+                a_favor)
+    if len(e_pub) >= 20 and mejora <= -0.50:
+        return ("retirar",
+                f"🔴 RETIRAR del corrector — habría empeorado "
+                f"{-mejora:.2f}°F con N={len(e_pub)}", a_favor)
+    return ("congelado",
+            f"🔵 SIGUE CONGELADA — mejora {mejora:+.2f}°F (pide +0.50) y "
+            f"{a_favor}/10 a favor (pide 7)", a_favor)
+
+
 def estado_de(an, cal, st: str, hora: int = None) -> dict:
     """Estado del corrector en una estación: filas, métricas y veredicto.
 
@@ -154,50 +244,73 @@ def estado_de(an, cal, st: str, hora: int = None) -> dict:
     global HORA
     if hora is not None:
         HORA = hora
-    desde = primer_dia_activo(an, st)
+    frozen = st in getattr(lc, "FROZEN_STATIONS", set())
+    desde = (primer_dia_congelado(an, st) if frozen
+             else primer_dia_activo(an, st))
     if desde is None:
-        return {"st": st, "estado": "sin_datos", "n": 0,
-                "veredicto": "nunca aplicó el corrector todavía"}
+        return {"st": st, "estado": "sin_datos", "n": 0, "frozen": frozen,
+                "veredicto": ("congelada, aún sin snapshots registrados"
+                              if frozen else
+                              "nunca aplicó el corrector todavía")}
 
     dias = [r[0] for r in cal.execute(
         "SELECT date FROM day_outcomes WHERE station_id=? AND date>=? "
         "ORDER BY date", (st, desde)).fetchall()]
-    filas = [f for f in (fila_del_dia(an, cal, st, d) for d in dias) if f]
+    filas = [f for f in (fila_del_dia(an, cal, st, d, frozen) for d in dias)
+             if f]
     if not filas:
         return {"st": st, "estado": "sin_settle", "n": 0, "desde": desde,
-                "veredicto": f"activo desde {desde}, aún sin días con settle"}
+                "frozen": frozen,
+                "veredicto": (f"{'congelada' if frozen else 'activo'} desde "
+                              f"{desde}, aún sin días con settle")}
 
     e_pub = [f["pub"] - f["settle"] for f in filas]
-    e_sin = [f["sin"] - f["settle"] for f in filas]
+    e_alt = [f["alt"] - f["settle"] for f in filas]
     m_pub = statistics.mean([abs(e) for e in e_pub])
-    m_sin = statistics.mean([abs(e) for e in e_sin])
+    m_alt = statistics.mean([abs(e) for e in e_alt])
     corr_med = statistics.median([f["corr"] for f in filas])
-    estado, v, neg = veredicto_por_signos(e_pub, corr_med, m_pub, m_sin)
+    if frozen:
+        estado, v, neg = veredicto_congelado(e_pub, e_alt, corr_med)
+    else:
+        estado, v, neg = veredicto_por_signos(e_pub, corr_med, m_pub, m_alt)
 
     return {"st": st, "estado": estado, "veredicto": v, "desde": desde,
+            "frozen": frozen,
             "n": len(filas), "filas": filas, "neg": neg, "corr_med": corr_med,
-            "n_reciente": len(e_pub[-10:]), "m_pub": m_pub, "m_sin": m_sin}
+            "n_reciente": len(e_pub[-10:]), "m_pub": m_pub, "m_sin": m_alt}
 
 
 def render(e: dict) -> str:
     """Bloque de texto de una estación. Compartido por el script y el watchdog."""
     if e["estado"] in ("sin_datos", "sin_settle"):
         return f"── {e['st']}: {e['veredicto']}\n"
-    out = [f"── {e['st']}  (corrector activo desde {e['desde']}, N={e['n']})",
-           f"   {'día':12s} {'settle':>7s} {'pub':>7s} {'sin':>7s} "
-           f"{'corr':>6s} {'Δpub':>6s} {'Δsin':>6s} {'Δmk':>6s}"]
+    fz = e.get("frozen")
+    cab = "CONGELADA desde" if fz else "corrector activo desde"
+    # En congelado `pub` es la predicción SIN corregir —lo que de verdad salió—
+    # y `alt` es lo que el corrector habría dado. Al revés que en activo.
+    col = "con" if fz else "sin"
+    out = [f"── {e['st']}  ({cab} {e['desde']}, N={e['n']})",
+           f"   {'día':12s} {'settle':>7s} {'pub':>7s} {col:>7s} "
+           f"{'corr':>6s} {'Δpub':>6s} {'Δ' + col:>6s} {'Δmk':>6s}"]
     for f in e["filas"]:
         dmk = f"{f['mk'] - f['settle']:+6.1f}" if f["mk"] is not None else "     —"
         out.append(f"   {f['dia']:12s} {f['settle']:7.1f} {f['pub']:7.1f} "
-                   f"{f['sin']:7.1f} {f['corr']:+6.2f} "
+                   f"{f['alt']:7.1f} {f['corr']:+6.2f} "
                    f"{f['pub'] - f['settle']:+6.1f} "
-                   f"{f['sin'] - f['settle']:+6.1f} {dmk}")
+                   f"{f['alt'] - f['settle']:+6.1f} {dmk}")
     out.append(f"   |error| medio   publicado {e['m_pub']:.2f}   "
-               f"sin corrector {e['m_sin']:.2f}   ({e['m_pub'] - e['m_sin']:+.2f})")
+               f"{'con corrector' if fz else 'sin corrector'} {e['m_sin']:.2f}"
+               f"   ({e['m_pub'] - e['m_sin']:+.2f})")
     lado = "negativos" if e.get("corr_med", 0.0) >= 0 else "positivos"
-    out.append(f"   signo: {e['neg']} de los últimos {e['n_reciente']} en contra "
-               f"de la corrección ({lado}; corrección mediana "
-               f"{e.get('corr_med', 0.0):+.2f}°F)")
+    if fz:
+        out.append(f"   signo: {e['neg']} de los últimos {e['n_reciente']} con "
+                   f"el sesgo del lado que la corrección arregla "
+                   f"(no-{lado}; corrección mediana "
+                   f"{e.get('corr_med', 0.0):+.2f}°F)")
+    else:
+        out.append(f"   signo: {e['neg']} de los últimos {e['n_reciente']} en contra "
+                   f"de la corrección ({lado}; corrección mediana "
+                   f"{e.get('corr_med', 0.0):+.2f}°F)")
     out.append(f"   {e['veredicto']}\n")
     return "\n".join(out)
 

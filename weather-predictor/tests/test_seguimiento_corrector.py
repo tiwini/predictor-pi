@@ -53,6 +53,52 @@ def test_correccion_NEGATIVA_con_errores_negativos_no_alarma():
     assert (estado, contra) == ("verde", 2)
 
 
+def test_congelada_con_las_dos_condiciones_se_reactiva():
+    """Mejora >= 0.50°F Y >= 7/10 días con el sesgo del lado que corrige."""
+    e_pub = [2.0] * 8 + [-2.0] * 2          # 8/10 sobre-prediciendo
+    e_alt = [0.5] * 10                       # el corrector lo habría centrado
+    estado, _, a_favor = sg.veredicto_congelado(e_pub, e_alt, corr_mediana=+2.5)
+    assert (estado, a_favor) == ("reactivar", 8)
+
+
+def test_congelada_que_solo_mejora_la_media_no_se_reactiva():
+    """Un día raro muy bien acertado sube la media sin que el sesgo haya vuelto.
+
+    Es la razón de que las dos condiciones sean AND: aquí el corrector gana
+    1.30°F de media y aun así sólo 4 de 10 días llevan el sesgo que corrige.
+    """
+    e_pub = [2.0] * 4 + [-2.0] * 5 + [-9.0]
+    e_alt = [0.5] * 4 + [-0.5] * 5 + [-0.5]
+    estado, _, a_favor = sg.veredicto_congelado(e_pub, e_alt, corr_mediana=+2.5)
+    assert estado == "congelado" and a_favor == 4
+
+
+def test_congelada_que_solo_acierta_el_signo_no_se_reactiva():
+    """El sesgo está del lado que corrige, pero es tan pequeño que corregirlo
+    no compensa: 8/10 a favor y sólo 0.20°F de mejora."""
+    e_pub = [0.7] * 8 + [-0.7] * 2
+    e_alt = [0.5] * 10
+    estado, _, _ = sg.veredicto_congelado(e_pub, e_alt, corr_mediana=+2.5)
+    assert estado == "congelado"
+
+
+def test_congelada_que_hace_daño_sostenido_se_retira():
+    """Con N>=20 y medio grado de daño, el sesgo que medía ya no existe."""
+    e_pub = [0.5] * 20
+    e_alt = [2.0] * 20
+    estado, texto, _ = sg.veredicto_congelado(e_pub, e_alt, corr_mediana=+2.5)
+    assert estado == "retirar" and "1.50" in texto
+
+
+def test_congelada_con_N_bajo_no_decide_aunque_el_dato_apunte():
+    """Nueve días buenísimos no descongelan: el listón es N>=10, escrito antes
+    de ver ninguno."""
+    e_pub = [3.0] * 9
+    e_alt = [0.1] * 9
+    estado, texto, _ = sg.veredicto_congelado(e_pub, e_alt, corr_mediana=+2.5)
+    assert estado == "congelado_n_bajo" and "faltan 1" in texto
+
+
 def test_menos_de_diez_dias_no_decide():
     estado, texto, _ = sg.veredicto_por_signos(
         _errores(6, -1.0, n=6), corr_mediana=+2.5, m_pub=1.0, m_sin=2.0)
