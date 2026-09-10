@@ -2418,6 +2418,44 @@ def zero_impossible_bins(bins: list, ps: list,
     return out, len(muertos), liberada
 
 
+# Hora local a partir de la cual el calibrador isotónico deja de aplicarse.
+#
+# Medido el 2026-09-10 sobre **445.710 bins** con settle del CLI, barriendo la
+# hora local (`investigacion/iso_por_hora.py`):
+#
+#     00h-16h   Brier calibrado − crudo entre −0.0115 y −0.0152   ayuda
+#     17h       +0.0015                                           estorba
+#     18h-23h   de +0.0103 a +0.0151                              estorba
+#
+# El motivo es físico: pasado el pico el máximo ya está puesto, el piso ha
+# aplastado la distribución y `our_p` vale casi 0 o 1 **con razón**. El
+# calibrador aprendió «vas sobrado de confianza» —cierto de día— y a esa hora
+# deshace una certeza que sí está justificada.
+#
+# Se probó antes el corte por ventana de pico de cada estación, que es lo que
+# hace `cap_by_floor`, y pierde: −0.0129 contra −0.0136 de la hora fija. Las de
+# pico temprano (KLAX y KSFO cierran a las 15h) apagarían el calibrador cuando
+# todavía ayuda, y las de pico tardío (KDFW y KSAT cierran a las 19h) lo
+# mantienen cuando ya estorba **dentro** de su propia ventana. La frontera no
+# es el pico: es la hora.
+#
+# ⚠ Es un parámetro GLOBAL a propósito. Barrer una hora de corte por estación
+# sobre 20 estaciones con 30 días de muestra es invitar al sobreajuste.
+CALIBRATOR_CUTOFF_HOUR = 17
+
+
+def calibrador_apagado(snap) -> bool:
+    """¿Toca dejar de calibrar? True pasada `CALIBRATOR_CUTOFF_HOUR` local.
+
+    Ante la duda devuelve False: seguir calibrando es el comportamiento que
+    lleva desde julio y el que ayuda 16 de cada 24 horas.
+    """
+    try:
+        return snap.station_local.hour >= CALIBRATOR_CUTOFF_HOUR
+    except Exception:
+        return False
+
+
 def _compute_final_our_p_per_bin(station_id: str, snap: Snapshot,
                                  bins: list) -> list:
     """Per-bin our_p después de isotonic + blend_with_external. Lo que el
@@ -2435,7 +2473,7 @@ def _compute_final_our_p_per_bin(station_id: str, snap: Snapshot,
     except Exception:
         _em = None
     cal = None
-    if _iso is not None:
+    if _iso is not None and not calibrador_apagado(snap):
         try:
             # Calibrador GLOBAL, no por estacion. Medido out-of-sample
             # 2026-07-24 sobre 83724 eventos (bins Kalshi con settle NWS real,
