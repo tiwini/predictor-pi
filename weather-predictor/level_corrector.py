@@ -302,15 +302,21 @@ def bias_info_for(station_id: str, today: _date,
     """
     if station_id not in ENABLED_STATIONS:
         return None
-    if not hora_habilitada(station_id, local_hour):
-        return None
+    # Fuera de su ventana horaria el corrector no se aplica, pero desde el
+    # 2026-09-10 SÍ se registra: sin ese apunte, dentro de un mes no habría con
+    # qué juzgar si la ventana estaba bien puesta, y habría que reconstruirla
+    # con una réplica — que es justo lo que dejó sin decidir el barrido del
+    # 08-28 (0.46°F de error de réplica sobre un efecto de 0.24). Va por el
+    # mismo canal que las estaciones congeladas: `applied=False` y el valor a
+    # `bias_frozen_f`.
+    fuera_de_ventana = not hora_habilitada(station_id, local_hour)
     med, n = median_level_bias(station_id, today, local_hour)
     if med is None:
         return None
     # Congelada: se devuelve el mismo dict con `applied=False`. Así el llamante
     # no cae al bias_tracker (jubilado) ni corrige, y `bias_path` sigue siendo
     # `median_causal`, que es de donde `primer_dia_activo` lee la fecha de alta.
-    congelada = station_id in FROZEN_STATIONS
+    congelada = station_id in FROZEN_STATIONS or fuera_de_ventana
     return {
         "bias": med,
         "applied": not congelada,
@@ -322,7 +328,8 @@ def bias_info_for(station_id: str, today: _date,
         # la columna queda NULL y luego no hay forma de saber qué
         # días usaron el corrector.
         "bias_path": "median_causal",
-        "reason": (("CONGELADA — " if congelada else "")
+        "reason": (("FUERA DE VENTANA — " if fuera_de_ventana else
+                    "CONGELADA — " if congelada else "")
                    + f"mediana causal de {n} días previos"
                    + (f" a las {local_hour}h local" if local_hour is not None
                       else "")),

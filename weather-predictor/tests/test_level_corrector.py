@@ -190,21 +190,35 @@ def test_hora_none_es_la_de_referencia_del_backtest():
     assert lc.hora_habilitada("KLAS", None)
 
 
-def test_el_gate_corta_antes_de_tocar_la_base(monkeypatch):
-    """Fuera de ventana devuelve None sin mirar las DBs.
+def test_fuera_de_ventana_no_corrige_pero_si_calcula(monkeypatch):
+    """Fuera de su ventana horaria KLAS no aplica, pero **sí** consulta.
 
-    Se apunta a un fichero que no existe: si el gate no cortara, la consulta
-    fallaría y `bias_info_for` devolvería None por la razón equivocada — que es
-    justo lo que no se quiere poder confundir.
+    Hasta el 2026-09-10 este test exigía lo contrario: que el gate cortara
+    antes de tocar las DBs. Se invirtió a propósito. Sin calcular el valor no
+    queda rastro de lo que el corrector habría hecho en esas horas, y la
+    revisión de KLAS con N≥40 tendría que reconstruirlo con una réplica — el
+    mismo callejón que dejó sin decidir el barrido de ventanas del 08-28, donde
+    la réplica erraba 0.46°F sobre un efecto de 0.24. El valor se registra en
+    `bias_frozen_f` y no toca la predicción.
+
+    Lo que el test sigue protegiendo: que fuera de ventana **no se corrija**, y
+    que un fallo al leer la DB devuelva None en vez de reventar.
     """
     llamadas = []
     monkeypatch.setattr(lc, "median_level_bias",
-                        lambda *a, **k: llamadas.append(a) or (None, 0))
-    assert lc.bias_info_for("KLAS", date(2026, 7, 10), local_hour=14) is None
-    assert llamadas == []
-    lc.bias_info_for("KLAS", date(2026, 7, 10), local_hour=12)
-    assert len(llamadas) == 1
+                        lambda *a, **k: llamadas.append(a) or (-2.0, 25))
+    info = lc.bias_info_for("KLAS", date(2026, 7, 10), local_hour=14)
+    assert len(llamadas) == 1, "hace falta el valor para poder registrarlo"
+    assert info is not None
+    assert info["applied"] is False, "fuera de ventana NO se corrige"
+    assert info["frozen"] is True
 
+
+def test_sin_historia_sigue_devolviendo_none(monkeypatch):
+    """Si la consulta no da valor, None — no un cero disfrazado de corrección."""
+    monkeypatch.setattr(lc, "median_level_bias", lambda *a, **k: (None, 0))
+    assert lc.bias_info_for("KLAS", date(2026, 7, 10), local_hour=14) is None
+    assert lc.bias_info_for("KLAS", date(2026, 7, 10), local_hour=11) is None
 
 def test_deshace_el_bias_aplicado_ese_dia(tmp_path, monkeypatch):
     """El sesgo se mide sobre el ensemble CRUDO, no sobre el ya corregido.

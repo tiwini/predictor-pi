@@ -111,6 +111,8 @@ def main() -> int:
     # empeorado medio grado con N>=20. Alerta por el mismo canal.
     rojos = [st for st, e in estados.items()
              if e["estado"] in ("rojo", "retirar")]
+    # Una revisión que vence sin avisar es una revisión que no se hace.
+    debidas = [st for st, e in estados.items() if e.get("revision_debida")]
     cambios = [f"{st}: {previo[st]} → {e['estado']}"
                for st, e in estados.items()
                if st in previo and previo[st] != e["estado"]]
@@ -121,6 +123,11 @@ def main() -> int:
             "\n".join(estados[st]["veredicto"] for st in rojos)
             + "\n\nSobre-corrige y ya no compensa. Ver "
               f"corrector_watchdog/corrector_{hoy}.md")
+    elif debidas:
+        _push_ntfy(
+            f"🔔 Revisión debida: {', '.join(debidas)}",
+            "\n".join(f"{st}: {estados[st]['revision_motivo']}"
+                       for st in debidas))
     elif cambios:
         _push_ntfy("Corrector de nivel: cambio de estado", "\n".join(cambios))
     else:

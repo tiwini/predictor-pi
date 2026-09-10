@@ -153,6 +153,20 @@ def primer_dia_congelado(an, st: str) -> str | None:
     return r[0] if r and r[0] else None
 
 
+# Revisiones que una estación se dejó pendientes al entrar: {est: (N, motivo)}.
+# El watchdog avisa solo al alcanzarse el N — un comentario con fecha no avisa,
+# y ya pasó: la nota «revisar Sep-Oct» de SEASONAL_OFFSET_F venció y estuvo dos
+# meses sin que nadie la mirara, con el offset corrigiendo mientras tanto.
+REVISIONES_PENDIENTES: dict[str, tuple[int, str]] = {
+    "KLAS": (40,
+             "entró FALLANDO su propio criterio (mejora 0.66°F contra los 0.75 "
+             "pedidos, acierta 17/25 con p=0.054) y se habilitó restringiendo "
+             "la ventana a 9-13h sobre la MISMA muestra que había fallado. Su "
+             "fila del 2026-08-28 decía «se revisa con N≥40». Correr "
+             "investigacion/klas_revision.py"),
+}
+
+
 def veredicto_por_signos(e_pub: list[float], corr_mediana: float,
                          m_pub: float, m_sin: float) -> tuple[str, str, int]:
     """(estado, texto, n_en_contra) — la regla de vigilancia, aislada y pura.
@@ -330,10 +344,14 @@ def estado_de(an, cal, st: str, hora: int = None) -> dict:
     else:
         estado, v, neg = veredicto_por_signos(e_pub, corr_med, m_pub, m_alt)
 
+    pend = REVISIONES_PENDIENTES.get(st)
     return {"st": st, "estado": estado, "veredicto": v, "desde": desde,
             "frozen": frozen,
             "n": len(filas), "filas": filas, "neg": neg, "corr_med": corr_med,
-            "n_reciente": len(e_pub[-10:]), "m_pub": m_pub, "m_sin": m_alt}
+            "n_reciente": len(e_pub[-10:]), "m_pub": m_pub, "m_sin": m_alt,
+            "revision_debida": bool(pend and len(filas) >= pend[0]),
+            "revision_n": pend[0] if pend else None,
+            "revision_motivo": pend[1] if pend else None}
 
 
 def render(e: dict) -> str:
@@ -367,6 +385,12 @@ def render(e: dict) -> str:
         out.append(f"   signo: {e['neg']} de los últimos {e['n_reciente']} en contra "
                    f"de la corrección ({lado}; corrección mediana "
                    f"{e.get('corr_med', 0.0):+.2f}°F)")
+    if e.get("revision_debida"):
+        out.append(f"   🔔 REVISIÓN DEBIDA (N≥{e['revision_n']}): "
+                   f"{e['revision_motivo']}")
+    elif e.get("revision_n"):
+        out.append(f"   ⏳ revisión pendiente al llegar a N={e['revision_n']} "
+                   f"(faltan {e['revision_n'] - e['n']} días)")
     out.append(f"   {e['veredicto']}\n")
     return "\n".join(out)
 
