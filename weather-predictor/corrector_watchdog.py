@@ -46,6 +46,7 @@ sys.path.insert(0, str(PROJECT_DIR))
 sys.path.insert(0, str(PROJECT_DIR.parent / "investigacion"))
 
 import level_corrector as lc          # noqa: E402
+sys.path.insert(0, str(PROJECT_DIR.parent / "investigacion"))  # noqa: E402
 import seguimiento_corrector as sg    # noqa: E402
 
 OUT_DIR = Path.home() / "predictor-pi" / "corrector_watchdog"
@@ -96,6 +97,18 @@ def main() -> int:
         cuerpo.append("```")
         cuerpo.append(sg.render(e))
         cuerpo.append("```")
+    # El reweight en sombra no es asunto del corrector, pero este informe es
+    # el que se mira todos los días: un veredicto que vence en un fichero que
+    # nadie abre no es un aviso. Ver la nota «revisar Sep-Oct» de
+    # SEASONAL_OFFSET_F, que caducó dos meses sin que nadie la viera.
+    try:
+        import reweight_veredicto as _rw
+        cuerpo.append("")
+        cuerpo.append(_rw.resumen_corto())
+        cuerpo.append("")
+    except Exception as e:
+        cuerpo.append(f"\n_(estado del reweight no disponible: {e})_\n")
+
     informe = OUT_DIR / f"corrector_{hoy}.md"
     informe.write_text("\n".join(cuerpo))
     print(f"[corrector_watchdog] escrito {informe}")
