@@ -48,6 +48,7 @@ Uso:  ./venv/bin/python3 ../investigacion/seguimiento_corrector.py [hora_local]
 from __future__ import annotations
 
 import sqlite3
+import math
 import statistics
 import sys
 from datetime import datetime, timedelta
@@ -178,60 +179,115 @@ def veredicto_por_signos(e_pub: list[float], corr_mediana: float,
     return "verde", "🟢 SEGUIR", contra
 
 
+N_DECISION = 10          # primera ventana de decisión
+N_DECISION_2 = 20        # segunda y última
+MEJORA_MIN_F = 0.50      # suelo de materialidad, en °F
+CORR_MIN_RELEVANTE_F = 0.50
+Z_UNILATERAL_05 = 1.645
+
+
+def _p_signos(a_favor: int, n: int) -> float:
+    """p unilateral del test de signos: P(X >= a_favor | p=0.5, n).
+
+    Binomial exacta con `math.comb`; sin scipy, que no está en el venv del Pi.
+    """
+    if n <= 0:
+        return 1.0
+    cola = sum(math.comb(n, k) for k in range(a_favor, n + 1))
+    return cola / (2 ** n)
+
+
 def veredicto_congelado(e_pub: list[float], e_alt: list[float],
                         corr_mediana: float) -> tuple[str, str, int]:
     """(estado, texto, n_a_favor) — cuándo se descongela una estación.
 
     ======================= CRITERIO DE REACTIVACIÓN ========================
-    Escrito el 2026-09-07, el día del congelado, con N=0 días medidos.
+    Escrito el 2026-09-07 con N=0 y **rehecho el 2026-09-10** tras la auditoría
+    externa, todavía con N=3, o sea antes de que ningún dato pudiera opinar.
 
-    Congelar no es retirar: los tres mecanismos probados contra el giro de
-    régimen de septiembre se refutaron por falta de muestra, no porque el
-    sesgo haya dejado de existir. Así que hay que decidir a la vuelta, y el
-    listón se escribe ahora para que el dato no lo elija después.
+    Lo que falló en la primera versión, y es la razón de ésta:
 
-      🟢 REACTIVAR con N>=10 días congelados, si se cumplen LAS DOS:
-         · el corrector habría dejado |err| menor en >= 0.50°F de media, y
-         · >= 7 de los últimos 10 días con el error publicado del lado que la
-           corrección arregla.
+      · **El umbral no era un umbral.** Pedía «mejora ≥ 0.50°F de media con
+        N=10». Medida sobre los 28 días de KLAX, la desviación de las
+        diferencias diarias `|err_pub| − |err_alt|` es **1.96°F**, así que con
+        N=10 el error estándar es 0.62°F: el listón valía **0.8 errores
+        estándar**. Bajo la hipótesis de que el corrector no aporta nada, se
+        cruza el **21% de las veces** en una sola mirada.
+      · **Y se miraba todos los días.** El watchdog corre a diario, así que
+        aquello no era una mirada sino treinta: parada opcional de manual.
+      · **Asimétrico sin razón**: reactivaba con N≥10 y retiraba con N≥20.
+      · **El contrafactual se mueve solo.** La corrección sale de la mediana de
+        los días previos y la serie sólo guarda 30 días, así que según avanza
+        septiembre los días de agosto —los del sesgo grande— se caen de la
+        ventana y la corrección se encoge sola. Una «mejora» podía venir de que
+        el corrector se apagó, no de que el régimen volviera.
 
-      🔴 RETIRAR (sacarla de ENABLED_STATIONS, no sólo congelarla) con N>=20
-         si el corrector habría EMPEORADO >= 0.50°F de media. Veinte días y
-         medio grado de daño es que el sesgo que medía ya no está.
+    Lo que se pide ahora, y por qué:
 
-      🔵 SIGUE CONGELADA en cualquier otro caso, incluido el intermedio.
+      🟢 REACTIVAR — las TRES:
+         (a) **test de signos** p<0.05 unilateral sobre en cuántos días el
+             corrector habría dejado menor |err|. Es el contraste que la
+             doctrina del proyecto ya usa, y se ajusta solo al N que haya:
+             con N=10 hace falta 9 de 10; con N=20, 15 de 20.
+         (b) **mejora media ≥ max(0.50°F, 1.645·EE)** — significativa *y*
+             material. El primer término evita reactivar por una diferencia
+             real pero irrelevante; el segundo, por ruido cuando la estación
+             es volátil. El EE se calcula del propio dato, no se supone.
+         (c) **|corrección mediana| ≥ 0.50°F** en la fase congelada. Si el
+             corrector ya no corrige nada, «gana» sin hacer nada y no hay
+             razón para encenderlo.
 
-    Por qué 0.50°F y no el 0.75 que se pide para entrar: el listón es que el
-    beneficio sea al menos tan grande como el daño que motivó el congelado
-    (KLAX iba +0.57°F peor con corrector en sus últimos 10 días). Entrar de
-    cero exige más que volver a algo que ya estuvo medido.
+      🔴 RETIRAR — el espejo exacto de (a) y (b), con el mismo N. Sin asimetría.
 
-    Las dos condiciones son AND a propósito. La media sola premia a quien
-    acierta mucho un día raro; el conteo de signos solo no distingue arreglar
-    de rozar. Ninguna de las dos, por separado, dice lo que se quiere saber.
+      ⚪ IRRELEVANTE — falla (c): el corrector se apagó solo. No es que el
+         régimen haya vuelto, es que ya no hay nada que corregir.
+
+      🔵 SIGUE CONGELADA — todo lo demás.
+
+    **Mirar a diario ya no suma oportunidades.** El veredicto se calcula sobre
+    los **N primeros** días de la fase, no sobre los últimos ni sobre todos: en
+    cuanto hay 10, ese conjunto ya no cambia, y el informe diario repite el
+    mismo resultado en vez de tirar otra moneda. La segunda y última ventana es
+    N=20, con los 20 primeros. Dos decisiones en total, no treinta.
     """
-    ult_pub = e_pub[-10:]
-    signo = 1.0 if corr_mediana >= 0 else -1.0
-    a_favor = sum(1 for e in ult_pub if e * signo > 0)
-    m_pub = statistics.mean([abs(e) for e in e_pub])
-    m_alt = statistics.mean([abs(e) for e in e_alt])
-    mejora = m_pub - m_alt
-    if len(e_pub) < 10:
+    n_total = len(e_pub)
+    if n_total < N_DECISION:
         return ("congelado_n_bajo",
-                f"🔵 CONGELADA — N={len(e_pub)}, faltan "
-                f"{10 - len(e_pub)} días para decidir", a_favor)
-    if mejora >= 0.50 and a_favor >= 7:
-        return ("reactivar",
-                f"🟢 REACTIVAR — habría mejorado {mejora:.2f}°F y "
-                f"{a_favor}/10 días con el sesgo del lado que corrige",
+                f"🔵 CONGELADA — N={n_total}, faltan "
+                f"{N_DECISION - n_total} días para decidir", 0)
+
+    usar = N_DECISION_2 if n_total >= N_DECISION_2 else N_DECISION
+    pub, alt = e_pub[:usar], e_alt[:usar]
+    # d > 0 ⇒ el corrector habría quedado más cerca ese día.
+    d = [abs(p) - abs(a) for p, a in zip(pub, alt)]
+    no_nulos = [x for x in d if abs(x) > 1e-9]
+    a_favor = sum(1 for x in no_nulos if x > 0)
+    en_contra = len(no_nulos) - a_favor
+    mejora = statistics.mean(d)
+    ee = (statistics.stdev(d) / math.sqrt(len(d))) if len(d) > 1 else float("inf")
+    listón = max(MEJORA_MIN_F, Z_UNILATERAL_05 * ee)
+    p_favor = _p_signos(a_favor, len(no_nulos))
+    p_contra = _p_signos(en_contra, len(no_nulos))
+    cola = f"(N={usar} primeros; signos {a_favor}/{len(no_nulos)} p={p_favor:.3f}; " \
+           f"mejora {mejora:+.2f}°F contra listón {listón:.2f})"
+
+    if abs(corr_mediana) < CORR_MIN_RELEVANTE_F:
+        return ("irrelevante",
+                f"⚪ IRRELEVANTE — la corrección mediana de la fase es "
+                f"{corr_mediana:+.2f}°F: el corrector ya no corrige nada, "
+                f"así que ni reactivar ni retirar significan algo {cola}",
                 a_favor)
-    if len(e_pub) >= 20 and mejora <= -0.50:
+    if p_favor < 0.05 and mejora >= listón:
+        return ("reactivar",
+                f"🟢 REACTIVAR — el corrector gana de forma significativa y "
+                f"material {cola}", a_favor)
+    if p_contra < 0.05 and -mejora >= listón:
         return ("retirar",
-                f"🔴 RETIRAR del corrector — habría empeorado "
-                f"{-mejora:.2f}°F con N={len(e_pub)}", a_favor)
+                f"🔴 RETIRAR del corrector — pierde de forma significativa y "
+                f"material {cola}", a_favor)
     return ("congelado",
-            f"🔵 SIGUE CONGELADA — mejora {mejora:+.2f}°F (pide +0.50) y "
-            f"{a_favor}/10 a favor (pide 7)", a_favor)
+            f"🔵 SIGUE CONGELADA — no se cumplen las tres condiciones {cola}",
+            a_favor)
 
 
 def estado_de(an, cal, st: str, hora: int = None) -> dict:

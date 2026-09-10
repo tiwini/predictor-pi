@@ -9,6 +9,8 @@ Los dos tests que importan son los de corrección negativa: son los que fallan
 con la versión anterior.
 """
 import sys
+
+import pytest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -53,50 +55,111 @@ def test_correccion_NEGATIVA_con_errores_negativos_no_alarma():
     assert (estado, contra) == ("verde", 2)
 
 
-def test_congelada_con_las_dos_condiciones_se_reactiva():
-    """Mejora >= 0.50°F Y >= 7/10 días con el sesgo del lado que corrige."""
-    e_pub = [2.0] * 8 + [-2.0] * 2          # 8/10 sobre-prediciendo
-    e_alt = [0.5] * 10                       # el corrector lo habría centrado
-    estado, _, a_favor = sg.veredicto_congelado(e_pub, e_alt, corr_mediana=+2.5)
-    assert (estado, a_favor) == ("reactivar", 8)
+# ─── criterio de reactivación (reescrito 2026-09-10 tras la auditoría) ──────
+#
+# El de la primera versión pedía «mejora ≥0.50°F y ≥7/10 días del lado que
+# corrige», mirándolo a diario. Con la desviación real de KLAX (1.96°F) ese
+# umbral valía 0.8 errores estándar: se cruzaba el 21% de las veces por ruido,
+# y treinta miradas lo convertían en cuestión de tiempo.
 
 
-def test_congelada_que_solo_mejora_la_media_no_se_reactiva():
-    """Un día raro muy bien acertado sube la media sin que el sesgo haya vuelto.
+def _fase(d_list):
+    """Construye (e_pub, e_alt) con las diferencias `d` pedidas.
 
-    Es la razón de que las dos condiciones sean AND: aquí el corrector gana
-    1.30°F de media y aun así sólo 4 de 10 días llevan el sesgo que corrige.
+    `d_i = |err_pub| − |err_alt|` > 0 significa que el corrector habría quedado
+    más cerca ese día. Se fija |err_alt| y se despeja |err_pub|.
+
+    El nivel base se elige para que `err_alt + d` nunca cruce el cero: si
+    cruza, el valor absoluto lo dobla y la diferencia deja de ser la pedida
+    (con base 1.0, un d de −1.8 daba −0.8, o sea |d| real de 0.2 en vez de
+    1.8, y el test medía otra cosa).
     """
-    e_pub = [2.0] * 4 + [-2.0] * 5 + [-9.0]
-    e_alt = [0.5] * 4 + [-0.5] * 5 + [-0.5]
-    estado, _, a_favor = sg.veredicto_congelado(e_pub, e_alt, corr_mediana=+2.5)
-    assert estado == "congelado" and a_favor == 4
+    err_alt = max(1.0, -min(d_list) + 0.5)
+    e_alt = [err_alt] * len(d_list)
+    e_pub = [err_alt + d for d in d_list]
+    return e_pub, e_alt
 
 
-def test_congelada_que_solo_acierta_el_signo_no_se_reactiva():
-    """El sesgo está del lado que corrige, pero es tan pequeño que corregirlo
-    no compensa: 8/10 a favor y sólo 0.20°F de mejora."""
-    e_pub = [0.7] * 8 + [-0.7] * 2
-    e_alt = [0.5] * 10
-    estado, _, _ = sg.veredicto_congelado(e_pub, e_alt, corr_mediana=+2.5)
+def test_reactiva_con_signos_significativos_y_mejora_material():
+    """9 de 10 (p=0.011) y mejora 1.54°F sobre un listón de 0.50."""
+    pub, alt = _fase([1.8] * 9 + [-0.8])
+    estado, texto, a_favor = sg.veredicto_congelado(pub, alt, corr_mediana=2.5)
+    assert (estado, a_favor) == ("reactivar", 9)
+    assert "p=0.011" in texto
+
+
+def test_ocho_de_diez_ya_no_basta():
+    """p=0.055 — el criterio viejo se conformaba con 7/10, que es p=0.17."""
+    pub, alt = _fase([1.8] * 8 + [-0.8] * 2)
+    estado, _, _ = sg.veredicto_congelado(pub, alt, corr_mediana=2.5)
     assert estado == "congelado"
 
 
-def test_congelada_que_hace_daño_sostenido_se_retira():
-    """Con N>=20 y medio grado de daño, el sesgo que medía ya no existe."""
-    e_pub = [0.5] * 20
-    e_alt = [2.0] * 20
-    estado, texto, _ = sg.veredicto_congelado(e_pub, e_alt, corr_mediana=+2.5)
-    assert estado == "retirar" and "1.50" in texto
+def test_consistente_pero_irrelevante_no_reactiva():
+    """10 de 10 a favor, p=0.001, pero la mejora es de 0.30°F: significativa y
+    sin importancia. El suelo de materialidad existe para esto."""
+    pub, alt = _fase([0.3] * 10)
+    estado, _, _ = sg.veredicto_congelado(pub, alt, corr_mediana=2.5)
+    assert estado == "congelado"
 
 
-def test_congelada_con_N_bajo_no_decide_aunque_el_dato_apunte():
-    """Nueve días buenísimos no descongelan: el listón es N>=10, escrito antes
-    de ver ninguno."""
-    e_pub = [3.0] * 9
-    e_alt = [0.1] * 9
-    estado, texto, _ = sg.veredicto_congelado(e_pub, e_alt, corr_mediana=+2.5)
-    assert estado == "congelado_n_bajo" and "faltan 1" in texto
+def test_mejora_grande_pero_ahogada_en_varianza_no_reactiva():
+    """9 de 10 y +1.60°F de media, pero un día de −20 dispara el error
+    estándar a 2.40 y el listón a 3.95. Es justo el caso que el umbral fijo
+    de 0.50 dejaba pasar."""
+    pub, alt = _fase([4.0] * 9 + [-20.0])
+    estado, _, _ = sg.veredicto_congelado(pub, alt, corr_mediana=2.5)
+    assert estado == "congelado"
+
+
+def test_corrector_apagado_es_irrelevante_no_reactivable():
+    """La corrección mediana de la fase es 0.20°F: la mediana móvil se encogió
+    sola al salir agosto de la ventana de 30 días. Ganar sin corregir nada no
+    es motivo para encender nada."""
+    pub, alt = _fase([1.8] * 9 + [-0.8])
+    estado, texto, _ = sg.veredicto_congelado(pub, alt, corr_mediana=0.20)
+    assert estado == "irrelevante"
+    assert "no corrige nada" in texto
+
+
+def test_retirar_es_el_espejo_exacto():
+    """Mismo N que reactivar: la asimetría 10/20 de la primera versión
+    favorecía volver a encender."""
+    pub, alt = _fase([-1.8] * 9 + [0.8])
+    estado, _, _ = sg.veredicto_congelado(pub, alt, corr_mediana=2.5)
+    assert estado == "retirar"
+
+
+def test_mirar_a_diario_no_cambia_el_veredicto():
+    """EL test de esta reescritura. El veredicto sale de los N PRIMEROS días,
+    así que en cuanto hay 10 el conjunto ya no cambia y el informe diario
+    repite el resultado en vez de tirar otra moneda.
+
+    Aquí los 10 primeros no reactivan (8/10) y los cuatro siguientes son
+    inmejorables: con «los últimos 10» habría reactivado al cuarto día.
+    """
+    d = [1.8] * 8 + [-0.8] * 2
+    pub10, alt10 = _fase(d)
+    base, _, _ = sg.veredicto_congelado(pub10, alt10, corr_mediana=2.5)
+    assert base == "congelado"
+    for extra in range(1, 5):
+        pub, alt = _fase(d + [3.0] * extra)
+        estado, _, _ = sg.veredicto_congelado(pub, alt, corr_mediana=2.5)
+        assert estado == base, f"cambió de veredicto al día {10 + extra}"
+
+
+def test_la_segunda_ventana_es_N20():
+    """Con 20 días se vuelve a decidir, y sólo entonces: es la última mirada."""
+    d = [1.8] * 8 + [-0.8] * 2          # 8/10, no decide
+    pub, alt = _fase(d + [1.8] * 10)     # 18/20 → p=0.0004
+    estado, _, a_favor = sg.veredicto_congelado(pub, alt, corr_mediana=2.5)
+    assert (estado, a_favor) == ("reactivar", 18)
+
+
+def test_p_signos_es_la_binomial_exacta():
+    assert sg._p_signos(9, 10) == pytest.approx(11 / 1024)
+    assert sg._p_signos(8, 10) == pytest.approx(56 / 1024)
+    assert sg._p_signos(10, 10) == pytest.approx(1 / 1024)
 
 
 def test_menos_de_diez_dias_no_decide():
