@@ -144,6 +144,31 @@ SEASONAL_OFFSET_F = {
 }
 SEASONAL_OFFSET_ACTIVE_SINCE = "2026-07-06"  # ISO date
 
+# ── Revisión del 2026-09-10, la que pedía el comentario de arriba ────────────
+# Corrida: `investigacion/seasonal_revision.py --contrafactual`, N=30 días por
+# estación a la hora de referencia. Criterio pre-registrado en DECISIONES.md
+# ANTES de calcular el contrafactual.
+#
+#   est    empuje   |err| ahora   sin offset      días que gana   veredicto
+#   KBOS   +0.99       2.54          2.54  (−0.00)     15/30      MANTENER
+#   KLAS   +1.70       2.01          2.95  (+0.94)      7/30      MANTENER
+#   KPHX   +1.55       1.62          2.82  (+1.21)      3/30      MANTENER
+#
+# Las tres se mantienen. KBOS venía señalada porque su sesgo residual (+1.51)
+# tiene el mismo signo que su empuje, pero quitarlo **no cambia el error**:
+# ahí manda la dispersión, no el nivel, y desplazar 0.99°F mejora tantos días
+# como empeora. La media lo sugería y el contrafactual lo desmintió.
+#
+# ⚠ Lo que sí queda abierto: en KLAS y KPHX el offset **se queda corto** —
+# sesgo residual −0.57 (9/30 días positivos, p=0.043) y −1.23 (5/30, p=0.0003).
+# Subirlos con esta misma muestra sería tunear sobre el dato que acaba de
+# mirarse; hace falta una corrida con días frescos, y la serie sólo guarda 30.
+#
+# La revisión anterior venció en septiembre sin que nadie la viera durante dos
+# meses. Por eso ahora hay fecha Y un test que falla cuando pasa
+# (`test_bias_tracker.py::test_la_revision_del_offset_no_esta_vencida`).
+SEASONAL_OFFSET_REVISADO_HASTA = "2026-10-15"
+
 
 def _early_pred(cur, station_id: str, date_str: str) -> Optional[float]:
     """Mediana de los primeros N_EARLY snapshots que caen en la ventana matinal

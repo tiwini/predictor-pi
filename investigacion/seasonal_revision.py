@@ -41,10 +41,16 @@ VENTANA_MIN = 45
 
 
 def p_signos(k, n):
+    """p BILATERAL del test de signos, acotado a 1.
+
+    Sin el `min` la cola doblada pasa de 1 cuando el reparto está cerca de la
+    mitad (15/30 imprimía p=1.1445, que no es una probabilidad).
+    """
     if n <= 0:
         return 1.0
     k = max(k, n - k)
-    return 2.0 * sum(math.comb(n, i) for i in range(k, n + 1)) / (2 ** n)
+    cola = sum(math.comb(n, i) for i in range(k, n + 1)) / (2 ** n)
+    return min(1.0, 2.0 * cola)
 
 
 def serie(an, cal, st):
@@ -80,6 +86,62 @@ def resumen(errs):
             "mediana": statistics.median(errs), "pos": pos,
             "p": p_signos(pos, len(errs))}
 
+
+
+# ─── contrafactual: ¿qué pasaría sin el offset? ─────────────────────────────
+#
+# El offset se RESTA de la distribución, así que el empuje real es `-offset` y
+#     err_sin = err_pub - empuje
+# La aproximación ignora que el piso y el ancla externa son no lineales: con el
+# offset la mediana entra distinta en los dos y el efecto no es exactamente un
+# desplazamiento. Por eso sólo se admite donde el piso actúe en <20% de los
+# días; por encima de eso la estación se declara NO MEDIBLE por esta vía.
+#
+# Criterio pre-registrado el 2026-09-10 (DECISIONES.md), antes de correr esto:
+#   RETIRAR si (a) |err| sin offset mejora >= 0.20 F  Y  (b) gana en >= 20 de
+#   30 días (signos p<0.05). Si (a) y (b) discrepan, NO se toca.
+
+MEJORA_MIN_F = 0.20
+DIAS_MIN_A_FAVOR = 20
+MAX_FRAC_PISO = 0.20
+
+
+def contrafactual(an, cal):
+    print("\n## Contrafactual: quitar el offset\n")
+    print("| est | empuje | N | piso | \\|err\\| ahora | sin offset | Δ | "
+          "días que gana | signos p | (a) | (b) | veredicto |")
+    print("|---|---|---|---|---|---|---|---|---|---|---|---|")
+    for st, off in sorted(SEASONAL_OFFSET_F.items()):
+        s = serie(an, cal, st)
+        if not s:
+            print(f"| {st} | {off:+.2f} | sin datos |")
+            continue
+        empuje = -off
+        n = len(s)
+        frac_piso = sum(1 for x in s if x["piso"]) / n
+        e_pub = [abs(x["err"]) for x in s]
+        e_sin = [abs(x["err"] - empuje) for x in s]
+        m_pub, m_sin = statistics.mean(e_pub), statistics.mean(e_sin)
+        gana = sum(1 for a, b in zip(e_pub, e_sin) if b < a - 1e-9)
+        no_nulos = sum(1 for a, b in zip(e_pub, e_sin) if abs(a - b) > 1e-9)
+        p = p_signos(gana, no_nulos)
+        a_ok = m_sin <= m_pub - MEJORA_MIN_F
+        b_ok = gana >= DIAS_MIN_A_FAVOR and p < 0.05
+        if frac_piso >= MAX_FRAC_PISO:
+            ver = "⚪ NO MEDIBLE por esta vía (el piso actúa demasiado)"
+        elif a_ok and b_ok:
+            ver = "🔴 RETIRAR"
+        elif a_ok != b_ok:
+            ver = "🟡 DISCREPAN — no se toca"
+        else:
+            ver = "🟢 MANTENER"
+        print(f"| {st} | {empuje:+.2f} | {n} | {100*frac_piso:.0f}% | "
+              f"{m_pub:.2f} | {m_sin:.2f} | {m_sin - m_pub:+.2f} | "
+              f"{gana}/{no_nulos} | {p:.4f} | {'✅' if a_ok else '❌'} | "
+              f"{'✅' if b_ok else '❌'} | {ver} |")
+
+
+OUTER_MARKER = True
 
 def main():
     an = sqlite3.connect(f"file:{BASE / 'analysis.db'}?mode=ro", uri=True)
@@ -143,6 +205,8 @@ def main():
         for st, r in sorted(ctrl, key=lambda x: -x[1]["media"]):
             print(f"| {st} | {r['n']} | {r['media']:+.2f}°F | "
                   f"{r['pos']}/{r['n']} |")
+    if "--contrafactual" in sys.argv:
+        contrafactual(an, cal)
     return 0
 
 
