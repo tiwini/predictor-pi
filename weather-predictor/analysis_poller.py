@@ -127,6 +127,20 @@ def _conn() -> sqlite3.Connection:
                      # cuando no lleva corrector. Es lo que mantiene viva la
                      # vigilancia mientras la estación está apagada.
                      ("bias_frozen_f", "REAL"),
+                     # 2026-09-10: rama EN SOMBRA del reweight corregido por el
+                     # efecto de diseño, más el eff_N que hasta hoy no se
+                     # persistía (sólo alimentaba a `difficulty`, revocado como
+                     # gate). Sin esto no hay con qué decidir el criterio
+                     # pre-registrado en DECISIONES.md: la serie no guarda ni
+                     # los 31 miembros crudos ni los residuales horarios, así
+                     # que un backtest a posteriori es imposible.
+                     ("eff_n", "REAL"),
+                     ("eff_n_alt", "REAL"),
+                     ("rw_rho", "REAL"),
+                     ("rw_deff", "REAL"),
+                     ("ens_med_alt", "REAL"),
+                     ("ens_p10_alt", "REAL"),
+                     ("ens_p90_alt", "REAL"),
                      # 2026-08-14: minutos que current lleva sin cambiar, de la
                      # serie METAR aceptada. Se persiste porque physical_gate lo
                      # necesita y derivarlo de los snapshots del poller pierde
@@ -442,6 +456,15 @@ def poll_one(station_id: str, c: sqlite3.Connection) -> None:
     p10 = _percentile(maxes, 0.1)
     p90 = _percentile(maxes, 0.9)
 
+    # Los mismos percentiles sobre la rama en sombra. Quedan a NULL cuando no
+    # hay reweight que corregir (menos de 2 horas casadas, o ρ̄ no estimable).
+    med_alt = p10_alt = p90_alt = None
+    if snap.ensemble_daily_maxes_alt:
+        _alt = sorted(snap.ensemble_daily_maxes_alt)
+        med_alt = _percentile(_alt, 0.5)
+        p10_alt = _percentile(_alt, 0.1)
+        p90_alt = _percentile(_alt, 0.9)
+
     try:
         import regime
         rt = regime.classify(snap, station_id, snap.station_local)
@@ -493,6 +516,8 @@ def poll_one(station_id: str, c: sqlite3.Connection) -> None:
          today_max_obs_ts,
          our_pred_f, pred_iso_med_f, bias_median_causal_f, bias_median_n,
          bias_f, bias_applied, bias_path, bias_frozen_f,
+         eff_n, eff_n_alt, rw_rho, rw_deff,
+         ens_med_alt, ens_p10_alt, ens_p90_alt,
          ext_med_f, ext_spread_f, ext_diff_f, ext_below_floor_f,
          difficulty_score, difficulty_label, difficulty_reasons_json,
          cold_bias_block, streak_block_hot, streak_block_cold,
@@ -503,7 +528,7 @@ def poll_one(station_id: str, c: sqlite3.Connection) -> None:
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (ts, station_id, snap.current_temp_f, snap.today_max_obs,
          med, p10, p90, json.dumps(maxes), snap.peak_status,
          regime_tag, regime_reason,
@@ -528,6 +553,9 @@ def poll_one(station_id: str, c: sqlite3.Connection) -> None:
          sig["bias_median_causal_f"], sig["bias_median_n"],
          sig["bias_f"], sig["bias_applied"], sig["bias_path"],
          sig["bias_frozen_f"],
+         snap.ensemble_eff_n, snap.ensemble_eff_n_alt,
+         snap.reweight_rho, snap.reweight_deff,
+         med_alt, p10_alt, p90_alt,
          sig["ext_med_f"], sig["ext_spread_f"], sig["ext_diff_f"],
          sig["ext_below_floor_f"],
          sig["difficulty_score"], sig["difficulty_label"], sig["difficulty_reasons_json"],

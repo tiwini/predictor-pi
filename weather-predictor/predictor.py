@@ -162,6 +162,14 @@ class Snapshot:
     ensemble_raw_maxes: list = field(default_factory=list)  # unweighted per-member daily max
     ensemble_weights: list = field(default_factory=list)    # normalized weights per raw member
     ensemble_eff_n: float | None = None   # Kish effective sample size (1/Σw²)
+    # Rama EN SOMBRA del reweight (2026-09-10): los mismos miembros pesados con
+    # el SSE dividido por `deff`. Atraviesa las mismas cinco transformaciones
+    # que la publicada y con los MISMOS escalares, para que la única diferencia
+    # sean los pesos. Nada de esto se publica ni entra en ningún gate.
+    ensemble_daily_maxes_alt: list | None = None
+    ensemble_eff_n_alt: float | None = None
+    reweight_rho: float | None = None
+    reweight_deff: float | None = None
     ensemble_residual_hours: int = 0      # obs hours used to compute weights
     # Regime-break detector: past hours today where observed temp fell outside
     # the ensemble's [p1, p99] range (i.e. the model didn't even bracket
@@ -302,6 +310,49 @@ def parse_convective_flags(raw: str) -> bool:
 # que su banda no es estrecha sino DESCENTRADA. Ensancharla habría tapado un
 # sesgo de nivel con una banda de 7.6°F, que cubre por rendición.
 SPREAD_MIN_F: dict[str, float] = {"KMIA": 1.0}
+
+
+def _rho_entre_horas(matched: list, n_h: int) -> tuple:
+    """(ρ̄, deff) de los residuales del reweight, o (None, None).
+
+    ρ̄ = correlación media entre pares de HORAS del vector de residuales a
+    través de los miembros. No es autocorrelación temporal dentro de un
+    miembro: mide si dos horas **ordenan igual** a los miembros. ρ̄→1 significa
+    que la segunda hora repite la evidencia de la primera, y sumar las dos en
+    el SSE cuenta dos veces lo mismo.
+
+    deff = 1 + (n_h−1)·ρ̄ es la varianza de una suma de n_h términos con
+    correlación media ρ̄ y varianzas iguales — exacto, no aproximado, para esa
+    definición de ρ̄. Lo aproximado es aplicarlo a una suma de CUADRADOS: es el
+    ajuste habitual de verosimilitud compuesta, y así está pre-registrado.
+
+    Instrumentación de la rama en sombra (2026-09-10). No entra en nada
+    publicado mientras el criterio de DECISIONES.md no se cumpla.
+    """
+    import statistics as _st
+    filas = []
+    for entradas in matched:
+        if not entradas or len(entradas) != n_h:
+            continue
+        filas.append([r_f - r_o for r_f, r_o, _h in
+                      sorted(entradas, key=lambda x: x[2])])
+    if len(filas) < 5 or n_h < 3:
+        return (None, None)
+    cols = list(zip(*filas))
+    cors = []
+    for a in range(n_h):
+        for b in range(a + 1, n_h):
+            xs, ys = cols[a], cols[b]
+            sx, sy = _st.pstdev(xs), _st.pstdev(ys)
+            if sx < 1e-9 or sy < 1e-9:
+                continue
+            mx, my = _st.mean(xs), _st.mean(ys)
+            cors.append(sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+                        / (len(xs) * sx * sy))
+    if not cors:
+        return (None, None)
+    rho = _st.mean(cors)
+    return (rho, max(1.0, 1.0 + (n_h - 1) * rho))
 
 
 def widen_min_spread(daily_maxes: list, m: float | None) -> list:
@@ -1363,6 +1414,8 @@ def build_snapshot(station: Station) -> Snapshot:
         })
     # compute weights — SSE is standardized per-hour so σ(hour) defines the
     # noise scale of each observation. Peak-hour obs contribute more signal.
+    weights_alt = None
+    reweight_rho = reweight_deff = eff_n_alt = None
     if residual_hours >= 2 and matched and any(matched):
         sses = []
         for mi in range(total_members):
@@ -1381,6 +1434,22 @@ def build_snapshot(station: Station) -> Snapshot:
         z = sum(raw_w)
         weights = [w / z for w in raw_w] if z > 0 else [1.0 / total_members] * total_members
         eff_n = 1.0 / sum(w * w for w in weights) if any(weights) else float(total_members)
+
+        # Rama en sombra: el mismo SSE dividido por el efecto de diseño. Si
+        # algo falla se queda en None y aquí no se ha enterado nadie.
+        try:
+            reweight_rho, reweight_deff = _rho_entre_horas(matched,
+                                                           residual_hours)
+            if reweight_deff and reweight_deff > 1.0:
+                _raw_alt = [pow(2.718281828, -(s - min_sse) / (2.0 * reweight_deff))
+                            for s in sses]
+                _z_alt = sum(_raw_alt)
+                if _z_alt > 0:
+                    weights_alt = [w / _z_alt for w in _raw_alt]
+                    eff_n_alt = 1.0 / sum(w * w for w in weights_alt)
+        except Exception:
+            weights_alt = None
+            reweight_rho = reweight_deff = eff_n_alt = None
     else:
         weights = [1.0 / total_members] * total_members if total_members else []
         eff_n = float(total_members)
@@ -1400,6 +1469,17 @@ def build_snapshot(station: Station) -> Snapshot:
     else:
         daily_maxes = list(raw_maxes)
 
+    # Mismo remuestreo determinista, con los pesos corregidos por deff.
+    daily_maxes_alt = None
+    if weights_alt and total_members:
+        daily_maxes_alt = []
+        for m_val, w in zip(raw_maxes, weights_alt):
+            k = int(round(N_SAMPLES * w))
+            if k > 0:
+                daily_maxes_alt.extend([m_val] * k)
+        if not daily_maxes_alt:
+            daily_maxes_alt = None
+
     # Fable/Codex retro 2026-07-06 (P1 #3): seasonal offset por estación con
     # sesgo frío GFS persistente (KLAS -1.70, KPHX -1.55, KBOS -0.99). El
     # bias_tracker EWMA rebota y no captura el nivel sostenido; este offset
@@ -1410,6 +1490,8 @@ def build_snapshot(station: Station) -> Snapshot:
         _seasonal = _bt_off.SEASONAL_OFFSET_F.get(station.id, 0.0)
         if _seasonal != 0.0 and daily_maxes:
             daily_maxes = [v - _seasonal for v in daily_maxes]  # _seasonal<0 → suma
+            if daily_maxes_alt:      # gemela 1/5 — ver test de fidelidad
+                daily_maxes_alt = [v - _seasonal for v in daily_maxes_alt]
     except Exception:
         pass
 
@@ -1510,6 +1592,9 @@ def build_snapshot(station: Station) -> Snapshot:
             except Exception:
                 pass
             daily_maxes = [v - bias_correction_f for v in daily_maxes]
+            if daily_maxes_alt:      # gemela 2/5
+                daily_maxes_alt = [v - bias_correction_f
+                                   for v in daily_maxes_alt]
         elif bias_info.get("frozen"):
             # Congelada: se registra lo que el corrector HABRÍA aplicado —misma
             # hora, mismo capeo por el piso— sin tocar la distribución. Tiene
@@ -1569,6 +1654,11 @@ def build_snapshot(station: Station) -> Snapshot:
             if _lam > 0.0:
                 ext_shift_f = _lam * (mm.median - _pred_med)
                 daily_maxes = [v + ext_shift_f for v in daily_maxes]
+                if daily_maxes_alt:  # gemela 3/5 — mismo escalar a propósito:
+                    # el shift sale de la mediana PUBLICADA, así la única
+                    # diferencia entre las dos ramas siguen siendo los pesos.
+                    daily_maxes_alt = [v + ext_shift_f
+                                       for v in daily_maxes_alt]
             ext_shift_info = {
                 "ext_med": mm.median, "ext_spread": mm.spread,
                 "ext_diff_pre": _ext_diff, "clim_pct": _clim_pct,
@@ -1582,6 +1672,9 @@ def build_snapshot(station: Station) -> Snapshot:
     # Dispersión mínima por estación, justo antes del piso: se ensancha y el
     # piso recorta lo que sobre por abajo, que es el orden en que se midió.
     daily_maxes = widen_min_spread(daily_maxes, SPREAD_MIN_F.get(station.id))
+    if daily_maxes_alt:              # gemela 4/5
+        daily_maxes_alt = widen_min_spread(daily_maxes_alt,
+                                           SPREAD_MIN_F.get(station.id))
 
     # Último paso de la cadena de ajustes: re-imponer el piso de la observación.
     # Va acá a propósito — después de seasonal, clima, bias y ext_shift, que son
@@ -1589,6 +1682,8 @@ def build_snapshot(station: Station) -> Snapshot:
     # bins, Snapshot). `floor_f` = max(obs del feed, CLI parcial de la tarde).
     daily_maxes, obs_floor_n, obs_floor_delta_f = apply_obs_floor(
         daily_maxes, floor_f)
+    if daily_maxes_alt:              # gemela 5/5
+        daily_maxes_alt = apply_obs_floor(daily_maxes_alt, floor_f)[0]
 
     # Fable #5 (2026-07-15): peak state 3-way con ventana + tendencia + ensemble.
     # Anchor a max_obs (QC'd), no a current (5-min feed puede tener redondeo).
@@ -1736,6 +1831,10 @@ def build_snapshot(station: Station) -> Snapshot:
         today_max_obs_ts=max_obs_ts,
         obs_count=len(obs_today),
         ensemble_daily_maxes=daily_maxes,
+        ensemble_daily_maxes_alt=daily_maxes_alt,
+        ensemble_eff_n_alt=eff_n_alt,
+        reweight_rho=reweight_rho,
+        reweight_deff=reweight_deff,
         obs_floor_n=obs_floor_n,
         obs_floor_delta_f=obs_floor_delta_f,
         forecast_next_hours=forecast,
