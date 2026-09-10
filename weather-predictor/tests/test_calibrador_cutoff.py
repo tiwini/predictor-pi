@@ -57,22 +57,35 @@ class _Bin:
 
 
 def _con_calibrador_falso(monkeypatch):
-    """Un calibrador que se nota: empuja toda p a 0.42."""
+    """Un calibrador que APLANA: manda cualquier p al mismo valor.
+
+    Se nota a través de la normalización final —que reescala pero no reordena—
+    porque deja todos los bins empatados. Comprobar un valor absoluto ya no
+    sirve: desde el 2026-09-10 la salida se normaliza a masa 1.
+    """
     import isotonic as iso
     monkeypatch.setattr(iso, "get", lambda _s: SimpleNamespace(
         n_fit=10 ** 6, n_days=10 ** 6))
     monkeypatch.setattr(iso, "apply", lambda _c, _p: 0.42)
 
 
+def _dos_bins():
+    """Dos bins con masa cruda MUY distinta: 100% en el primero."""
+    return [_Bin(99.0, 100.0), _Bin(101.0, 102.0)]
+
+
 def test_antes_del_corte_se_calibra(monkeypatch):
+    """A las 12h el calibrador aplana, así que los dos bins salen empatados."""
     _con_calibrador_falso(monkeypatch)
-    ps = P._compute_final_our_p_per_bin("KPHX", _snap(12), [_Bin(99.0, 100.0)])
-    assert ps[0] == pytest.approx(0.42)
+    ps = P._compute_final_our_p_per_bin("KPHX", _snap(12), _dos_bins())
+    assert ps[0] == pytest.approx(ps[1]), "el calibrador no se aplicó"
+    assert sum(ps) == pytest.approx(1.0)
 
 
 def test_pasado_el_corte_sale_el_crudo(monkeypatch):
-    """EL test: a las 18h la probabilidad publicada tiene que ser la cruda."""
+    """EL test: a las 18h no se calibra, así que el bin donde está el ensemble
+    conserva casi toda la masa en vez de empatar con el vacío."""
     _con_calibrador_falso(monkeypatch)
-    b = _Bin(99.0, 100.0)
-    crudo = P._compute_final_our_p_per_bin("KPHX", _snap(18), [b])[0]
-    assert crudo != pytest.approx(0.42), "el calibrador siguió aplicándose"
+    ps = P._compute_final_our_p_per_bin("KPHX", _snap(18), _dos_bins())
+    assert ps[0] > ps[1] * 3, "el calibrador siguió aplicándose pasada la hora"
+    assert sum(ps) == pytest.approx(1.0)

@@ -2357,6 +2357,47 @@ def obs_floor_from_snapshot(snap: Snapshot) -> float | None:
     return floor
 
 
+def normalizar_masa(ps: list) -> list:
+    """Escala las probabilidades por bin para que sumen 1.
+
+    Los bins de Kalshi son mutuamente excluyentes y exhaustivos —los de los
+    extremos son colas—, así que su masa **tiene** que sumar 1. No sumaba:
+    medido el 2026-09-10 sobre 75.956 snapshots, la suma publicada valía
+    **1.0499** de mediana (p10 0.95, p90 1.19). Dos causas, y sólo una se
+    arregla aquí:
+
+      · el crudo suma **exactamente 1.1212** porque `kalshi.our_p_for_bin` usa
+        `(k+1)/(N+2)`, la regla de Laplace **binaria**, sobre 6 categorías
+        excluyentes; la multiclase sería `(k+1)/(N+6)`. Da igual para lo que se
+        publica: PAV es invariante a transformaciones monótonas de la entrada,
+        así que el calibrador absorbe la escala entera (Brier Δ +0.0000
+        medido). El crudo persistido sigue inflado y así queda anotado.
+      · la isotónica se aplica **bin a bin**, y una transformación monótona
+        por separado no conserva la masa. Ésta es la que llega a la salida.
+
+    Medido antes de adoptarlo, criterio pre-registrado en el commit 4865bc7,
+    sobre 445.710 bins con settle:
+
+        Brier          0.0975 → 0.0966   (−0.0008)
+        suma           1.0499 → 1.0000
+        fiabilidad     0.0539 → 0.0476   (−0.0063, o sea MEJORA)
+
+    El trade-off que se temía —con un modelo imperfecto no se puede tener a la
+    vez calibración marginal por bin y masa que sume 1— no aparece a esta
+    escala: las tres condiciones mejoran a la vez.
+
+    Va al FINAL del pipeline, después de `zero_impossible_bins`, para que la
+    salida sume 1 venga la masa de donde venga. Con suma 0, o con algún bin a
+    None, devuelve la lista tal cual: normalizar no es sitio para inventar.
+    """
+    if not ps or any(p is None for p in ps):
+        return ps
+    s = sum(ps)
+    if s <= 0 or abs(s - 1.0) < 1e-12:
+        return ps
+    return [p / s for p in ps]
+
+
 def zero_impossible_bins(bins: list, ps: list,
                          floor: float | None) -> tuple[list, int, float]:
     """Anula la masa de bins que el día ya dejó atrás y la redistribuye.
@@ -2374,9 +2415,14 @@ def zero_impossible_bins(bins: list, ps: list,
     sigue ganando si el día no sube más.
 
     La masa liberada se redistribuye proporcionalmente entre los bins vivos,
-    preservando la suma total en vez de normalizar a 1: la suma calibrada no
-    vale 1 de todos modos (isotónica bin a bin), y tocarla sería un cambio
-    aparte y mucho mayor. Sin bins imposibles esto es exactamente identidad.
+    preservando la suma total en vez de normalizar aquí. Sin bins imposibles
+    esto es exactamente identidad.
+
+    Hasta el 2026-09-10 esto venía justificado con que «la suma calibrada no
+    vale 1 de todos modos», lo cual era cierto —1.0499 de mediana— y dejó de
+    ser una excusa: ahora `normalizar_masa` corre justo después y la deja en 1.
+    Esta función sigue sin normalizar a propósito, para que cada paso haga una
+    sola cosa.
 
     Devuelve (ps_corregidos, n_anulados, masa_redistribuida).
     """
@@ -2516,7 +2562,10 @@ def _compute_final_our_p_per_bin(station_id: str, snap: Snapshot,
     # donde venga. Una vía conocida es el propio blend — si `ext_med` cae por
     # debajo del piso, su gaussiana reparte masa en bins ya muertos.
     out, _n, _m = zero_impossible_bins(bins, out, obs_floor_from_snapshot(snap))
-    return out
+    # Y lo último de lo último: que la masa sume 1. Los bins son excluyentes y
+    # exhaustivos, así que cualquier otra suma afirma más (o menos) certeza de
+    # la que hay. Ver `normalizar_masa`.
+    return normalizar_masa(out)
 
 
 def poll_once(state: State):
