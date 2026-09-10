@@ -182,41 +182,52 @@ def _evaluar(an, cal, c_med, c_p10, c_p90, tol_mediana):
     return
 
 
-def resumen_corto() -> str:
-    """Una línea con el estado de las dos ramas, para el informe diario.
+def dias_con_sombra() -> int:
+    """Días liquidados que ya tienen sombra en LAS DOS ramas.
 
-    Cuenta los días liquidados que ya tienen sombra: mientras falten, dice
-    cuántos; en cuanto la muestra llega, avisa de que toca decidir. Vive aquí
-    y no en el watchdog para que el N y el umbral tengan un solo dueño.
+    Cuenta las dos a la vez a propósito: comparar A contra B exige los mismos
+    días, así que el contador que manda es el de la intersección.
     """
+    an = sqlite3.connect(f"file:{BASE / 'analysis.db'}?mode=ro", uri=True)
+    an.execute("PRAGMA busy_timeout=20000")
+    cal = sqlite3.connect(f"file:{BASE / 'calibration.db'}?mode=ro", uri=True)
     try:
-        an = sqlite3.connect(f"file:{BASE / 'analysis.db'}?mode=ro", uri=True)
-        an.row_factory = sqlite3.Row
-        an.execute("PRAGMA busy_timeout=20000")
-        cal = sqlite3.connect(f"file:{BASE / 'calibration.db'}?mode=ro", uri=True)
         cols = {r[1] for r in an.execute("PRAGMA table_info(station_snapshots)")}
         if "ens_p10_banda" not in cols:
-            return "reweight en sombra: la rama B aún no está en la base"
+            return 0
         dias = set()
         for st, dia in cal.execute(
                 "SELECT station_id, date FROM day_outcomes "
                 "WHERE max_obs_f IS NOT NULL AND date >= '2026-09-10'"):
-            r = an.execute(
-                """SELECT 1 FROM station_snapshots
-                   WHERE station=? AND date(datetime(ts,'localtime'))=?
-                     AND ens_p10_alt IS NOT NULL AND ens_p10_banda IS NOT NULL
-                   LIMIT 1""", (st, dia)).fetchone()
-            if r:
+            if an.execute(
+                    """SELECT 1 FROM station_snapshots
+                       WHERE station=? AND date(datetime(ts,'localtime'))=?
+                         AND ens_p10_alt IS NOT NULL
+                         AND ens_p10_banda IS NOT NULL LIMIT 1""",
+                    (st, dia)).fetchone():
                 dias.add(dia)
-        n = len(dias)
-        if n >= MIN_DIAS:
-            return (f"🔔 **REWEIGHT: TOCA DECIDIR** — {n} días liquidados con "
-                    f"sombra en las dos ramas (pedía {MIN_DIAS}). Correr "
-                    f"`investigacion/reweight_veredicto.py`")
-        return (f"⏳ reweight en sombra: {n}/{MIN_DIAS} días liquidados "
-                f"(faltan {MIN_DIAS - n})")
+        return len(dias)
+    finally:
+        an.close()
+        cal.close()
+
+
+def resumen_corto() -> str:
+    """Una línea con el estado de las dos ramas, para el informe diario.
+
+    Mientras falten días dice cuántos; en cuanto la muestra llega, avisa. Vive
+    aquí y no en el watchdog para que el N y el umbral tengan un solo dueño.
+    """
+    try:
+        n = dias_con_sombra()
     except Exception as e:
         return f"reweight en sombra: no se pudo leer el estado ({e})"
+    if n >= MIN_DIAS:
+        return (f"🔔 **REWEIGHT: TOCA DECIDIR** — {n} días liquidados con "
+                f"sombra en las dos ramas (pedía {MIN_DIAS}). Correr "
+                f"`investigacion/reweight_veredicto.py`")
+    return (f"⏳ reweight en sombra: {n}/{MIN_DIAS} días liquidados "
+            f"(faltan {MIN_DIAS - n})")
 
 
 if __name__ == "__main__":

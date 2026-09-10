@@ -675,6 +675,16 @@ def _cobertura_settle(station, ahora_utc=None) -> dict:
     return out
 
 
+def _experimentos_home():
+    """Experimentos abiertos para la home. Cacheado y a prueba de fallos: si
+    no se puede leer el estado, la home sale igual y sin la sección."""
+    try:
+        import experimentos
+        return experimentos.resumen()
+    except Exception:
+        return []
+
+
 @app.route("/")
 def index():
     # `?station=KMDW` llevaba desde siempre a la estación ACTIVA, fuera cual
@@ -1073,6 +1083,7 @@ def index():
         decision=decision, streak_top3=streak_top3,
         station_strip=station_strip,
         frescura_resumen=_resumen_frescura(station_strip),
+        experimentos=_experimentos_home(),
         peak_status_age=peak_status_age,
         brier_watchdog=brier_watchdog,
         station_ask_last=station_ask_last,

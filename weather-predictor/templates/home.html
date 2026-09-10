@@ -450,6 +450,30 @@
   </div>
   {% endif %}
 
+  {# Experimentos abiertos (2026-09-10). Tres cosas corren EN SOMBRA y ninguna
+     toca la predicción: las dos ramas del reweight, el congelado de KLAX+KSFO
+     y la revisión de KLAS. Todas vencen por MUESTRA, no por fecha, y ahí está
+     el problema que esto resuelve: nadie sabe qué día toca mirar. La nota
+     «revisar Sep-Oct» de SEASONAL_OFFSET_F estuvo dos meses caducada con el
+     offset corrigiendo a ciegas. El contador va donde se mira todos los días.
+     Se cachea 15 min: estos números se mueven una vez al día. #}
+  {% if experimentos %}
+  <div class="frescura">
+    <div class="frescura-hdr">Experimentos abiertos
+      <span class="muted">· en sombra · no tocan la predicción</span></div>
+    {% for e in experimentos %}
+    <div class="frescura-fila">
+      <span class="frescura-et {% if e.listo %}mal{% else %}ok{% endif %}">{% if
+        e.listo %}decidir{% else %}en curso{% endif %}</span>
+      <span class="frescura-item"><b>{{ e.titulo }}</b></span>
+      <span class="frescura-item">{{ e.n }}/{{ e.objetivo }} días{% if
+        not e.listo %} · faltan {{ e.objetivo - e.n }}{% endif %}</span>
+      <span class="frescura-item muted">· {{ e.detalle }}</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
   {% if station_strip %}
   <div class="stationstrip">
     <div class="stationstrip-title" style="display:flex;justify-content:space-between;align-items:center">
