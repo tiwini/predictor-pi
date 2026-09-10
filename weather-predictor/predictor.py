@@ -167,6 +167,11 @@ class Snapshot:
     # que la publicada y con los MISMOS escalares, para que la única diferencia
     # sean los pesos. Nada de esto se publica ni entra en ningún gate.
     ensemble_daily_maxes_alt: list | None = None
+    # Rama B (2026-09-10): la anchura de la corregida por deff, pero recentrada
+    # en la mediana PUBLICADA. Separa las dos funciones del reweight — ajustar
+    # el nivel y estrechar la banda — para poder quedarse con una sin pagar la
+    # otra. Tampoco se publica.
+    ensemble_daily_maxes_banda: list | None = None
     ensemble_eff_n_alt: float | None = None
     reweight_rho: float | None = None
     reweight_deff: float | None = None
@@ -310,6 +315,20 @@ def parse_convective_flags(raw: str) -> bool:
 # que su banda no es estrecha sino DESCENTRADA. Ensancharla habría tapado un
 # sesgo de nivel con una banda de 7.6°F, que cubre por rendición.
 SPREAD_MIN_F: dict[str, float] = {"KMIA": 1.0}
+
+
+def _recentrar(muestras: list, objetivo: float) -> list:
+    """Desplaza la muestra entera para que su mediana valga `objetivo`.
+
+    Es lo que separa las dos funciones del reweight: la rama «banda» se queda
+    con la ANCHURA de la distribución corregida por el efecto de diseño y con
+    el NIVEL de la publicada. Un desplazamiento rígido no toca la forma, así
+    que la anchura sobrevive intacta.
+    """
+    if not muestras:
+        return muestras
+    s = sorted(muestras)
+    return [v + (objetivo - s[len(s) // 2]) for v in muestras]
 
 
 def _rho_entre_horas(matched: list, n_h: int) -> tuple:
@@ -1469,16 +1488,30 @@ def build_snapshot(station: Station) -> Snapshot:
     else:
         daily_maxes = list(raw_maxes)
 
-    # Mismo remuestreo determinista, con los pesos corregidos por deff.
-    daily_maxes_alt = None
+    # Ramas EN SOMBRA. Un dict en vez de listas paralelas: cada
+    # transformación se aplica con un bucle, así que añadir una rama no obliga
+    # a acordarse de cinco sitios.
+    #
+    #   "deff"  — el reweight con el SSE dividido por el efecto de diseño.
+    #   "banda" — la anchura de esa misma, recentrada en la mediana PUBLICADA.
+    #
+    # La B existe porque el reweight hace DOS cosas a la vez: fija el nivel y
+    # estrecha la banda. Medido el 2026-09-10, corregir por deff ensancha la
+    # banda un ~100% (0.66 → 1.30°F a las 16h) y mueve la mediana 0.3-0.5°F.
+    # Si esa mediana llevaba señal, la A la pierde. La B se queda con la
+    # anchura corregida y deja el nivel como está, para poder elegir.
+    sombras: dict[str, list] = {}
     if weights_alt and total_members:
-        daily_maxes_alt = []
+        _mx = []
         for m_val, w in zip(raw_maxes, weights_alt):
             k = int(round(N_SAMPLES * w))
             if k > 0:
-                daily_maxes_alt.extend([m_val] * k)
-        if not daily_maxes_alt:
-            daily_maxes_alt = None
+                _mx.extend([m_val] * k)
+        if _mx:
+            sombras["deff"] = _mx
+            if daily_maxes:
+                _sp = sorted(daily_maxes)
+                sombras["banda"] = _recentrar(_mx, _sp[len(_sp) // 2])
 
     # Fable/Codex retro 2026-07-06 (P1 #3): seasonal offset por estación con
     # sesgo frío GFS persistente (KLAS -1.70, KPHX -1.55, KBOS -0.99). El
@@ -1490,8 +1523,8 @@ def build_snapshot(station: Station) -> Snapshot:
         _seasonal = _bt_off.SEASONAL_OFFSET_F.get(station.id, 0.0)
         if _seasonal != 0.0 and daily_maxes:
             daily_maxes = [v - _seasonal for v in daily_maxes]  # _seasonal<0 → suma
-            if daily_maxes_alt:      # gemela 1/5 — ver test de fidelidad
-                daily_maxes_alt = [v - _seasonal for v in daily_maxes_alt]
+            for _k in sombras:       # gemela 1/5 — ver test de fidelidad
+                sombras[_k] = [v - _seasonal for v in sombras[_k]]
     except Exception:
         pass
 
@@ -1592,9 +1625,8 @@ def build_snapshot(station: Station) -> Snapshot:
             except Exception:
                 pass
             daily_maxes = [v - bias_correction_f for v in daily_maxes]
-            if daily_maxes_alt:      # gemela 2/5
-                daily_maxes_alt = [v - bias_correction_f
-                                   for v in daily_maxes_alt]
+            for _k in sombras:       # gemela 2/5
+                sombras[_k] = [v - bias_correction_f for v in sombras[_k]]
         elif bias_info.get("frozen"):
             # Congelada: se registra lo que el corrector HABRÍA aplicado —misma
             # hora, mismo capeo por el piso— sin tocar la distribución. Tiene
@@ -1654,11 +1686,10 @@ def build_snapshot(station: Station) -> Snapshot:
             if _lam > 0.0:
                 ext_shift_f = _lam * (mm.median - _pred_med)
                 daily_maxes = [v + ext_shift_f for v in daily_maxes]
-                if daily_maxes_alt:  # gemela 3/5 — mismo escalar a propósito:
+                for _k in sombras:   # gemela 3/5 — mismo escalar a propósito:
                     # el shift sale de la mediana PUBLICADA, así la única
-                    # diferencia entre las dos ramas siguen siendo los pesos.
-                    daily_maxes_alt = [v + ext_shift_f
-                                       for v in daily_maxes_alt]
+                    # diferencia entre las ramas siguen siendo los pesos.
+                    sombras[_k] = [v + ext_shift_f for v in sombras[_k]]
             ext_shift_info = {
                 "ext_med": mm.median, "ext_spread": mm.spread,
                 "ext_diff_pre": _ext_diff, "clim_pct": _clim_pct,
@@ -1672,9 +1703,9 @@ def build_snapshot(station: Station) -> Snapshot:
     # Dispersión mínima por estación, justo antes del piso: se ensancha y el
     # piso recorta lo que sobre por abajo, que es el orden en que se midió.
     daily_maxes = widen_min_spread(daily_maxes, SPREAD_MIN_F.get(station.id))
-    if daily_maxes_alt:              # gemela 4/5
-        daily_maxes_alt = widen_min_spread(daily_maxes_alt,
-                                           SPREAD_MIN_F.get(station.id))
+    for _k in sombras:               # gemela 4/5
+        sombras[_k] = widen_min_spread(sombras[_k],
+                                       SPREAD_MIN_F.get(station.id))
 
     # Último paso de la cadena de ajustes: re-imponer el piso de la observación.
     # Va acá a propósito — después de seasonal, clima, bias y ext_shift, que son
@@ -1682,8 +1713,8 @@ def build_snapshot(station: Station) -> Snapshot:
     # bins, Snapshot). `floor_f` = max(obs del feed, CLI parcial de la tarde).
     daily_maxes, obs_floor_n, obs_floor_delta_f = apply_obs_floor(
         daily_maxes, floor_f)
-    if daily_maxes_alt:              # gemela 5/5
-        daily_maxes_alt = apply_obs_floor(daily_maxes_alt, floor_f)[0]
+    for _k in sombras:               # gemela 5/5
+        sombras[_k] = apply_obs_floor(sombras[_k], floor_f)[0]
 
     # Fable #5 (2026-07-15): peak state 3-way con ventana + tendencia + ensemble.
     # Anchor a max_obs (QC'd), no a current (5-min feed puede tener redondeo).
@@ -1831,7 +1862,8 @@ def build_snapshot(station: Station) -> Snapshot:
         today_max_obs_ts=max_obs_ts,
         obs_count=len(obs_today),
         ensemble_daily_maxes=daily_maxes,
-        ensemble_daily_maxes_alt=daily_maxes_alt,
+        ensemble_daily_maxes_alt=sombras.get("deff"),
+        ensemble_daily_maxes_banda=sombras.get("banda"),
         ensemble_eff_n_alt=eff_n_alt,
         reweight_rho=reweight_rho,
         reweight_deff=reweight_deff,

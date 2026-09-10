@@ -1,16 +1,33 @@
 #!/usr/bin/env python3
-"""Veredicto del reweight corregido por deff. Escrito el 2026-09-10 con CERO
-días de sombra, para que el análisis quede pre-registrado igual que el criterio.
+"""Veredicto del reweight en sombra. Escrito el 2026-09-10 con CERO días de
+datos, para que el análisis quede pre-registrado igual que el criterio.
+
+DOS ramas compiten contra lo publicado:
+
+  A «deff»  — el reweight con el SSE dividido por el efecto de diseño.
+  B «banda» — la anchura de A, recentrada en la mediana PUBLICADA.
+
+La B existe porque el reweight hace dos cosas a la vez: fija el nivel y
+estrecha la banda. Corregir por deff arregla lo segundo y mueve lo primero
+0.3-0.5°F; si esa mediana llevaba señal, A la pierde. B se queda con la
+anchura corregida y el nivel intacto, así que su criterio (b) es casi gratis
+—pero no del todo: el piso recorta más cuanto más ancha es la distribución y
+puede mover la mediana igualmente, por eso se mide.
 
 Criterio (DECISIONES.md, fila del 2026-09-10). ADOPTAR si las tres, con N≥10
 días y decidiendo DENTRO de estación:
 
-  (a) la banda alternativa queda MÁS CERCA del 80% nominal que la actual en
-      ≥15 de 20 estaciones (test de signos, p=0.021)
-  (b) el |err| de la mediana publicada NO empeora más de 0.10°F en el conjunto
+  (a) la banda queda MÁS CERCA del 80% nominal que la actual en ≥15 de 20
+      estaciones (test de signos, p=0.021)
+  (b) el |err| de la mediana NO empeora más de 0.10°F en el conjunto — para la
+      rama B la tolerancia baja a 0.05, porque ahí el nivel se deja intacto a
+      propósito y un desvío mayor significaría que el piso está mordiendo de
+      otra manera, no que el nivel cambie
   (c) cero violaciones nuevas del piso
 
-RECHAZAR si (a) no llega, o si la mediana empeora ≥0.25°F.
+RECHAZAR una rama si (a) no llega, o si su mediana empeora ≥0.25°F. Si pasan
+las dos, gana la que deje la cobertura más cerca del 80%; empate ⇒ la B, que
+cambia menos cosas.
 
 Uso:  ./venv/bin/python3 ../investigacion/reweight_veredicto.py
 """
@@ -50,6 +67,22 @@ def main():
     print("# Veredicto — reweight corregido por deff\n")
     print(f"_generado {datetime.now().isoformat(timespec='seconds')}_\n")
 
+    RAMAS = (("A deff", "ens_med_alt", "ens_p10_alt", "ens_p90_alt", 0.10),
+             ("B banda", "ens_med_banda", "ens_p10_banda", "ens_p90_banda", 0.05))
+    cols = {r[1] for r in an.execute("PRAGMA table_info(station_snapshots)")}
+    for etiqueta, c_med, c_p10, c_p90, tol in RAMAS:
+        print(f"\n## Rama {etiqueta}\n")
+        if not {c_med, c_p10, c_p90} <= cols:
+            # La migración corre al arrancar el poller: hasta entonces la
+            # columna no existe y eso no es un error, es que aún no toca.
+            print("_Esta rama todavía no está en la base: reinicia el poller "
+                  "para que corra la migración._")
+            continue
+        _evaluar(an, cal, c_med, c_p10, c_p90, tol)
+    return 0
+
+
+def _evaluar(an, cal, c_med, c_p10, c_p90, tol_mediana):
     filas, err_pub_all, err_alt_all, violaciones = [], [], [], 0
     for st in sorted(STATION_TZ):
         if st not in PEAK_HOURS:
@@ -68,10 +101,11 @@ def main():
             hi = (ref + timedelta(minutes=VENTANA_MIN)).astimezone(UTC)
             fmt = "%Y-%m-%dT%H:%M:%S"
             r = an.execute(
-                """SELECT ens_med, ens_p10, ens_p90, ens_med_alt, ens_p10_alt,
-                          ens_p90_alt, today_max_obs
+                f"""SELECT ens_med, ens_p10, ens_p90, {c_med} AS m_alt,
+                           {c_p10} AS p10_alt, {c_p90} AS p90_alt,
+                           today_max_obs
                    FROM station_snapshots
-                   WHERE station=? AND ts>=? AND ts<=? AND ens_p10_alt IS NOT NULL
+                   WHERE station=? AND ts>=? AND ts<=? AND {c_p10} IS NOT NULL
                    ORDER BY ABS(JULIANDAY(ts)-JULIANDAY(?)) LIMIT 1""",
                 (st, lo.strftime(fmt), hi.strftime(fmt),
                  ref.astimezone(UTC).strftime(fmt))).fetchone()
@@ -80,13 +114,13 @@ def main():
             n += 1
             if r["ens_p10"] - 1e-9 <= settle <= r["ens_p90"] + 1e-9:
                 dentro_pub += 1
-            if r["ens_p10_alt"] - 1e-9 <= settle <= r["ens_p90_alt"] + 1e-9:
+            if r["p10_alt"] - 1e-9 <= settle <= r["p90_alt"] + 1e-9:
                 dentro_alt += 1
             e_pub.append(abs(r["ens_med"] - settle))
-            e_alt.append(abs(r["ens_med_alt"] - settle))
+            e_alt.append(abs(r["m_alt"] - settle))
             # (c) el piso: la rama alt no puede quedar por debajo de lo ya observado
             if (r["today_max_obs"] is not None
-                    and r["ens_p10_alt"] < r["today_max_obs"] - 0.51):
+                    and r["p10_alt"] < r["today_max_obs"] - 0.51):
                 violaciones += 1
         if n == 0:
             continue
@@ -101,9 +135,8 @@ def main():
         err_alt_all += e_alt
 
     if not filas:
-        print("**Sin datos de sombra todavía.** Vuelve cuando el poller lleve "
-              "días liquidados con `ens_p10_alt` poblado.")
-        return 0
+        print("_Sin datos de sombra todavía en esta rama._")
+        return
 
     print("| est | N | cobertura ahora | con deff | ¿acerca al 80%? | "
           "\\|err\\| med ahora | con deff |")
@@ -124,7 +157,7 @@ def main():
     print(f"\n## Criterio\n")
     ok_n = n_dias >= MIN_DIAS
     ok_a = a_favor >= MIN_ESTACIONES_A_FAVOR
-    ok_b = delta_med <= TOLERANCIA_MEDIANA_F
+    ok_b = delta_med <= tol_mediana
     ok_c = violaciones == 0
     print(f"- Muestra: **{n_dias} días** mínimos por estación "
           f"(pide {MIN_DIAS}) {'✅' if ok_n else '⏳'}")
@@ -132,7 +165,7 @@ def main():
           f"(pide {MIN_ESTACIONES_A_FAVOR}; signos p={p:.4f}) "
           f"{'✅' if ok_a else '❌'}")
     print(f"- (b) \\|err\\| de la mediana **{m_pub:.3f} → {m_alt:.3f}** "
-          f"({delta_med:+.3f}°F; tolera +{TOLERANCIA_MEDIANA_F}) "
+          f"({delta_med:+.3f}°F; tolera +{tol_mediana}) "
           f"{'✅' if ok_b else '❌'}")
     print(f"- (c) violaciones nuevas del piso: **{violaciones}** "
           f"{'✅' if ok_c else '❌'}")
@@ -146,7 +179,7 @@ def main():
         print("🟢 **ADOPTAR** — se cumplen las tres condiciones.")
     else:
         print("🔴 **RECHAZADO** — no se cumplen las tres.")
-    return 0
+    return
 
 
 if __name__ == "__main__":

@@ -81,12 +81,15 @@ def test_deff_nunca_baja_de_uno():
 
 # ─── que las dos ramas atraviesen lo mismo ──────────────────────────────────
 
+# Desde el 2026-09-10 las ramas viven en un dict y cada transformación se
+# aplica con un bucle, así que añadir una rama no obliga a tocar cinco sitios.
 GEMELAS = [
-    ("_seasonal", "daily_maxes_alt = [v - _seasonal"),
-    ("bias_correction_f", "daily_maxes_alt = [v - bias_correction_f"),
-    ("ext_shift_f", "daily_maxes_alt = [v + ext_shift_f"),
-    ("widen_min_spread", "daily_maxes_alt = widen_min_spread("),
-    ("apply_obs_floor", "daily_maxes_alt = apply_obs_floor("),
+    ("_seasonal", "sombras[_k] = [v - _seasonal for v in sombras[_k]]"),
+    ("bias_correction_f",
+     "sombras[_k] = [v - bias_correction_f for v in sombras[_k]]"),
+    ("ext_shift_f", "sombras[_k] = [v + ext_shift_f for v in sombras[_k]]"),
+    ("widen_min_spread", "sombras[_k] = widen_min_spread("),
+    ("apply_obs_floor", "sombras[_k] = apply_obs_floor("),
 ]
 
 
@@ -143,15 +146,45 @@ def test_no_hay_una_transformacion_sin_gemela():
 
 
 def test_la_sombra_no_puede_tocar_lo_publicado():
-    """`daily_maxes` no puede leer nunca de la rama alternativa."""
+    """`daily_maxes` no puede leer nunca de una rama en sombra."""
     cuerpo = _cuerpo_post_remuestreo()
     for ln in cuerpo.splitlines():
         s = ln.strip()
         if s.startswith("daily_maxes =") or s.startswith("daily_maxes,"):
-            assert "_alt" not in s, f"la sombra se filtró a lo publicado: {s}"
+            assert "sombras" not in s and "_alt" not in s, \
+                f"la sombra se filtró a lo publicado: {s}"
 
 
 def test_el_snapshot_expone_la_sombra():
     campos = {f for f in P.Snapshot.__dataclass_fields__}
-    assert {"ensemble_daily_maxes_alt", "ensemble_eff_n_alt",
-            "reweight_rho", "reweight_deff"} <= campos
+    assert {"ensemble_daily_maxes_alt", "ensemble_daily_maxes_banda",
+            "ensemble_eff_n_alt", "reweight_rho", "reweight_deff"} <= campos
+
+
+# ─── rama B: la anchura del deff con el nivel de la publicada ───────────────
+
+def test_recentrar_pone_la_mediana_donde_se_pide():
+    out = P._recentrar([10.0, 12.0, 14.0], 100.0)
+    s = sorted(out)
+    assert s[len(s) // 2] == pytest.approx(100.0)
+
+
+def test_recentrar_no_toca_la_anchura():
+    """EL punto de la rama B: separar nivel de banda. Si el desplazamiento
+    cambiara la forma, no estaría separando nada."""
+    m = [10.0, 12.0, 13.0, 20.0]
+    out = P._recentrar(m, 50.0)
+    assert max(out) - min(out) == pytest.approx(max(m) - min(m))
+    for a, b in zip(sorted(m), sorted(out)):
+        assert (b - a) == pytest.approx(sorted(out)[0] - sorted(m)[0])
+
+
+def test_recentrar_con_lista_vacia():
+    assert P._recentrar([], 10.0) == []
+
+
+def test_la_rama_banda_se_construye_de_la_deff():
+    """La B sale de la A recentrada, no de un cálculo aparte: si se calcularan
+    por separado podrían divergir sin que nada avisara."""
+    cuerpo = _cuerpo_post_remuestreo()
+    assert 'sombras["banda"] = _recentrar(_mx' in cuerpo

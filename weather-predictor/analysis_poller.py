@@ -141,6 +141,10 @@ def _conn() -> sqlite3.Connection:
                      ("ens_med_alt", "REAL"),
                      ("ens_p10_alt", "REAL"),
                      ("ens_p90_alt", "REAL"),
+                     # Rama B: anchura del deff, nivel de la publicada.
+                     ("ens_med_banda", "REAL"),
+                     ("ens_p10_banda", "REAL"),
+                     ("ens_p90_banda", "REAL"),
                      # 2026-08-14: minutos que current lleva sin cambiar, de la
                      # serie METAR aceptada. Se persiste porque physical_gate lo
                      # necesita y derivarlo de los snapshots del poller pierde
@@ -464,6 +468,12 @@ def poll_one(station_id: str, c: sqlite3.Connection) -> None:
         med_alt = _percentile(_alt, 0.5)
         p10_alt = _percentile(_alt, 0.1)
         p90_alt = _percentile(_alt, 0.9)
+    med_b = p10_b = p90_b = None
+    if snap.ensemble_daily_maxes_banda:
+        _b = sorted(snap.ensemble_daily_maxes_banda)
+        med_b = _percentile(_b, 0.5)
+        p10_b = _percentile(_b, 0.1)
+        p90_b = _percentile(_b, 0.9)
 
     try:
         import regime
@@ -518,6 +528,7 @@ def poll_one(station_id: str, c: sqlite3.Connection) -> None:
          bias_f, bias_applied, bias_path, bias_frozen_f,
          eff_n, eff_n_alt, rw_rho, rw_deff,
          ens_med_alt, ens_p10_alt, ens_p90_alt,
+         ens_med_banda, ens_p10_banda, ens_p90_banda,
          ext_med_f, ext_spread_f, ext_diff_f, ext_below_floor_f,
          difficulty_score, difficulty_label, difficulty_reasons_json,
          cold_bias_block, streak_block_hot, streak_block_cold,
@@ -528,7 +539,8 @@ def poll_one(station_id: str, c: sqlite3.Connection) -> None:
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?)""",
         (ts, station_id, snap.current_temp_f, snap.today_max_obs,
          med, p10, p90, json.dumps(maxes), snap.peak_status,
          regime_tag, regime_reason,
@@ -556,6 +568,7 @@ def poll_one(station_id: str, c: sqlite3.Connection) -> None:
          snap.ensemble_eff_n, snap.ensemble_eff_n_alt,
          snap.reweight_rho, snap.reweight_deff,
          med_alt, p10_alt, p90_alt,
+         med_b, p10_b, p90_b,
          sig["ext_med_f"], sig["ext_spread_f"], sig["ext_diff_f"],
          sig["ext_below_floor_f"],
          sig["difficulty_score"], sig["difficulty_label"], sig["difficulty_reasons_json"],
