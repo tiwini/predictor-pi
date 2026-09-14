@@ -1,0 +1,77 @@
+{
+  "station": "KPHL",
+  "dia": "2026-09-14",
+  "hora_local": 10,
+  "tz": "America/New_York",
+  "snapshot_ts": "2026-09-14T13:53:25.542809+00:00",
+  "edad_snapshot_min": 6.6,
+  "our_pred_f": 76.41,
+  "ens_med": 76.41,
+  "pred_iso_med_f": 76.87548291026886,
+  "p10": 76.1,
+  "p90": 77.61,
+  "ext_med_f": 74.69999999999999,
+  "ext_diff_f": 0.3100000000000023,
+  "today_max_obs": 75.92,
+  "today_max_obs_ts": "2026-09-14T04:54:00+00:00",
+  "current_f": 73.4,
+  "current_obs_ts": "2026-09-14T13:35:00+00:00",
+  "edad_obs_min": 25.0,
+  "today_max_cli": null,
+  "bias_aplicado_f": -0.75,
+  "kalshi_ts": "2026-09-14T13:53:25.542809+00:00",
+  "nuestro_bin": "76\u00b0 to 77\u00b0",
+  "nuestro_bin_lo": 76.0,
+  "nuestro_bin_hi": 77.0,
+  "nuestro_p": 0.571,
+  "mercado_bin": "78\u00b0 to 79\u00b0",
+  "mercado_bin_lo": 78.0,
+  "mercado_bin_hi": 79.0,
+  "mercado_p": 0.505,
+  "bins": [
+    {
+      "label": "73\u00b0 or below",
+      "lo": -Infinity,
+      "hi": 73.0,
+      "mercado": 0.005,
+      "our_cal": 0.0
+    },
+    {
+      "label": "74\u00b0 to 75\u00b0",
+      "lo": 74.0,
+      "hi": 75.0,
+      "mercado": 0.005,
+      "our_cal": 0.0
+    },
+    {
+      "label": "76\u00b0 to 77\u00b0",
+      "lo": 76.0,
+      "hi": 77.0,
+      "mercado": 0.46499999999999997,
+      "our_cal": 0.5711133754129475
+    },
+    {
+      "label": "78\u00b0 to 79\u00b0",
+      "lo": 78.0,
+      "hi": 79.0,
+      "mercado": 0.505,
+      "our_cal": 0.2759920484461012
+    },
+    {
+      "label": "80\u00b0 to 81\u00b0",
+      "lo": 80.0,
+      "hi": 81.0,
+      "mercado": 0.045,
+      "our_cal": 0.07654875572333782
+    },
+    {
+      "label": "82\u00b0 or above",
+      "lo": 82.0,
+      "hi": Infinity,
+      "mercado": 0.005,
+      "our_cal": 0.07634582041761354
+    }
+  ],
+  "nulo": [],
+  "capturado_en": "2026-09-14T15:00:29.563584+00:00"
+}
