@@ -72,6 +72,14 @@
       "our_cal": 0.0932149878599753
     }
   ],
-  "nulo": [],
-  "capturado_en": "2026-09-14T20:44:51.472286+00:00"
+  "piso_f": 77.89999999999999,
+  "banda_f": 0.0,
+  "holgura_borde_f": 0.3999999999999915,
+  "floor_margin_f": 0.9,
+  "aviso_holgura": false,
+  "nulo": [
+    "la prediccion ES el piso (77.9): la dice el clamp, no el modelo",
+    "banda p10-p90 colapsada (0.00F): no hay distribucion que puntuar"
+  ],
+  "capturado_en": "2026-09-14T20:49:03.637397+00:00"
 }

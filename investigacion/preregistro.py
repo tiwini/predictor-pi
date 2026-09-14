@@ -28,9 +28,17 @@ DEST = Path("/home/popeye/predictor-pi/investigacion/registros")
 sys.path.insert(0, str(BASE))
 from stations import STATION_TZ  # noqa: E402
 
+try:                                  # el margen del piso de 5-min, sin duplicarlo
+    from predictor import CURRENT_FLOOR_MARGIN_F
+except Exception:                     # si el import cambia, se ve en la salida
+    CURRENT_FLOOR_MARGIN_F = None
+
 UTC = ZoneInfo("UTC")
 FUENTES_OK = ("cli", "cf6")          # NWS. Nunca Open-Meteo, nunca MAX(today_max_obs)
 EDAD_MAX_MIN = 10                    # snapshot mas viejo que esto -> prueba nula
+BANDA_MIN_F = 0.05                   # banda mas estrecha que esto = colapsada
+PISO_TOL_F = 0.06                    # pred a menos de esto del piso = la dice el piso
+HOLGURA_AVISO_F = 0.30               # aviso, NO invalida: el borde de bin esta cerca
 OBS_MAX_MIN = 90                     # sin observacion nueva en esto -> estacion callada
 # ⚠ La edad se mide sobre current_obs_ts (ultima observacion), NUNCA sobre
 # today_max_obs_ts: ese marca CUANDO se puso el maximo del dia, que en un dia
@@ -79,6 +87,15 @@ def capturar(station: str, dia: str, hora: int) -> dict:
             "SELECT * FROM kalshi_snapshots WHERE station=? AND ts=? ORDER BY bin_lo",
             (station, ciclo)).fetchall() if b["yes_mid"] is not None]
 
+    # El piso que realmente manda: el METAR horario, o el pico del feed de 5 min
+    # menos medio escalon de C. Si la prediccion es eso, no la dice el modelo.
+    cands = [snap["today_max_obs"]]
+    if snap["today_max_5min"] is not None and CURRENT_FLOOR_MARGIN_F is not None:
+        cands.append(snap["today_max_5min"] - CURRENT_FLOOR_MARGIN_F)
+    piso = max([c for c in cands if c is not None], default=None)
+    banda = (snap["ens_p90"] - snap["ens_p10"]
+             if snap["ens_p90"] is not None and snap["ens_p10"] is not None else None)
+
     nuestro = max((b for b in bins if b["our_p_calibrated"] is not None),
                   key=lambda b: b["our_p_calibrated"], default=None)
     mercado = max(bins, key=lambda b: b["yes_mid"], default=None)
@@ -99,6 +116,17 @@ def capturar(station: str, dia: str, hora: int) -> dict:
             obs_edad = None
     if not bins:
         nulo.append("sin bins de Kalshi en el ciclo")
+    if piso is not None and abs(snap["our_pred_f"] - piso) < PISO_TOL_F:
+        nulo.append(f"la prediccion ES el piso ({piso:.1f}): la dice el clamp, no el modelo")
+    if banda is not None and banda < BANDA_MIN_F:
+        nulo.append(f"banda p10-p90 colapsada ({banda:.2f}F): no hay distribucion que puntuar")
+    if CURRENT_FLOOR_MARGIN_F is None:
+        nulo.append("no pude leer CURRENT_FLOOR_MARGIN_F: el piso no se ha comprobado")
+
+    holgura = None
+    if nuestro is not None:
+        holgura = min(snap["our_pred_f"] - (nuestro["bin_lo"] - 0.5),
+                      (nuestro["bin_hi"] + 0.5) - snap["our_pred_f"])
 
     d = {
         "station": station, "dia": dia, "hora_local": hora,
@@ -124,6 +152,9 @@ def capturar(station: str, dia: str, hora: int) -> dict:
         "mercado_p": round(mercado["yes_mid"], 3) if mercado else None,
         "bins": [{"label": b["label"], "lo": b["bin_lo"], "hi": b["bin_hi"],
                   "mercado": b["yes_mid"], "our_cal": b["our_p_calibrated"]} for b in bins],
+        "piso_f": piso, "banda_f": banda, "holgura_borde_f": holgura,
+        "floor_margin_f": CURRENT_FLOOR_MARGIN_F,
+        "aviso_holgura": holgura is not None and holgura < HOLGURA_AVISO_F,
         "nulo": nulo,
         "capturado_en": datetime.now(UTC).isoformat(),
     }
@@ -145,12 +176,17 @@ def imprimir(d: dict) -> None:
     print(f"  max_obs         {f1(d['today_max_obs']):9} puesto a las {(d['today_max_obs_ts'] or '?')[11:16]}Z")
     print(f"  current         {f1(d.get('current_f')):9} obs de hace {d.get('edad_obs_min')} min")
     print(f"  CLI parcial     {f1(d['today_max_cli'])}")
+    print(f"  piso que manda  {f1(d.get('piso_f')):9} (max_obs, o max_5min - {d.get('floor_margin_f')})")
+    print(f"  banda           {f1(d.get('banda_f')):9} holgura al borde {f1(d.get('holgura_borde_f'))}")
     print(f"  NUESTRO BIN     {d['nuestro_bin']:14} p={d['nuestro_p']}")
     print(f"  BIN DEL MERCADO {d['mercado_bin']:14} p={d['mercado_p']}")
     if d["nulo"]:
         print("  🔴 NULA: " + " · ".join(d["nulo"]))
     else:
         print("  ✅ valida: ninguna condicion de invalidacion disparo")
+        if d.get("aviso_holgura"):
+            print(f"  ⚠ aviso: la prediccion esta a {d['holgura_borde_f']:.1f}°F del borde del bin — "
+                  "un acierto ahi puede ser redondeo. No invalida; leelo con esto delante.")
 
 
 def cerrar(station: str, dia: str, hora: int) -> None:
