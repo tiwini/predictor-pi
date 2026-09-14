@@ -142,3 +142,66 @@ funciona de punta a punta** — que el snapshot está fresco a la hora buena, qu
 los bins de Kalshi llegan, que las invalidaciones disparan cuando deben, que el
 CLI cierra el día y que el veredicto sale de un comando y no de una lectura.
 Ver [[enfoque_instrumento_2026_08_21]].
+
+---
+
+## ⚠ ENMIENDA escrita a las 16:55 AST, con el día abierto y ANTES del settle
+
+El CLI parcial de KPHL sale ~17:36 local; esto se escribe antes, y se sella en
+commit propio para que se vea que no es una relectura posterior.
+
+**La llamada de las 15h no la hizo el modelo: la hizo el piso.**
+
+```
+15:00 local (snapshot 18:59Z)
+  our_pred_f      77.9°F      banda p10-p90  77.9 .. 77.9   ← 0.0°F de ancho
+  today_max_5min  78.8°F      78.8 − 0.9 = 77.9 = la prediccion, exacta
+  today_max_obs   75.9°F      (METAR horario, iba 60 min atras)
+  current         78.8°F      la prediccion iba 0.9°F por DEBAJO del termometro
+```
+
+`CURRENT_FLOOR_MARGIN_F = 0.9` (`predictor.py:440`) es medio escalón de °C —
+el feed llega en °C enteros— y está fijado por dos tests. O sea el número es
+correcto y el piso hizo exactamente lo que debe. Lo que falla es **esta prueba**:
+a las 15h el ensemble no estaba hablando.
+
+**La invalidación que escribí esta mañana estaba incompleta.** Contemplaba el
+CLI parcial como vía de piso y no la otra: el piso del feed de 5 min hace lo
+mismo, y hoy tomó el control a las **13:49 local**, casi cuatro horas antes que
+el CLI. La ventana en que el modelo habla es **pre-piso**, no pre-CLI, y es
+mucho más corta de lo que dice el fichero de arriba.
+
+**Y el desacuerdo que motivaba el día se disolvió antes de la hora.** A las 10h
+íbamos 76-77 contra el 78-79 del mercado; a las 15h los dos decíamos 78-79
+(nosotros 0.811, mercado 0.895). Gane quien gane, no separa a nadie.
+
+### Lo que sí deja, y vale más que el registro
+
+Cuántos días de septiembre la predicción de KPHL **era** el piso, por hora local
+(N=13, `max(today_max_obs, today_max_5min − 0.9)`, tolerancia 0.06°F):
+
+```
+12h  0/13     14h  2/13     16h  4/13
+13h  0/13     15h  1/13     17h  7/13   ← banda colapsada en 5/13
+```
+
+A las 17h el piso manda en **más de la mitad de los días**. Así que la tabla de
+"acierto por hora" con la que elegí esta mañana —y la de
+[[fiabilidad_estaciones_2026_08_10]] que la precede— **mezcla modelo y piso**, y
+el acierto que sube con la tarde está en parte comprado con información que no
+es del modelo. Es el mismo defecto que ya se documentó en `dia_vs_mercado.py`
+(comparar el modelo contra su propio piso), reaparecido en otra métrica.
+
+A las 15h el piso manda 1 de 13 días, así que **la elección de la hora no estaba
+contaminada** — pero hoy tocó justo ese día.
+
+### Qué se puntúa mañana, entonces
+
+El cierre se corre igual y el resultado se anota, pero **no cuenta como prueba
+del modelo**: a esa hora la predicción era el piso y el bin coincidía con el del
+mercado. Cuenta como prueba del instrumento, que es lo que se pedía de una N=1.
+
+Para una prueba del **modelo** hace falta llamar **antes de que el piso tome el
+control** —en KPHL de septiembre, a las 13h el piso no manda ni un día de 13— y
+exigir que la banda no esté colapsada. Las dos condiciones son medibles en la
+captura y deberían ser invalidaciones del script, no notas al pie.
