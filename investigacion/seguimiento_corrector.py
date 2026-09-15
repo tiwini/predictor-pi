@@ -17,16 +17,46 @@ El riesgo que se vigila NO es que el corrector no ayude —eso ya lo midió el
 backtest— sino que **sobre-corrija**: que al centrar el error lo pase al otro
 lado. La señal es el signo, no la magnitud.
 
-  🔴 REVERTIR la estación si, con N>=10 días:
-       (a) el error publicado cae EN CONTRA DE LA CORRECCIÓN en >=7 de los
-           últimos 10, Y
+  ⚠ REESCRITO el 2026-09-15. La versión anterior pedía «>=7 de los últimos
+  10» y la evaluaba el cron CADA DÍA sobre una ventana MÓVIL. Eso es la misma
+  parada opcional que la auditoría del 09-10 quitó de la rama congelada, y aquí
+  se quedó: bajo H0 el umbral 7/10 marca el 17.2% de las miradas, así que
+  mirando a diario la bandera acaba saliendo sola (cota superior 43% a los 10
+  días, 81% a los 30). El 🟡 de KHOU del 09-12 nació de ahí.
+
+  No se arregla copiando la rama congelada —«los N primeros»— porque las dos
+  ramas responden a preguntas distintas: aquélla decide ADOPCIÓN sobre un
+  conjunto que ya no cambia, y ésta es un DETECTOR DE CAMBIO DE RÉGIMEN, cuyo
+  trabajo es precisamente mirar lo reciente. Fijar la ventana la dejaría ciega
+  para lo único que vigila. La cura de un detector continuo es un test
+  secuencial: subir el listón por mirada y exigir que la señal se SOSTENGA.
+
+  Calibrado por simulación (200k series bajo H0, ventana 10, horizonte de 30
+  miradas diarias = la retención de analysis.db). Las miradas comparten 9 de
+  sus 10 días, así que la tasa se simula, no se deriva de una binomial. De la
+  rejilla (umbral, k) que deja la falsa alarma <=0.05 se eligió, por regla
+  ejecutable, la de MENOR latencia mediana entre las de potencia >=0.85:
+
+       umbral contra>=9 de 10, sostenido k=3 miradas  (12 días de settle)
+       falsa alarma en 30 miradas .... 0.043
+       detecta un giro real p=0.8 .... 0.85  (mediana 8 miradas)
+       detecta un giro real p=0.9 .... 0.99  (mediana 3 miradas)
+
+  Se descartó (umbral 8, k=8): misma potencia (0.87) pero mediana 9 miradas a
+  p=0.9 en vez de 3, y 17 días de settle en vez de 12. Con el umbral viejo de
+  7 NINGÚN k llega a 0.05 (k=12 aún da 0.061): el listón por mirada era
+  demasiado flojo para que la racha lo salvara sola.
+
+  🔴 REVERTIR la estación si, con N>=12 días:
+       (a) el error publicado cae EN CONTRA DE LA CORRECCIÓN en >=9 de los
+           últimos 10, en las 3 miradas diarias consecutivas, Y
        (b) |error| medio publicado >= |error| medio sin corrector
      Las dos: pasarse sistemáticamente no es problema si aun así queda más
      cerca que no corregir.
 
-  🟡 REVISAR a mano si el signo se vuelca (>=7 de 10 en contra) pero el
-     |error| sigue siendo mejor. Es corrección excesiva que todavía compensa;
-     la salida probablemente sea recortar la mediana, no apagarla.
+  🟡 REVISAR a mano si la racha se sostiene igual pero el |error| sigue siendo
+     mejor. Es corrección excesiva que todavía compensa; la salida
+     probablemente sea recortar la mediana, no apagarla.
 
   🟢 SEGUIR si el |error| publicado es menor y los signos están repartidos.
 
@@ -167,6 +197,35 @@ REVISIONES_PENDIENTES: dict[str, tuple[int, str]] = {
 }
 
 
+VENTANA_SIGNOS = 10      # días de la ventana de signos
+UMBRAL_CONTRA = 9        # días en contra dentro de la ventana que la marcan
+K_SOSTENIDO = 3          # miradas diarias consecutivas marcadas para disparar
+N_MIN_SIGNOS = VENTANA_SIGNOS + K_SOSTENIDO - 1     # 12 días de settle
+
+
+def _contra_en(e_pub: list[float], fin: int, signo: float) -> int:
+    """Días en contra de la corrección en la ventana que TERMINA en `fin`."""
+    return sum(1 for e in e_pub[fin - VENTANA_SIGNOS:fin] if e * signo < 0)
+
+
+def racha_en_contra(e_pub: list[float], corr_mediana: float) -> int:
+    """Miradas diarias consecutivas, contando hacia atrás desde hoy, marcadas.
+
+    Una «mirada» es lo que el cron de las 16h habría visto ese día: la ventana
+    de 10 que termina ahí. La racha se recalcula del dato, no se persiste: si
+    viviera en `corrector_watchdog/estado.json` podría divergir del criterio,
+    que es justo lo que el watchdog dice evitar al importar este módulo en vez
+    de reimplementarlo.
+    """
+    signo = 1.0 if corr_mediana >= 0 else -1.0
+    racha = 0
+    for fin in range(len(e_pub), VENTANA_SIGNOS - 1, -1):
+        if _contra_en(e_pub, fin, signo) < UMBRAL_CONTRA:
+            break
+        racha += 1
+    return racha
+
+
 def veredicto_por_signos(e_pub: list[float], corr_mediana: float,
                          m_pub: float, m_sin: float) -> tuple[str, str, int]:
     """(estado, texto, n_en_contra) — la regla de vigilancia, aislada y pura.
@@ -178,19 +237,27 @@ def veredicto_por_signos(e_pub: list[float], corr_mediana: float,
     resta (corr>0) aparece sub-predicción (errores negativos); si se suma
     (corr<0), sobre-predicción (errores positivos). Por eso el conteo se hace
     contra el signo de la corrección y no contra un signo fijo.
+
+    `n_en_contra` es el de la ventana de HOY, que es lo que se imprime; el que
+    decide es la racha (ver `racha_en_contra` y la doctrina de arriba).
     """
-    ult = e_pub[-10:]
     signo = 1.0 if corr_mediana >= 0 else -1.0
-    contra = sum(1 for e in ult if e * signo < 0)
-    if len(e_pub) < 10:
+    contra = (_contra_en(e_pub, len(e_pub), signo)
+              if len(e_pub) >= VENTANA_SIGNOS
+              else sum(1 for e in e_pub if e * signo < 0))
+    if len(e_pub) < N_MIN_SIGNOS:
         return ("n_bajo", f"N={len(e_pub)} — no decide, "
-                          f"faltan {10 - len(e_pub)} días", contra)
-    if contra >= 7 and m_pub >= m_sin:
-        return "rojo", "🔴 REVERTIR — sobre-corrige y ya no compensa", contra
-    if contra >= 7:
-        return ("amarillo",
-                "🟡 REVISAR — vuelca el signo pero aún queda más cerca", contra)
-    return "verde", "🟢 SEGUIR", contra
+                          f"faltan {N_MIN_SIGNOS - len(e_pub)} días", contra)
+    if racha_en_contra(e_pub, corr_mediana) < K_SOSTENIDO:
+        return "verde", "🟢 SEGUIR", contra
+    if m_pub >= m_sin:
+        return ("rojo",
+                f"🔴 REVERTIR — sobre-corrige y ya no compensa "
+                f"(>={UMBRAL_CONTRA}/{VENTANA_SIGNOS} en contra "
+                f"{K_SOSTENIDO} días seguidos)", contra)
+    return ("amarillo",
+            f"🟡 REVISAR — vuelca el signo {K_SOSTENIDO} días seguidos pero "
+            f"aún queda más cerca", contra)
 
 
 N_DECISION = 10          # primera ventana de decisión
@@ -339,15 +406,18 @@ def estado_de(an, cal, st: str, hora: int = None) -> dict:
     m_pub = statistics.mean([abs(e) for e in e_pub])
     m_alt = statistics.mean([abs(e) for e in e_alt])
     corr_med = statistics.median([f["corr"] for f in filas])
+    racha = None
     if frozen:
         estado, v, neg = veredicto_congelado(e_pub, e_alt, corr_med)
     else:
         estado, v, neg = veredicto_por_signos(e_pub, corr_med, m_pub, m_alt)
+        racha = racha_en_contra(e_pub, corr_med)
 
     pend = REVISIONES_PENDIENTES.get(st)
     return {"st": st, "estado": estado, "veredicto": v, "desde": desde,
             "frozen": frozen,
             "n": len(filas), "filas": filas, "neg": neg, "corr_med": corr_med,
+            "racha": racha,
             "n_reciente": len(e_pub[-10:]), "m_pub": m_pub, "m_sin": m_alt,
             "revision_debida": bool(pend and len(filas) >= pend[0]),
             "revision_n": pend[0] if pend else None,
@@ -385,6 +455,10 @@ def render(e: dict) -> str:
         out.append(f"   signo: {e['neg']} de los últimos {e['n_reciente']} en contra "
                    f"de la corrección ({lado}; corrección mediana "
                    f"{e.get('corr_med', 0.0):+.2f}°F)")
+        if e.get("racha") is not None:
+            out.append(f"   racha: {e['racha']} de {K_SOSTENIDO} miradas "
+                       f"seguidas con >={UMBRAL_CONTRA}/{VENTANA_SIGNOS} "
+                       f"en contra (hace falta {K_SOSTENIDO} para disparar)")
     if e.get("revision_debida"):
         out.append(f"   🔔 REVISIÓN DEBIDA (N≥{e['revision_n']}): "
                    f"{e['revision_motivo']}")

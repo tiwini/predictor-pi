@@ -26,33 +26,127 @@ def _errores(n_en_contra: int, signo_contra: float, n: int = 10):
             + [-1.5 * signo_contra] * (n - n_en_contra))
 
 
-def test_correccion_positiva_y_errores_negativos_es_amarillo():
+def _serie(patron: str, signo_contra: float):
+    """'C' = día EN CONTRA de la corrección, '.' = a favor. Izquierda = pasado.
+
+    Explícito a propósito: la regla mira ventanas móviles de 10 que terminan en
+    días distintos, así que DÓNDE caen los días en contra decide, no cuántos.
+    """
+    return [(1.5 * signo_contra) if c == "C" else (-1.5 * signo_contra)
+            for c in patron]
+
+
+# ─── vigilancia de sobre-corrección (reescrita 2026-09-15) ─────────────────
+#
+# Antes: «>=7 de los últimos 10», evaluado a diario sobre ventana móvil. Bajo
+# H0 eso marca el 17.2% de las miradas, así que mirando todos los días la
+# bandera salía sola. Ahora: >=9 de 10 sostenido 3 miradas seguidas, calibrado
+# por simulación a falsa alarma 0.043 en 30 miradas.
+
+
+def test_racha_sostenida_que_ya_no_compensa_es_rojo():
     estado, _, contra = sg.veredicto_por_signos(
-        _errores(8, -1.0), corr_mediana=+2.5, m_pub=1.0, m_sin=2.0)
-    assert (estado, contra) == ("amarillo", 8)
+        _serie("CCCCCCCCCCCC", -1.0), corr_mediana=+2.5, m_pub=2.5, m_sin=2.0)
+    assert (estado, contra) == ("rojo", 10)
 
 
-def test_correccion_positiva_que_ya_no_compensa_es_rojo():
-    estado, _, _ = sg.veredicto_por_signos(
-        _errores(8, -1.0), corr_mediana=+2.5, m_pub=2.5, m_sin=2.0)
-    assert estado == "rojo"
+def test_racha_sostenida_pero_aun_compensa_es_amarillo():
+    estado, _, contra = sg.veredicto_por_signos(
+        _serie("CCCCCCCCCCCC", -1.0), corr_mediana=+2.5, m_pub=1.0, m_sin=2.0)
+    assert (estado, contra) == ("amarillo", 10)
 
 
 def test_correccion_NEGATIVA_se_vigila_por_el_lado_positivo():
     """KMIA: se suma, así que pasarse deja errores POSITIVOS.
 
-    Con la guarda vieja (contar negativos) esto salía 🟢 SEGUIR.
+    Con la guarda anterior al 2026-08-28 (contar negativos a secas) esto salía
+    🟢 SEGUIR. Es el test que no puede perderse al cambiar el umbral.
     """
     estado, _, contra = sg.veredicto_por_signos(
-        _errores(8, +1.0), corr_mediana=-2.4, m_pub=1.0, m_sin=2.0)
-    assert (estado, contra) == ("amarillo", 8)
+        _serie("CCCCCCCCCCCC", +1.0), corr_mediana=-2.4, m_pub=1.0, m_sin=2.0)
+    assert (estado, contra) == ("amarillo", 10)
 
 
 def test_correccion_NEGATIVA_con_errores_negativos_no_alarma():
     """Quedarse corto en la dirección que ya se corrige no es sobre-corregir."""
     estado, _, contra = sg.veredicto_por_signos(
-        _errores(8, -1.0), corr_mediana=-2.4, m_pub=1.0, m_sin=2.0)
-    assert (estado, contra) == ("verde", 2)
+        _serie("CCCCCCCCCCCC", -1.0), corr_mediana=-2.4, m_pub=1.0, m_sin=2.0)
+    assert (estado, contra) == ("verde", 0)
+
+
+def test_ocho_de_diez_ya_no_dispara():
+    """El caso KHOU del 2026-09-12, que con la regla vieja era 🟡.
+
+    8 de 10 sale el 5.5% de las miradas bajo H0; mirando a diario aparece solo.
+    """
+    estado, _, contra = sg.veredicto_por_signos(
+        _serie("CCCCCCCCCC..", -1.0), corr_mediana=+2.5, m_pub=1.0, m_sin=2.0)
+    assert (estado, contra) == ("verde", 8)
+
+
+def test_dos_miradas_seguidas_no_bastan():
+    e = _serie("..CCCCCCCCCC", -1.0)
+    assert sg.racha_en_contra(e, +2.5) == 2
+    estado, _, _ = sg.veredicto_por_signos(
+        e, corr_mediana=+2.5, m_pub=1.0, m_sin=2.0)
+    assert estado == "verde"
+
+
+def test_tres_miradas_seguidas_disparan():
+    e = _serie(".CCCCCCCCCCC", -1.0)
+    assert sg.racha_en_contra(e, +2.5) == 3
+    estado, _, _ = sg.veredicto_por_signos(
+        e, corr_mediana=+2.5, m_pub=1.0, m_sin=2.0)
+    assert estado == "amarillo"
+
+
+def test_menos_de_doce_dias_no_decide():
+    estado, texto, _ = sg.veredicto_por_signos(
+        _serie("CCCCCCCCCCC", -1.0), corr_mediana=+2.5, m_pub=1.0, m_sin=2.0)
+    assert estado == "n_bajo"
+    assert "faltan 1" in texto
+
+
+def test_un_dia_bueno_suelto_no_rompe_la_racha():
+    """Con umbral 9/10, un solo día a favor deja 9 en contra: sigue marcando.
+
+    Es deliberado —el listón es 9, no 10— y conviene que esté escrito: quien
+    lea «racha» puede suponer que cualquier día bueno la corta, y no.
+    """
+    assert sg.racha_en_contra(_serie(".CCCCCCCCCCC", -1.0), +2.5) == 3
+
+
+def test_una_racha_PASADA_no_cuenta_solo_la_de_hoy():
+    """Lo que distingue una racha de un acumulado: hay que estar en ella.
+
+    Serie con 12 días en contra y luego 2 a favor. La mirada del día 12 estaba
+    marcada (10 de 10), pero la de hoy no, así que la racha es 0 y no dispara.
+    """
+    e = _serie("CCCCCCCCCCCC..", -1.0)
+    assert sg._contra_en(e, 12, 1.0) == 10          # aquella mirada sí marcaba
+    assert sg.racha_en_contra(e, +2.5) == 0         # la de hoy no
+    estado, _, _ = sg.veredicto_por_signos(
+        e, corr_mediana=+2.5, m_pub=1.0, m_sin=2.0)
+    assert estado == "verde"
+
+
+def test_la_racha_no_se_persiste_se_recalcula():
+    """Misma serie, mismo número: la racha es función pura del dato.
+
+    Si viviera en estado.json podría divergir del criterio — justo lo que el
+    watchdog dice evitar al importar este módulo en vez de reimplementarlo.
+    """
+    e = _serie("CCCCCCCCCCCC", -1.0)
+    assert sg.racha_en_contra(e, +2.5) == sg.racha_en_contra(list(e), +2.5)
+
+
+def test_los_umbrales_son_los_calibrados():
+    """Cambiar estos números invalida la calibración de falsa alarma (0.043).
+
+    Si hay que moverlos, se re-simula y se reescribe la doctrina del módulo.
+    """
+    assert (sg.VENTANA_SIGNOS, sg.UMBRAL_CONTRA, sg.K_SOSTENIDO) == (10, 9, 3)
+    assert sg.N_MIN_SIGNOS == 12
 
 
 # ─── criterio de reactivación (reescrito 2026-09-10 tras la auditoría) ──────
@@ -162,16 +256,14 @@ def test_p_signos_es_la_binomial_exacta():
     assert sg._p_signos(10, 10) == pytest.approx(1 / 1024)
 
 
-def test_menos_de_diez_dias_no_decide():
-    estado, texto, _ = sg.veredicto_por_signos(
-        _errores(6, -1.0, n=6), corr_mediana=+2.5, m_pub=1.0, m_sin=2.0)
-    assert estado == "n_bajo"
-    assert "faltan 4" in texto
+def test_la_historia_vieja_no_diluye_lo_reciente():
+    """Veinte días buenos y doce malos al final: la guarda mira lo reciente.
 
-
-def test_solo_cuentan_los_ultimos_diez():
-    """Veinte días buenos y diez malos al final: la guarda mira los últimos."""
-    e = _errores(0, -1.0, n=20) + _errores(8, -1.0)
+    Es la razón de que esta rama NO use «los N primeros» como la congelada:
+    es un detector de cambio de régimen, y fijar la ventana lo dejaría ciego
+    justo para lo que vigila.
+    """
+    e = _serie("." * 20 + "C" * 12, -1.0)
     estado, _, contra = sg.veredicto_por_signos(
         e, corr_mediana=+2.5, m_pub=1.0, m_sin=2.0)
-    assert (estado, contra) == ("amarillo", 8)
+    assert (estado, contra) == ("amarillo", 10)
