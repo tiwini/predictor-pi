@@ -40,9 +40,9 @@ from statistics import mean
 from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "weather-predictor"))
-import nws_cli
 
 DB_PATH = Path(__file__).resolve().parent.parent.parent / "weather-predictor" / "analysis.db"
+CAL_DB = Path(__file__).resolve().parent.parent.parent / "weather-predictor" / "calibration.db"
 
 STATIONS = ["KMIA", "KHOU", "KAUS", "KATL", "KMSY",
             "KNYC", "KBOS", "KDCA", "KPHL", "KPHX"]
@@ -64,19 +64,36 @@ DAYS_BACK = 21
 
 
 def get_settles(stations: list[str], days: int) -> dict:
-    """Fetch NWS CLI settles for last N days."""
-    settles = {}
-    today = date.today()
-    for d_offset in range(1, days + 1):
-        d = today - timedelta(days=d_offset)
-        for sid in stations:
-            try:
-                r = nws_cli.fetch_max_min_for(sid, d)
-                if r[0] is not None:
-                    settles[(sid, d.isoformat())] = int(round(r[0]))
-            except Exception:
-                pass
-    return settles
+    """Settles del CLI, leídos de `day_outcomes`. Una consulta, no 210.
+
+    Antes pedía cada (estación, día) a `nws_cli.fetch_max_min_for`: con 21 días
+    y 10 estaciones son **210 peticiones HTTP** a 0.9-3.8s cada una, y el
+    script se colgaba >6min sin llegar a imprimir una sola línea —45s de CPU en
+    6m40, todo espera de red—.
+
+    Y era peor que lento: **el CLI en vivo sólo responde unos 5 días atrás**
+    (medido el 2026-09-28: a 1, 2, 3 y 5 días devuelve valor; a 10 y 21,
+    `None`). Así que de las 210 peticiones ~160 volvían vacías y el corte de 21
+    días se calculaba con los settles de cinco: **99 contra los 418** que ya
+    estaban en `day_outcomes`. La lentitud se veía; el sesgo de muestra no.
+
+    Es la misma fuente, no un proxy — `day_outcomes` la llena el cron de las
+    07:03 con el CLI de NWS, y por eso alcanza donde el producto en vivo ya
+    caducó. NO se usa `MAX(today_max_obs)`, que difiere del CLI el 70% de los
+    días. Es lo que ya hacía v5.
+    """
+    corte = (date.today() - timedelta(days=days)).isoformat()
+    marcadores = ",".join("?" * len(stations))
+    con = sqlite3.connect(f"file:{CAL_DB}?mode=ro", uri=True)
+    try:
+        filas = con.execute(
+            f"""SELECT station_id, date, max_obs_f FROM day_outcomes
+                WHERE max_obs_f IS NOT NULL AND date >= ?
+                  AND station_id IN ({marcadores})""",
+            [corte, *stations]).fetchall()
+    finally:
+        con.close()
+    return {(sid, d): int(round(v)) for sid, d, v in filas}
 
 
 def analyze_station(conn, sid: str, settles: dict) -> list[dict]:
@@ -191,7 +208,7 @@ def main():
 
     conn = sqlite3.connect(str(DB_PATH))
 
-    print(f"Fetching settles ({DAYS_BACK} days × {len(STATIONS)} stations)...")
+    print(f"Settles del CLI desde day_outcomes ({DAYS_BACK} días × {len(STATIONS)} estaciones)...")
     settles = get_settles(STATIONS, DAYS_BACK)
     print(f"  got {len(settles)} settle values")
 

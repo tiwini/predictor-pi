@@ -81,6 +81,17 @@ def _lineas_de_documentacion(texto: str) -> set:
 def test_ningun_ts_iso_se_compara_con_el_now_de_sqlite():
     culpables = []
     for f in _fuentes():
+        if f.resolve() == Path(__file__).resolve():
+            # Este fichero cita el patrón como CÓDIGO, no como prosa: las
+            # aserciones de abajo comprueban que la regex lo reconoce, y sin
+            # esto el detector se marca a sí mismo. Excluir los docstrings por
+            # AST no basta para eso.
+            #
+            # No salió a la primera: mientras el fichero estuvo sin trackear,
+            # `git ls-files` no lo listaba y el test pasaba sin mirarse. Se vio
+            # a sí mismo en cuanto entró al índice — pasaba por la razón
+            # equivocada, igual que el de `_estado_reweight` con `BASE`.
+            continue
         try:
             texto = f.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):

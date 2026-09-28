@@ -407,3 +407,24 @@ leían cero de Houston, y v3 y v5 morían directamente en `PEAK_HOURS[sid]`. No
 contradice la nota del README: allí `KIAH` es correcto para `radar_snapshots`,
 que guarda el backfill de julio, y `join_radar_obs` consulta un rango fijo
 anterior al rename. La regla es por tabla y por ventana, no por proyecto.
+
+**Un backtest que pide su settle por HTTP mide menos días de los que cree.**
+`timing_sweet_spot.py` (v1) llamaba a `nws_cli.fetch_max_min_for` una vez por
+cada par (estación, día): 21 × 10 = **210 peticiones**, y se colgaba más de
+6m40 sin llegar a imprimir una línea —45s de CPU en 6m40, todo espera de red—.
+Eso se veía. Lo que no se veía es que **el producto CLI en vivo sólo responde
+unos cinco días atrás**: medido el 2026-09-28 sobre KMIA, devuelve valor a 1,
+2, 3 y 5 días y **`None`** a 10 y 21. O sea que ~160 de las 210 peticiones
+volvían vacías y el corte «de 21 días» se calculaba con **99 settles en vez de
+418** — los que ya estaban en `day_outcomes`, que llena el cron de las 07:03
+con el mismo CLI y por eso alcanza donde el producto en vivo ya caducó.
+
+La lentitud era el síntoma legible; el sesgo de muestra, de 5 días sobre 21,
+no avisaba de nada. Es la advertencia de [[latencia_se_mide_primero]] girada:
+allí la pregunta era a qué hora llega un dato nuevo, aquí **cuánto tiempo
+sigue estando disponible el viejo**, y las dos deciden antes que la calidad.
+Arreglado leyendo `day_outcomes` como ya hacía v5 —misma fuente, no el proxy
+`MAX(today_max_obs)`, que difiere del CLI el 70% de los días—: de **>6m40
+colgado a 4s** y de ~50 a **209** settles. Los números que imprime v1 cambian
+con el arreglo, porque la muestra es cuatro veces mayor; no es una
+optimización, es una corrección.
