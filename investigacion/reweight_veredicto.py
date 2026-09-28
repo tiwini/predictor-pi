@@ -2,6 +2,22 @@
 """Veredicto del reweight en sombra. Escrito el 2026-09-10 con CERO días de
 datos, para que el análisis quede pre-registrado igual que el criterio.
 
+🔴 CERRADO el 2026-09-27: las DOS ramas RECHAZADAS. La A acerca al 80% en 3 de
+20 estaciones y la B en 5, contra las 15 que pedía el criterio (signos p=0.9998
+y p=0.9941). El |err| de la mediana aguantaba en las dos y no hubo violaciones
+del piso, pero falla la condición que decidía. Lo entierra la magnitud más que
+el conteo: la cobertura media va de 51.93% a 51.95% con la A, +0.02pp.
+
+Lo que se cae NO es el arreglo —el deff hace lo que prometía, eff_N 10.06→26.36
+y ancho 2.30→3.00°F— sino la hipótesis causal: la correlación entre horas no es
+la razón de que la banda no cubra. Eso sigue sin explicación mecánica.
+
+⚠ Este script SE CONSERVA como registro de un experimento cerrado, pero ya no
+corre contra datos vivos: el 2026-09-28 se retiró la sombra de `predictor.py` y
+`analysis_poller.py`, así que `ens_med_alt`, `ens_*_banda`, `rw_rho` y `rw_deff`
+quedan a NULL en las filas nuevas y las viejas se van solas con la retención de
+30 días de analysis.db. Para volver a medir habría que reinstrumentar primero.
+
 DOS ramas compiten contra lo publicado:
 
   A «deff»  — el reweight con el SSE dividido por el efecto de diseño.

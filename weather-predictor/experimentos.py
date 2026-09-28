@@ -7,7 +7,6 @@ que nadie sabe cuándo toca mirar — la nota «revisar Sep-Oct» de
 SEASONAL_OFFSET_F estuvo dos meses caducada. Por eso el contador vive donde se
 mira todos los días.
 
-  reweight  las dos ramas en sombra (deff puro y sólo-banda) · N≥10 días
   congelado KLAX y KSFO, criterio de reactivación · N≥10 días
   KLAS      entró fallando su criterio · N≥40 días
 
@@ -66,14 +65,6 @@ def _estado_corrector():
         cal.close()
 
 
-def _estado_reweight():
-    sys.path.insert(0, str(BASE.parent / "investigacion"))
-    import reweight_veredicto as rw
-    n = rw.dias_con_sombra()
-    return {"titulo": "reweight (2 ramas)", "n": n, "objetivo": rw.MIN_DIAS,
-            "listo": n >= rw.MIN_DIAS, "detalle": "banda contra nivel"}
-
-
 def resumen(force: bool = False) -> list:
     """Lista de experimentos abiertos. Nunca lanza: la home no se cae por esto."""
     ahora = time.time()
@@ -81,10 +72,6 @@ def resumen(force: bool = False) -> list:
             and ahora - _cache["ts"] < TTL_S):
         return _cache["datos"]
     datos = []
-    try:
-        datos.append(_estado_reweight())
-    except Exception:
-        pass
     try:
         datos.extend(_estado_corrector())
     except Exception:

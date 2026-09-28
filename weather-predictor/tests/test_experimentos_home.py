@@ -27,14 +27,13 @@ def test_el_resumen_es_una_lista_de_experimentos():
 def test_no_lanza_si_las_fuentes_revientan(monkeypatch):
     """La home no puede caerse porque un experimento no se deje leer.
 
-    Se hace fallar a las dos fuentes directamente. Parchear `BASE` no sirve:
-    `_estado_reweight` lee del `BASE` de SU módulo, no del de éste, así que el
+    Se hace fallar la fuente directamente. Parchear `BASE` no sirve:
+    `_estado_corrector` lee del `BASE` de SU módulo, no del de éste, así que el
     test pasaba por la razón equivocada — y lo delató la suite completa, no la
     corrida aislada.
     """
     def _revienta(*a, **k):
         raise sqlite3.OperationalError("no such table")
-    monkeypatch.setattr(experimentos, "_estado_reweight", _revienta)
     monkeypatch.setattr(experimentos, "_estado_corrector", _revienta)
     experimentos._cache["datos"] = None
     assert experimentos.resumen(force=True) == []
