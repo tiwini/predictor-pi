@@ -81,5 +81,12 @@
     "la prediccion ES el piso (77.9): la dice el clamp, no el modelo",
     "banda p10-p90 colapsada (0.00F): no hay distribucion que puntuar"
   ],
-  "capturado_en": "2026-09-14T20:49:03.637397+00:00"
+  "capturado_en": "2026-09-14T20:49:03.637397+00:00",
+  "settle": 78.0,
+  "settle_source": "cli",
+  "acierta_nuestro": true,
+  "acierta_mercado": true,
+  "err_f": -0.1,
+  "banda_contiene": false,
+  "cerrado_en": "2026-09-16T14:01:04.912520+00:00"
 }

@@ -1,0 +1,89 @@
+{
+  "station": "KPHL",
+  "dia": "2026-09-15",
+  "hora_local": 13,
+  "tz": "America/New_York",
+  "snapshot_ts": "2026-09-15T16:53:12.315943+00:00",
+  "edad_snapshot_min": 6.8,
+  "our_pred_f": 77.080625,
+  "ens_med": 77.080625,
+  "pred_iso_med_f": 77.46836746380978,
+  "p10": 75.980625,
+  "p90": 78.680625,
+  "ext_med_f": 75.55,
+  "ext_diff_f": 1.5306250000000006,
+  "today_max_obs": 73.04,
+  "today_max_obs_ts": "2026-09-15T15:54:00+00:00",
+  "current_f": 73.4,
+  "current_obs_ts": "2026-09-15T16:30:00+00:00",
+  "edad_obs_min": 30.0,
+  "today_max_cli": null,
+  "bias_aplicado_f": -0.7999999999999972,
+  "kalshi_ts": "2026-09-15T16:53:12.315943+00:00",
+  "nuestro_bin": "77\u00b0 to 78\u00b0",
+  "nuestro_bin_lo": 77.0,
+  "nuestro_bin_hi": 78.0,
+  "nuestro_p": 0.297,
+  "mercado_bin": "77\u00b0 to 78\u00b0",
+  "mercado_bin_lo": 77.0,
+  "mercado_bin_hi": 78.0,
+  "mercado_p": 0.73,
+  "bins": [
+    {
+      "label": "74\u00b0 or below",
+      "lo": -Infinity,
+      "hi": 74.0,
+      "mercado": 0.005,
+      "our_cal": 0.07525345485003304
+    },
+    {
+      "label": "75\u00b0 to 76\u00b0",
+      "lo": 75.0,
+      "hi": 76.0,
+      "mercado": 0.125,
+      "our_cal": 0.28583848991247857
+    },
+    {
+      "label": "77\u00b0 to 78\u00b0",
+      "lo": 77.0,
+      "hi": 78.0,
+      "mercado": 0.73,
+      "our_cal": 0.29657921604456855
+    },
+    {
+      "label": "79\u00b0 to 80\u00b0",
+      "lo": 79.0,
+      "hi": 80.0,
+      "mercado": 0.135,
+      "our_cal": 0.2128675681960542
+    },
+    {
+      "label": "81\u00b0 to 82\u00b0",
+      "lo": 81.0,
+      "hi": 82.0,
+      "mercado": 0.015,
+      "our_cal": 0.06473164436081343
+    },
+    {
+      "label": "83\u00b0 or above",
+      "lo": 83.0,
+      "hi": Infinity,
+      "mercado": 0.005,
+      "our_cal": 0.06472962663605214
+    }
+  ],
+  "piso_f": 74.3,
+  "banda_f": 2.700000000000003,
+  "holgura_borde_f": 0.5806249999999977,
+  "floor_margin_f": 0.9,
+  "aviso_holgura": false,
+  "nulo": [],
+  "capturado_en": "2026-09-15T19:18:10.894343+00:00",
+  "settle": 79.0,
+  "settle_source": "cli",
+  "acierta_nuestro": false,
+  "acierta_mercado": false,
+  "err_f": -1.92,
+  "banda_contiene": false,
+  "cerrado_en": "2026-09-16T14:01:04.093366+00:00"
+}
