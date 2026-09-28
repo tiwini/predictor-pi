@@ -428,3 +428,26 @@ Arreglado leyendo `day_outcomes` como ya hacía v5 —misma fuente, no el proxy
 colgado a 4s** y de ~50 a **209** settles. Los números que imprime v1 cambian
 con el arreglo, porque la muestra es cuatro veces mayor; no es una
 optimización, es una corrección.
+
+**Y arreglado, v1 se midió y se retiró el mismo día.** Con la muestra ya
+correcta —209 settles, 4 segundos— el corte da **ROI −12,99% sobre 105
+entradas** y **10 aciertos (9,5%)**, PnL acumulado −13,64. La tabla por horas
+parece tener celdas brillantes (KBOS +79,5% a las 16h, +73,0% a las 15h) y no
+las tiene: de sus **83 celdas hora×estación, 63 son N=1 y 18 son N=2**; sólo
+**dos** llegan a N=3, y las dos dan negativo (KNYC 23h −2,7%, KDCA 12h −6,7%).
+Ni una sola hora con muestra mínima y ROI positivo. El propio script lo dice
+en su sección final: en 7 de 9 estaciones no hay entradas suficientes.
+
+Concuerda con lo ya medido —[[rule_v3_bin_encima_modo]] quedó en +0,3% con
+N=126, [[edges_no_estructurales_brier]], [[mercado_gana_20_de_20]]— y apunta
+más fuerte. `timing_sweet_spot.py` se **borra del árbol** (`682bd6f` lo
+conserva; `git show 682bd6f:investigacion/f1_radar/timing_sweet_spot.py` lo
+recupera). No contradice la regla 3 de este archivo: lo que no se borra es el
+**registro**, y el registro es este párrafo con el número que lo condena. v2,
+v3 y v5 se quedan.
+
+🔑 El arreglo no fue trabajo perdido: **sin arreglarlo no había con qué
+decidir**. Un script que se cuelga no es un resultado negativo, es la
+ausencia de resultado — y el que daba antes, con 99 settles de 418, tampoco
+habría valido. Primero se pone el instrumento a medir bien, y después el
+número decide si el instrumento se queda.
