@@ -353,3 +353,24 @@ de 02h a 14h UTC porque no hay mercados, y aplicarle el mismo criterio lo daría
 por muerto cada madrugada — la frescura sólo es señal donde la escritura es
 continua. La misma pregunta de siempre, **quién escribe esa tabla y cuándo**,
 que ya jubiló al EWMA y dejó al watchdog del Brier mirando una estación de 20.
+
+**El rigor no se reparte por igual dentro del mismo cambio.** El watchdog del
+09-27 derivó su umbral del poller de la distribución real de 3638 gaps, y en la
+misma tanda puso el timeout HTTP en `-m 8` **a ojo**. En sus primeras 17 horas
+escribió **tres avisos de «:8000 NO responde»** con el proceso vivo desde hacía
+cuatro días y respondiendo en 0.17s: eran picos de latencia de un Flask que
+sirve las peticiones pesadas en el mismo hilo (p50 **0.169s**, p90 0.289,
+máximo **4.27s** en 60 medidas, y ocasionalmente por encima de 8). Tres de tres
+líneas falsas. La parte medida del cambio funcionó sin un solo falso positivo;
+la parte estimada a ojo produjo sólo falsos positivos, y el propio criterio del
+proyecto —el umbral sale del dato— estaba escrito en el docstring de al lado.
+
+**Y para una caída, la evidencia es la persistencia, no el umbral.** Subir el
+timeout a 20s hace menos probable el falso positivo pero no lo elimina, porque
+la cola de latencia no tiene techo. Lo que sí lo elimina es pedir **tres fallos
+consecutivos** (~15 min con el cron cada 5): un pico es transitorio por
+definición y una caída no. Es el mismo patrón que
+[[criterio_activas_sin_rehacer_2026_09_15]], donde el corrector dejó de decidir
+por una mirada suelta y pasó a exigir la señal sostenida en tres — allí para no
+reaccionar al ruido de una ventana móvil, aquí para no reaccionar al de la red.
+Un aviso que se repite cada 5 minutos tampoco informa: pasa a uno por hora.

@@ -55,6 +55,15 @@ FRESCURA_MAX_MIN = 40.0
 # un bucle de reinicios lo empeora y llena el log de ruido.
 COOLDOWN_MIN = 15.0
 
+# :8000 responde en 0.169s de mediana (p90 0.289) pero tiene cola larga —4.27s
+# de máximo en 60 medidas— porque Flask sirve las peticiones pesadas en el mismo
+# hilo. 20s deja 4.7x de holgura sobre ese máximo.
+TIMEOUT_HTTP_S = 20
+# Y aun así el umbral solo no basta: se exigen fallos CONSECUTIVOS, porque un
+# timeout aislado no es una caída.
+FALLOS_HTTP_PARA_AVISAR = 3      # ~15 min con el cron cada 5
+RECORDATORIO_CADA = 12           # si sigue caído, una línea por hora, no 12
+
 
 def log(msg: str) -> None:
     linea = f"{datetime.now().astimezone():%Y-%m-%d %H:%M:%S} [watchdog] {msg}"
@@ -221,30 +230,59 @@ def revisar_kalshi_fast(estado: dict) -> bool:
     return True
 
 
-def revisar_servicios_web() -> bool:
-    """Reporta, no actúa. Ver el docstring del módulo."""
+def revisar_servicios_web(estado: dict) -> bool:
+    """Reporta, no actúa. Ver el docstring del módulo.
+
+    Exige fallos CONSECUTIVOS a propósito. La primera versión avisaba al primer
+    timeout con `-m 8`, y en sus primeras 17 horas escribió tres avisos de
+    «:8000 NO responde» con el proceso vivo desde hacía cuatro días y
+    respondiendo en 0.17s: eran picos de latencia, no caídas. Un log de
+    diagnóstico en el que todas las líneas son falsas deja de ser diagnóstico
+    —el mismo defecto que los tests que escribían en el log de producción—, y
+    el umbral se había puesto a ojo mientras el del poller se derivaba del dato.
+    """
     incidencia = False
     for nombre, puerto in (("weather", 8000), ("crypto", 8001)):
+        clave = f"fallos_http:{puerto}"
+        previos = int(estado.get(clave, 0))
         try:
             subprocess.run(
-                ["curl", "-sf", "-o", "/dev/null", "-m", "8", f"http://127.0.0.1:{puerto}/"],
+                ["curl", "-sf", "-o", "/dev/null", "-m", str(TIMEOUT_HTTP_S),
+                 f"http://127.0.0.1:{puerto}/"],
                 check=True, capture_output=True,
             )
         except (subprocess.CalledProcessError, OSError):
-            quien = ("lo reinicia systemd (Restart=always)" if puerto == 8001
-                     else "relanzar con start_all.sh: start_weather_with_retry")
-            log(f"ATENCIÓN: {nombre} :{puerto} NO responde — {quien}")
-            incidencia = True
+            fallos = previos + 1
+            estado[clave] = fallos
+            sostenido = fallos - FALLOS_HTTP_PARA_AVISAR
+            if sostenido == 0 or (sostenido > 0 and sostenido % RECORDATORIO_CADA == 0):
+                quien = ("lo reinicia systemd (Restart=always)" if puerto == 8001
+                         else "relanzar con start_all.sh: start_weather_with_retry")
+                log(f"ATENCIÓN: {nombre} :{puerto} lleva {fallos} comprobaciones "
+                    f"sin responder — {quien}")
+                incidencia = True
+        else:
+            if previos:
+                # Sólo se anota la recuperación de algo que llegó a avisarse;
+                # si no, un pico suelto dejaría dos líneas en vez de cero.
+                if previos >= FALLOS_HTTP_PARA_AVISAR:
+                    log(f"{nombre} :{puerto} vuelve a responder tras {previos} fallos")
+                    incidencia = True
+                estado[clave] = 0
     return incidencia
 
 
 def main() -> int:
     estado = _estado()
+    antes = json.dumps(estado, sort_keys=True)
     actuo = False
     actuo |= revisar_analysis_poller(estado)
     actuo |= revisar_kalshi_fast(estado)
-    actuo |= revisar_servicios_web()
-    if actuo:
+    actuo |= revisar_servicios_web(estado)
+    # Por el CONTENIDO y no por `actuo`: el contador de fallos consecutivos sube
+    # sin que haya nada que reportar todavía, y si no se persistiera nunca
+    # llegaría a tres. La versión anterior guardaba `{}` por el motivo opuesto.
+    if json.dumps(estado, sort_keys=True) != antes:
         _guardar(estado)
     return 0
 

@@ -18,10 +18,10 @@ debe disparar, y el apagón de 1603.4 que SÍ.
 Todo se siembra relativo a `now()`: un test con fecha literal caduca solo y
 empieza a mentir sin que nadie lo toque.
 """
+import json
 import sqlite3
 import subprocess
 import sys
-import textwrap
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -189,3 +189,84 @@ def test_kalshi_fast_no_usa_frescura(tmp_path, monkeypatch):
     monkeypatch.setattr(W, "lanzar", lambda s: lanzados.append(s) or True)
     assert W.revisar_kalshi_fast({}) is False
     assert lanzados == [], "vivo basta: no se mira el dato"
+
+
+# --- un pico de latencia no es una caída ------------------------------------
+
+def _curl_que(monkeypatch, resultados):
+    """Encadena respuestas de curl: True = responde, False = timeout."""
+    pendientes = list(resultados)
+
+    def falso_run(cmd, **kw):
+        if pendientes.pop(0):
+            return subprocess.CompletedProcess(cmd, 0)
+        raise subprocess.CalledProcessError(28, cmd)  # 28 = timeout en curl
+
+    monkeypatch.setattr(W.subprocess, "run", falso_run)
+
+
+def test_un_pico_suelto_no_avisa(monkeypatch):
+    """El caso real: 3 avisos falsos en 17h con el proceso vivo 4 días y
+    respondiendo en 0.17s. Un timeout aislado no puede escribir en el log."""
+    _curl_que(monkeypatch, [False, True])  # weather falla, crypto responde
+    estado = {}
+    assert W.revisar_servicios_web(estado) is False
+    assert estado["fallos_http:8000"] == 1, "cuenta, pero no avisa"
+
+
+def test_avisa_al_tercer_fallo_consecutivo(monkeypatch):
+    estado = {}
+    for esperado in (False, False, True):
+        _curl_que(monkeypatch, [False, True])
+        assert W.revisar_servicios_web(estado) is esperado
+    assert estado["fallos_http:8000"] == 3
+
+
+def test_no_repite_el_aviso_cada_cinco_minutos(monkeypatch):
+    """Una caída larga deja una línea por hora, no una cada ejecución."""
+    estado = {}
+    avisos = 0
+    for _ in range(15):
+        _curl_que(monkeypatch, [False, True])
+        avisos += bool(W.revisar_servicios_web(estado))
+    assert avisos == 2, f"esperaba el aviso inicial y un recordatorio, hubo {avisos}"
+
+
+def test_la_racha_se_rompe_al_responder(monkeypatch):
+    estado = {}
+    for _ in range(2):
+        _curl_que(monkeypatch, [False, True])
+        W.revisar_servicios_web(estado)
+    _curl_que(monkeypatch, [True, True])
+    assert W.revisar_servicios_web(estado) is False
+    assert estado["fallos_http:8000"] == 0
+    # y al volver a fallar arranca de cero, sin heredar la racha vieja
+    _curl_que(monkeypatch, [False, True])
+    assert W.revisar_servicios_web(estado) is False
+
+
+def test_la_recuperacion_solo_se_anota_si_hubo_aviso(monkeypatch):
+    """Si el pico nunca llegó a avisarse, su recuperación tampoco se anota:
+    dos líneas en el log por algo que no pasó son peor que ninguna."""
+    estado = {}
+    _curl_que(monkeypatch, [False, True])
+    W.revisar_servicios_web(estado)
+    _curl_que(monkeypatch, [True, True])
+    assert W.revisar_servicios_web(estado) is False
+
+
+def test_el_contador_se_persiste_aunque_no_haya_aviso(tmp_path, monkeypatch):
+    """El bug de la primera versión, al revés: `main` guardaba `{}` cuando no
+    hacía falta y no habría guardado el contador, que sin persistir nunca
+    llegaría a tres."""
+    monkeypatch.setattr(W, "ANALYSIS_DB", _db_con_ultimo_snapshot(tmp_path, 3))
+    monkeypatch.setattr(W, "pids_de", lambda s: [4242])
+    _curl_que(monkeypatch, [False, True])
+    W.main()
+    assert json.loads(W.ESTADO.read_text())["fallos_http:8000"] == 1
+
+
+def test_timeout_con_holgura_sobre_la_cola_medida():
+    """p50 0.169s, p90 0.289, máximo 4.27 en 60 medidas. Si alguien lo baja
+    a 8s vuelven los falsos positivos que motivaron esto."""
+    assert W.TIMEOUT_HTTP_S >= 15
