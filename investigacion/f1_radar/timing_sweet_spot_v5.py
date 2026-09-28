@@ -22,6 +22,13 @@ miembros con Laplace) y calibrated (post-isotonica).
 Nota: v3 documentaba criterios "cur >= max_obs" y "ventana OPEN" pero nunca
 los implemento — solo ratio + precio + cutoff de hora. v5 mantiene eso
 igual para que la comparacion sea limpia.
+
+⚠ Houston es **KHOU** aquí, al revés que en los scripts de radar. No contradice
+la nota del README: `radar_snapshots` guarda el backfill de julio bajo el id
+viejo, pero este corte consulta `kalshi_snapshots` y `station_snapshots` con una
+ventana MÓVIL de 21-25 días, y ahí Houston es KHOU desde el 2026-07-25. Con
+`KIAH` el script no leía nada de Houston y moría en `PEAK_HOURS[sid]` con un
+KeyError: llevaba roto desde el rename. Corregido el 2026-09-28.
 """
 import sqlite3
 import sys
@@ -37,12 +44,12 @@ from stations import PEAK_HOURS
 AN_DB = BASE / "weather-predictor" / "analysis.db"
 CAL_DB = BASE / "weather-predictor" / "calibration.db"
 
-STATIONS = ["KMIA", "KIAH", "KAUS", "KATL", "KMSY",
+STATIONS = ["KMIA", "KHOU", "KAUS", "KATL", "KMSY",
             "KNYC", "KBOS", "KDCA", "KPHL", "KPHX"]
 
 TZ_MAP = {
     "KMIA": "America/New_York", "KATL": "America/New_York",
-    "KIAH": "America/Chicago", "KAUS": "America/Chicago", "KMSY": "America/Chicago",
+    "KHOU": "America/Chicago", "KAUS": "America/Chicago", "KMSY": "America/Chicago",
     "KNYC": "America/New_York", "KBOS": "America/New_York",
     "KDCA": "America/New_York", "KPHL": "America/New_York",
     "KPHX": "America/Phoenix",

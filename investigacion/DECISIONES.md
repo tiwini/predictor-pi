@@ -374,3 +374,36 @@ definición y una caída no. Es el mismo patrón que
 por una mirada suelta y pasó a exigir la señal sostenida en tres — allí para no
 reaccionar al ruido de una ventana móvil, aquí para no reaccionar al de la red.
 Un aviso que se repite cada 5 minutos tampoco informa: pasa a uno por hora.
+
+**Un filtro de fecha puede estar mal y devolver filas igual.** Siete consultas
+de `f1_radar` acotaban con `ts > datetime('now', '-21 days')`. `datetime()`
+devuelve `2026-09-07 19:08:13` con **espacio** y los `ts` de
+`station_snapshots` y `kalshi_snapshots` son ISO con **`T`**. SQLite los
+compara como cadenas, `'T'` (0x54) > `' '` (0x20), y entra **el día entero del
+corte**: 51.205 filas en vez de 49.228 en la ventana de 21 días (**+4,0%**),
+arrancando a las 00:10 en lugar de a las 19:17; en `kalshi_snapshots`, 307.254
+contra 295.392. No rompe nada —la consulta devuelve filas, el script termina y
+el número sale—, que es exactamente lo que lo hace peligroso: la familia de «la
+misma asimetría ha mordido tres veces», el valor aparece con la fuente
+equivocada. El código de producción estaba limpio porque construye los cortes
+en Python con `.isoformat()`; los dos sitios que usan `date('now', …)`
+comparan contra una columna `DATE` o envuelven los dos lados, y ahí los
+formatos ya coinciden.
+
+**La cura es el detector, no el arreglo.** Corregir las siete y anotar
+«cuidado con los formatos» habría durado hasta la siguiente consulta escrita a
+las once de la noche. `tests/test_cortes_de_tiempo.py` recorre los `.py` del
+repo y falla si un `ts` se compara crudo contra el `now()` de SQLite. Dos
+detalles que lo hacen fiable: excluye los **docstrings** por AST —un texto que
+explica el antipatrón no es el antipatrón, y las propias notas de este arreglo
+lo citan literalmente—, y se verifica **contra un señuelo**: un fichero con el
+patrón en código real tiene que hacerlo fallar, porque un guardián que ya no
+detecta nada pasa igual que uno que funciona.
+
+**Y de paso salió que los scripts llevaban rotos desde julio.** Los cuatro
+`timing_sweet_spot` pedían Houston como `KIAH` a `kalshi_snapshots` y
+`station_snapshots`, donde es **KHOU** desde el rename del 2026-07-25 — así que
+leían cero de Houston, y v3 y v5 morían directamente en `PEAK_HOURS[sid]`. No
+contradice la nota del README: allí `KIAH` es correcto para `radar_snapshots`,
+que guarda el backfill de julio, y `join_radar_obs` consulta un rango fijo
+anterior al rename. La regla es por tabla y por ventana, no por proyecto.

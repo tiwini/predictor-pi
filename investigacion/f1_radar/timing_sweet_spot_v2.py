@@ -11,6 +11,23 @@ Método:
 - Filter tickers same-day only, snapshots antes del PEAK_HOURS[hi]+1h local
 - Compute settle_ref = max(today_max_obs) del día (round to int para bin match)
 - Per (station, day, hour) que cumpla entry criterion, simular bet
+
+⚠ Corregido el 2026-09-28: estas consultas acotaban con
+`ts > datetime('now', '-N days')`. `datetime()` devuelve "2026-09-07 19:08:13"
+con ESPACIO y los `ts` de estas tablas son ISO con "T". Como 'T' (0x54) > ' '
+(0x20), la comparación de cadenas se tragaba el día entero del corte: 51.205
+filas en vez de 49.228 en la ventana de 21 días (+4,0%), arrancando el 09-07 a
+las 00:10 en vez de a las 19:17. Se compara con `strftime` en el mismo formato
+que el dato. Los resultados publicados de estos cortes salieron con la ventana
+ancha; el sesgo es de un día de más sobre 21, no cambia ningún veredicto, pero
+queda dicho.
+
+⚠ Houston es **KHOU** aquí, al revés que en los scripts de radar. No contradice
+la nota del README: `radar_snapshots` guarda el backfill de julio bajo el id
+viejo, pero este corte consulta `kalshi_snapshots` y `station_snapshots` con una
+ventana MÓVIL de 21-25 días, y ahí Houston es KHOU desde el 2026-07-25. Con
+`KIAH` el script no leía nada de Houston y moría en `PEAK_HOURS[sid]` con un
+KeyError: llevaba roto desde el rename. Corregido el 2026-09-28.
 """
 import sqlite3
 import sys
@@ -25,12 +42,12 @@ from stations import PEAK_HOURS
 
 DB_PATH = Path(__file__).resolve().parent.parent.parent / "weather-predictor" / "analysis.db"
 
-STATIONS = ["KMIA", "KIAH", "KAUS", "KATL", "KMSY",
+STATIONS = ["KMIA", "KHOU", "KAUS", "KATL", "KMSY",
             "KNYC", "KBOS", "KDCA", "KPHL", "KPHX"]
 
 TZ_MAP = {
     "KMIA": "America/New_York", "KATL": "America/New_York",
-    "KIAH": "America/Chicago", "KAUS": "America/Chicago", "KMSY": "America/Chicago",
+    "KHOU": "America/Chicago", "KAUS": "America/Chicago", "KMSY": "America/Chicago",
     "KNYC": "America/New_York", "KBOS": "America/New_York",
     "KDCA": "America/New_York", "KPHL": "America/New_York",
     "KPHX": "America/Phoenix",
@@ -66,7 +83,7 @@ def load_settles_from_db(conn) -> dict:
     rows = conn.execute("""
         SELECT station, date(ts) as d, MAX(today_max_obs) as max_obs
         FROM station_snapshots
-        WHERE ts > datetime('now', '-25 days')
+        WHERE ts > strftime('%Y-%m-%dT%H:%M:%S', 'now', '-25 days')
           AND today_max_obs IS NOT NULL AND today_max_obs > -900
         GROUP BY station, date(ts)
     """).fetchall()
@@ -84,7 +101,7 @@ def analyze_station(conn, sid: str, settles: dict) -> list[dict]:
     kalshi = conn.execute("""
         SELECT ts, ticker, label, bin_lo, bin_hi, yes_mid, our_p_calibrated
         FROM kalshi_snapshots
-        WHERE station = ? AND ts > datetime('now', '-21 days')
+        WHERE station = ? AND ts > strftime('%Y-%m-%dT%H:%M:%S', 'now', '-21 days')
           AND yes_mid IS NOT NULL
         ORDER BY ts
     """, (sid,)).fetchall()
@@ -110,7 +127,7 @@ def analyze_station(conn, sid: str, settles: dict) -> list[dict]:
     ss = conn.execute("""
         SELECT ts, ens_p10, ens_p90, ext_diff_f
         FROM station_snapshots
-        WHERE station = ? AND ts > datetime('now', '-21 days')
+        WHERE station = ? AND ts > strftime('%Y-%m-%dT%H:%M:%S', 'now', '-21 days')
     """, (sid,)).fetchall()
     ss_by_slot = defaultdict(list)
     for r in ss:
