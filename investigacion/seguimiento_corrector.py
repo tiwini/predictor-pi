@@ -169,6 +169,29 @@ def fila_del_dia(an, cal, st: str, dia: str,
     return fila
 
 
+def techo_por_retencion(an, st: str, desde: str | None) -> bool:
+    """¿La muestra empieza en el suelo de retención en vez de en su fase?
+
+    `analysis.db` retiene ~30 días, así que una fase más vieja que eso ya no
+    empieza donde empezó: `primer_dia_activo` devuelve el día más viejo que
+    QUEDA, y al pasar el tiempo ese día avanza con el calendario. N deja de
+    crecer y se queda oscilando contra el techo de la retención.
+
+    Importa porque `REVISIONES_PENDIENTES` compara N contra un objetivo. Si el
+    objetivo está por encima del techo, el contador «faltan N días» nunca baja
+    y el informe finge un progreso que no existe: KLAS pidió N≥40 el 2026-09-10
+    y estuvo del 09-29 al 10-12 clavada en N=29 anunciando «faltan 11 días»
+    cada día, con la fecha de inicio corriéndose 08-28 → 08-29 → 09-03 → 09-07
+    → 09-10. Nadie lo vio porque el número no se repetía: bajaba a 28 y volvía.
+    """
+    if desde is None:
+        return False
+    suelo = an.execute(
+        """SELECT MIN(date(datetime(ts, 'localtime'))) FROM station_snapshots
+           WHERE station=?""", (st,)).fetchone()
+    return bool(suelo and suelo[0] and desde <= suelo[0])
+
+
 def primer_dia_congelado(an, st: str) -> str | None:
     """Primer día con la estación congelada, del primer `bias_frozen_f`.
 
@@ -187,13 +210,17 @@ def primer_dia_congelado(an, st: str) -> str | None:
 # El watchdog avisa solo al alcanzarse el N — un comentario con fecha no avisa,
 # y ya pasó: la nota «revisar Sep-Oct» de SEASONAL_OFFSET_F venció y estuvo dos
 # meses sin que nadie la mirara, con el offset corrigiendo mientras tanto.
+#
+# ⚠ Y el N objetivo tiene que caber en la retención. KLAS pidió N≥40 contra una
+# `analysis.db` que retiene ~30 días: el aviso no llegó nunca y el informe dijo
+# «faltan 11 días» durante dos semanas sin moverse. Lo vigila
+# `techo_por_retencion`, que hace vencer el objetivo inalcanzable en vez de
+# dejarlo contando. Al poner un N aquí, comprobarlo contra esos ~30 días.
 REVISIONES_PENDIENTES: dict[str, tuple[int, str]] = {
-    "KLAS": (40,
-             "entró FALLANDO su propio criterio (mejora 0.66°F contra los 0.75 "
-             "pedidos, acierta 17/25 con p=0.054) y se habilitó restringiendo "
-             "la ventana a 9-13h sobre la MISMA muestra que había fallado. Su "
-             "fila del 2026-08-28 decía «se revisa con N≥40». Correr "
-             "investigacion/klas_revision.py"),
+    # KLAS cerrada el 2026-10-12 con N=29 —su techo— porque N≥40 era
+    # inalcanzable. Pasó su criterio de entrada sin rebajas: mejora +1.23°F
+    # (pedía 0.75), acierta 24/29 (83%, p=0.0003; pedía 65% y p<0.05) y el bin
+    # sube 17/29 contra 6/29. 🟢 SE QUEDA. Ver DECISIONES.md.
 }
 
 
@@ -414,12 +441,17 @@ def estado_de(an, cal, st: str, hora: int = None) -> dict:
         racha = racha_en_contra(e_pub, corr_med)
 
     pend = REVISIONES_PENDIENTES.get(st)
+    # Un objetivo que la retención no deja alcanzar vence YA: esperar a N=40
+    # cuando el techo es 30 es esperar a nunca, y el que espera no decide.
+    techo = bool(pend and techo_por_retencion(an, st, desde)
+                 and len(filas) < pend[0])
     return {"st": st, "estado": estado, "veredicto": v, "desde": desde,
             "frozen": frozen,
             "n": len(filas), "filas": filas, "neg": neg, "corr_med": corr_med,
             "racha": racha,
             "n_reciente": len(e_pub[-10:]), "m_pub": m_pub, "m_sin": m_alt,
-            "revision_debida": bool(pend and len(filas) >= pend[0]),
+            "revision_debida": bool(pend and (len(filas) >= pend[0] or techo)),
+            "revision_techo": techo,
             "revision_n": pend[0] if pend else None,
             "revision_motivo": pend[1] if pend else None}
 
@@ -459,7 +491,13 @@ def render(e: dict) -> str:
             out.append(f"   racha: {e['racha']} de {K_SOSTENIDO} miradas "
                        f"seguidas con >={UMBRAL_CONTRA}/{VENTANA_SIGNOS} "
                        f"en contra (hace falta {K_SOSTENIDO} para disparar)")
-    if e.get("revision_debida"):
+    if e.get("revision_techo"):
+        out.append(f"   🔔 REVISIÓN DEBIDA YA — N={e['n']} es el TECHO, no un "
+                   f"paso hacia N={e['revision_n']}: la muestra empieza en el "
+                   f"suelo de retención de analysis.db (~30 días), así que ese "
+                   f"objetivo NO va a llegar nunca. Decidir con lo que hay: "
+                   f"{e['revision_motivo']}")
+    elif e.get("revision_debida"):
         out.append(f"   🔔 REVISIÓN DEBIDA (N≥{e['revision_n']}): "
                    f"{e['revision_motivo']}")
     elif e.get("revision_n"):

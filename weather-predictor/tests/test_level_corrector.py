@@ -23,7 +23,14 @@ ST = "KLAX"
 # se le aplica. Los tests que comprueban que la corrección SALE necesitan una
 # estación activa, y se toma del propio roster para que congelar otra mañana no
 # los rompa ni, peor, los deje pasando por el motivo equivocado.
-ST_ACTIVA = sorted(lc.ENABLED_STATIONS - lc.FROZEN_STATIONS)[0]
+#
+# Se descartan también las que llevan ventana horaria: una estación con
+# ENABLED_HOURS no corrige a todas las horas, y al sembrar fuera de su ventana
+# el test vería la corrección a cero por el motivo equivocado. Al congelar KHOU
+# el 2026-10-12 esta línea pasaba a elegir KLAS (9-13h) y era justo el fallo que
+# el párrafo de arriba quería evitar.
+ST_ACTIVA = sorted(lc.ENABLED_STATIONS - lc.FROZEN_STATIONS
+                   - set(lc.ENABLED_HOURS))[0]
 
 
 def _mk_dbs(tmp_path, monkeypatch, dias, hora=None, st=None):
@@ -128,7 +135,9 @@ def test_solo_estaciones_habilitadas():
     assert lc.ENABLED_HOURS == {"KLAS": (9, 13)}
     # Congeladas 2026-09-07 tras el giro de régimen de septiembre. Siguen en
     # ENABLED —el corrector se les calcula y se registra— pero no corrigen.
-    assert lc.FROZEN_STATIONS == {"KLAX", "KSFO"}
+    # KHOU se suma el 2026-10-12 por el 🔴 REVERTIR del watchdog: en contra 27
+    # de 30 días y sin una sola ventana en la que el corrector gane.
+    assert lc.FROZEN_STATIONS == {"KLAX", "KSFO", "KHOU"}
     assert lc.FROZEN_STATIONS <= lc.ENABLED_STATIONS, \
         "una congelada fuera del roster no se calcularía, y la vigilancia " \
         "se quedaría sin nada que medir"

@@ -143,7 +143,28 @@ ENABLED_STATIONS: set[str] = {"KLAX", "KSFO", "KNYC", "KMIA", "KLAS", "KHOU"}
 # No es una retirada: los tres mecanismos que se probaron contra este mismo
 # giro (ventana móvil, recorte por desacuerdo, detectar el régimen roto) se
 # refutaron por falta de muestra, no porque el sesgo haya desaparecido.
-FROZEN_STATIONS: set[str] = {"KLAX", "KSFO"}
+# KHOU (2026-10-12), por el disparo 🔴 REVERTIR del watchdog: cumple las dos
+# condiciones del criterio —27 de los 30 días en contra de la corrección, y el
+# error publicado ya NO queda más cerca que no corregir— y las cumple en todas
+# las ventanas, no sólo en la media larga:
+#
+#            |err| publicado   |err| sin corrector
+#   KHOU 30d      1.48               1.01
+#   KHOU 20d      1.17               0.83
+#   KHOU 10d      1.23               0.81
+#   KHOU  5d      0.83               0.59
+#
+# Es un caso más limpio que el de septiembre: a KSFO el corrector aún le ganaba
+# a 10 días y hubo que congelarla con la evidencia floja, mientras KHOU no tiene
+# una sola ventana a favor. Su corrección mediana se desinfló sola a lo largo
+# del mes (+2.79 el 09-10 → +0.50 el 10-09): el sesgo que midió su entrada se
+# está extinguiendo, pero el corrector sigue sumando más de lo que queda.
+#
+# ⚠ El watchdog lo pidió por primera vez el 2026-10-02 y se repitió el 03, 04,
+# 05, 08, 09, 10 y 11 sin que nadie lo viera: `NTFY_TOPIC` está vacío y el log
+# dice `sin NTFY_TOPIC, no se empuja` cada día. Lo rojo salía en la primera
+# línea del informe diario; lo que falló fue el empujón, no la medida.
+FROZEN_STATIONS: set[str] = {"KLAX", "KSFO", "KHOU"}
 
 # Ventana horaria local, inclusive, para las estaciones que sólo lo llevan parte
 # del día. Sin entrada aquí, el corrector aplica a todas las horas.
