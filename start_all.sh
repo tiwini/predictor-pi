@@ -132,21 +132,35 @@ start_btc_quarter_poller() {
   log "btc_quarter_poller lanzado (PID $!)"
 }
 
-wait_dns api.weather.gov 300
-start_weather_with_retry
-#start_crypto  # comentado 2026-07-08: crypto migrado a systemd (crypto-predictor.service)
-# start_dashboard  # apagado 2026-08-21: /analysis, /ai y /btc-quarter
-#                 se sirven desde :8000/panel (predictor_web._montar_panel).
-#                 dashboard.py se conserva porque ES el codigo que sirve
-#                 esas paginas; lo que se retira es el segundo puerto.
-start_analysis_poller
-start_btc_quarter_poller
-start_kalshi_fast_poller
+# ── Arranque de la pila ─────────────────────────────────────────────────────
+# Vive en una función para que este archivo se pueda CARGAR sin arrancar nada.
+# `proceso_watchdog.py` lo necesita así: desde el 2026-10-18 relanza :8000 solo
+# cuando lleva 15 min mudo, y lo hace reusando `start_weather_with_retry` en vez
+# de replicar su lógica de espera de DNS y backoff. Replicarla era lo que había
+# —el watchdog decía «relanzar con start_all.sh» y lo dejaba en tus manos— y
+# dos criterios iguales en dos sitios acaban divergiendo.
+main() {
+  wait_dns api.weather.gov 300
+  start_weather_with_retry
+  #start_crypto  # comentado 2026-07-08: crypto migrado a systemd (crypto-predictor.service)
+  # start_dashboard  # apagado 2026-08-21: /analysis, /ai y /btc-quarter
+  #                 se sirven desde :8000/panel (predictor_web._montar_panel).
+  #                 dashboard.py se conserva porque ES el codigo que sirve
+  #                 esas paginas; lo que se retira es el segundo puerto.
+  start_analysis_poller
+  start_btc_quarter_poller
+  start_kalshi_fast_poller
 
-sleep 2
-log "estado:"
-is_up 8000 && log "  ✓ weather :8000 responde" || log "  ✗ weather :8000 NO responde"
-is_up 8001 && log "  ✓ crypto  :8001 responde" || log "  ✗ crypto  :8001 NO responde"
-pgrep -f "python.*analysis_poller\.py" > /dev/null && log "  ✓ analysis_poller corre" || log "  ✗ analysis_poller NO corre"
-pgrep -f "python.*btc_quarter_poller\.py" > /dev/null && log "  ✓ btc_quarter_poller corre" || log "  ✗ btc_quarter_poller NO corre"
-pgrep -f "python.*kalshi_fast_poller\.py" > /dev/null && log "  ✓ kalshi_fast_poller corre" || log "  ✗ kalshi_fast_poller NO corre"
+  sleep 2
+  log "estado:"
+  is_up 8000 && log "  ✓ weather :8000 responde" || log "  ✗ weather :8000 NO responde"
+  is_up 8001 && log "  ✓ crypto  :8001 responde" || log "  ✗ crypto  :8001 NO responde"
+  pgrep -f "python.*analysis_poller\.py" > /dev/null && log "  ✓ analysis_poller corre" || log "  ✗ analysis_poller NO corre"
+  pgrep -f "python.*btc_quarter_poller\.py" > /dev/null && log "  ✓ btc_quarter_poller corre" || log "  ✗ btc_quarter_poller NO corre"
+  pgrep -f "python.*kalshi_fast_poller\.py" > /dev/null && log "  ✓ kalshi_fast_poller corre" || log "  ✗ kalshi_fast_poller NO corre"
+}
+
+# Ejecutado -> arranca la pila. Sourceado -> sólo define funciones.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  main
+fi

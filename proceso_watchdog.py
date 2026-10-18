@@ -23,11 +23,17 @@ en 30 días y habría cazado el apagón en 40 minutos.
 —de 02h a 14h UTC no hay mercados y la tabla no crece—, así que un criterio de
 frescura lo declararía muerto cada madrugada.
 
-weather :8000 y crypto :8001 se REPORTAN pero no se tocan. crypto ya lo reinicia
-systemd (y la memoria manda `systemctl`, nunca kill+nohup); weather se relanza
-con `start_weather_with_retry`, que tiene lógica de reintento y de espera de DNS
-que no se replica aquí a ciegas. Un caído de :8000 se nota al abrir la web; el
-poller caído es invisible, y ese es justo el agujero que esto cierra.
+crypto :8001 se reporta y no se toca: lo reinicia systemd con Restart=always, y
+la memoria manda `systemctl`, nunca kill+nohup.
+
+weather :8000 SÍ se relanza desde el 2026-10-18. Antes sólo se reportaba, con el
+argumento de que `start_weather_with_retry` tiene espera de DNS y backoff «que
+no se replica aquí a ciegas» — cierto, y por eso ahora **no se replica: se
+llama**. start_all.sh pasó a poder cargarse sin arrancar la pila, así que el
+criterio vive en un solo sitio. Lo que cambió de opinión fue el 10-10: el aviso
+salió 131 veces durante 27 horas, :8000 sólo volvió con el reinicio del Pi, y
+2h45m después de que la red ya estuviera bien. «Se nota al abrir la web» supone
+que alguien la abre.
 
 Y antes de intervenir se pregunta DE QUIÉN es la avería (añadido el 2026-10-18,
 tras el apagón del 10-10): si el DNS no resuelve o api.weather.gov no responde,
@@ -51,6 +57,7 @@ import re
 import sqlite3
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -115,6 +122,30 @@ CURL_TIMEOUT = 28
 # Aquí no se ESPERA, se mira una vez: el cron pasa cada 5 minutos y la siguiente
 # pasada vuelve a preguntar. Y sólo se mira cuando ya hay algo que arreglar, así
 # que el camino sano no paga ni una petición de más.
+# ── Relanzar :8000 solo (2026-10-18) ────────────────────────────────────────
+# Hasta hoy esto reportaba y te dejaba el trabajo: «relanzar con start_all.sh:
+# start_weather_with_retry». El 10-10 lo dijo 131 veces durante 27 horas y
+# :8000 sólo volvió con el reinicio del Pi — y 2h45m DESPUÉS de que la red ya
+# estuviera bien, así que no era la red: el proceso estaba atascado.
+#
+# No se replica la lógica: se CARGA start_all.sh y se llama a su función, que
+# ya sabe esperar al DNS y reintentar con backoff. Para eso start_all.sh pasó a
+# poder sourcearse sin arrancar la pila. Dos copias del mismo criterio acaban
+# divergiendo, y aquí ya hay precedente (`corrector_watchdog` importa el
+# criterio en vez de reimplementarlo).
+#
+# crypto :8001 NO se toca: lo reinicia systemd con Restart=always, y la memoria
+# manda `systemctl restart crypto-predictor`, nunca kill+nohup.
+START_ALL = RAIZ / "start_all.sh"
+PUERTO_WEATHER = 8000
+# Más largo que el de los pollers: levantar el web puede tardar minutos entre
+# la espera de API y los 5 intentos, y pisarle el arranque sería peor que
+# esperar. 30 min = 6 comprobaciones del cron.
+COOLDOWN_WEB_MIN = 30.0
+# Segundos que se le dan a cada señal para que suelte el puerto. 5 bastan de
+# sobra para un Flask sano; el atascado se lleva el SIGKILL.
+ESPERA_PUERTO_S = 5
+
 DNS_HOST = "api.weather.gov"
 API_URL = "https://api.weather.gov/"
 TIMEOUT_UPSTREAM_S = 10          # el mismo -m 10 de wait_api_reachable
@@ -440,6 +471,143 @@ def revisar_kalshi_fast(estado: dict) -> bool:
     return True
 
 
+def pid_en_puerto(puerto: int) -> int | None:
+    """PID del proceso que ESCUCHA en ese puerto, según `ss -ltnp`."""
+    try:
+        salida = subprocess.run(["ss", "-ltnp"], capture_output=True,
+                                text=True, timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    for linea in salida.splitlines():
+        if f":{puerto} " not in linea:
+            continue
+        m = re.search(r"pid=(\d+)", linea)
+        if m:
+            return int(m.group(1))
+    return None
+
+
+def pid_del_weather() -> int | None:
+    """El que escucha en :8000 **y además** corre bajo weather-predictor/.
+
+    Las dos condiciones, no una. weather y crypto corren los dos
+    `predictor_web.py` y matar por nombre se lleva el que no era — es la
+    trampa que ya documentaba `pids_de`, y aquí da más miedo porque esto mata
+    solo. El puerto dice QUIÉN es y el cmdline CONFIRMA que es el nuestro; si
+    no coinciden, se devuelve None y no se toca nada.
+    """
+    pid = pid_en_puerto(PUERTO_WEATHER)
+    if pid is None:
+        return None
+    proc = Path("/proc") / str(pid)
+    try:
+        cmdline = (proc / "cmdline").read_bytes().decode("utf-8", "replace")
+    except OSError:
+        return None
+    if "predictor_web.py" not in cmdline:
+        log(f"en :{PUERTO_WEATHER} escucha el PID {pid} y no es predictor_web "
+            f"— no se toca")
+        return None
+    # La RUTA, por cwd o por cmdline, cualquiera de las dos. No es paranoia
+    # repetida: según quién lo arrancara, el mismo proceso se ve distinto.
+    #   start_weather_with_retry ->  cwd=.../weather-predictor
+    #                                cmdline="./venv/bin/python3 predictor_web.py"
+    #   arrancado a mano desde ~  ->  cwd=/home/popeye
+    #                                cmdline con las rutas absolutas
+    # Mirando sólo el cmdline, el que relanza este mismo watchdog quedaba sin
+    # reconocer, y la próxima vez que se atascara no habría a quién matar: se
+    # habría lanzado un segundo que ni siquiera puede enlazar el puerto. Se vio
+    # en la prueba en vivo del 2026-10-18, en el intento siguiente al primero
+    # que funcionó.
+    try:
+        cwd = str((proc / "cwd").resolve())
+    except OSError:
+        cwd = ""
+    if cwd != str(WEATHER) and str(WEATHER) not in cmdline:
+        log(f"en :{PUERTO_WEATHER} escucha el PID {pid}, que no es de "
+            f"{WEATHER} (cwd={cwd or '?'}) — no se toca")
+        return None
+    return pid
+
+
+def _liberar_puerto(pid: int) -> bool:
+    """Termina al atascado y **espera a que suelte el puerto**.
+
+    No basta con mandar la señal y seguir: mientras el puerto siga enlazado,
+    el proceso nuevo muere al arrancar («address already in use») y
+    `start_weather_with_retry` quema sus cinco intentos contra un puerto que
+    no está libre. Y un proceso de verdad atascado puede tardar en atender el
+    SIGTERM, o no atenderlo: por eso hay SIGKILL detrás. Un watchdog que pide
+    por favor no es un watchdog.
+    """
+    for señal, nombre in ((15, "SIGTERM"), (9, "SIGKILL")):
+        try:
+            os.kill(pid, señal)
+        except ProcessLookupError:
+            return True                      # ya no está: puerto libre
+        except OSError as e:
+            log(f"no se pudo mandar {nombre} al PID {pid}: {e}")
+            return False
+        log(f"weather :{PUERTO_WEATHER} PID {pid}: {nombre} (atascado)")
+        for _ in range(ESPERA_PUERTO_S):
+            time.sleep(1)
+            if pid_en_puerto(PUERTO_WEATHER) != pid:
+                log(f"weather :{PUERTO_WEATHER} libre tras {nombre}")
+                return True
+    log(f"weather :{PUERTO_WEATHER} sigue enlazado por el PID {pid} tras "
+        f"SIGKILL — no se arranca otro encima")
+    return False
+
+
+# El PID del último intento, para no pisarlo en la ejecución siguiente. Es una
+# lista y no un global suelto porque así el test lo puede leer sin importar el
+# orden en que corran.
+_ultimo_pid_recuperacion = [0]
+
+
+def relanzar_weather() -> bool:
+    """Mata el :8000 atascado y lanza la recuperación, en segundo plano.
+
+    En segundo plano porque `start_weather_with_retry` puede tardar hasta
+    media hora esperando a la API, y esto corre en un cron de 5 minutos:
+    bloquear aquí encadenaría ejecuciones solapadas.
+
+    Y hay que matarlo ANTES: la función empieza con `if is_up 8000; return`,
+    así que con el proceso atascado seguiría adelante y lanzaría otro que
+    moriría al no poder enlazar el puerto. Su kill interno sólo alcanza al
+    que ella misma arrancó.
+    """
+    if not START_ALL.exists():
+        log(f"ERROR: no existe {START_ALL}")
+        return False
+    pid = pid_del_weather()
+    if pid is not None and not _liberar_puerto(pid):
+        return False
+    if pid is None:
+        log(f"weather :{PUERTO_WEATHER} no tiene a nadie escuchando: se arranca")
+    try:
+        proc = subprocess.Popen(
+            ["bash", "-c", f'source "{START_ALL}" && start_weather_with_retry'],
+            cwd=str(RAIZ), stdout=(RAIZ / "boot.log").open("a", encoding="utf-8"),
+            stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+            start_new_session=True)
+    except OSError as e:
+        log(f"ERROR al lanzar la recuperación de :{PUERTO_WEATHER}: {e}")
+        return False
+    _ultimo_pid_recuperacion[0] = proc.pid
+    log(f"recuperación de :{PUERTO_WEATHER} lanzada (PID {proc.pid}, "
+        f"start_weather_with_retry, ver boot.log)")
+    return True
+
+
+def recuperacion_en_curso(estado: dict) -> bool:
+    """¿Hay ya un intento corriendo? Dura minutos; no se le pisa."""
+    pid = estado.get("recuperacion_web_pid")
+    if not pid:
+        return False
+    return (Path("/proc") / str(pid)).exists()
+
+
 def sintoma_curl(rc: int) -> str:
     """Qué avería es, no sólo que falló.
 
@@ -487,14 +655,33 @@ def revisar_servicios_web(estado: dict) -> bool:
             sostenido = fallos - FALLOS_HTTP_PARA_AVISAR
             if sostenido == 0 or (sostenido > 0 and sostenido % RECORDATORIO_CADA == 0):
                 quien = ("lo reinicia systemd (Restart=always)" if puerto == 8001
-                         else "relanzar con start_all.sh: start_weather_with_retry")
+                         else "se relanza solo con start_weather_with_retry")
                 log(f"ATENCIÓN: {nombre} :{puerto}{ruta} lleva {fallos} "
                     f"comprobaciones {sintoma_curl(rc)} — {quien}")
                 push(f"{nombre} :{puerto} no responde",
                      f"{fallos} comprobaciones ({fallos * 5} min) "
-                     f"{sintoma_curl(rc)}.\n\nQué hacer: {quien}.",
+                     f"{sintoma_curl(rc)}.\n\n{quien}.",
                      prioridad="high", tags="rotating_light")
                 incidencia = True
+            # El relanzamiento va por su cuenta, no colgado del aviso: el aviso
+            # se repite cada hora y aquí manda el cooldown de 30 min. Sólo
+            # :8000 — crypto es de systemd.
+            if (puerto == PUERTO_WEATHER
+                    and fallos >= FALLOS_HTTP_PARA_AVISAR
+                    and not recuperacion_en_curso(estado)
+                    and not en_cooldown(estado, "weather_web")):
+                if relanzar_weather():
+                    ahora = datetime.now(timezone.utc).isoformat()
+                    estado["ultimo_relanzamiento:weather_web"] = ahora
+                    estado["recuperacion_web_pid"] = _ultimo_pid_recuperacion[0]
+                    push("weather :8000 relanzado solo",
+                         f"Llevaba {fallos * 5} min {sintoma_curl(rc)}.\n\n"
+                         f"Matado el proceso atascado y lanzado "
+                         f"start_weather_with_retry, que espera a la API y "
+                         f"reintenta con backoff. Siguiente intento posible en "
+                         f"{COOLDOWN_WEB_MIN:.0f} min.",
+                         prioridad="high", tags="rotating_light")
+                    incidencia = True
         else:
             if previos:
                 # Sólo se anota la recuperación de algo que llegó a avisarse;

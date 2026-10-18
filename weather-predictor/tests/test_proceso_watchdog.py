@@ -33,6 +33,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 import proceso_watchdog as W  # noqa: E402
 
 
+_RELANZOS = []
+
+
+@pytest.fixture
+def relanzos():
+    """Los relanzamientos de :8000 que pidió el test, sin relanzar nada."""
+    return _RELANZOS
+
+
 @pytest.fixture(autouse=True)
 def _log_aislado(tmp_path, monkeypatch):
     """Ningún test escribe en el log ni en el estado de producción.
@@ -53,6 +62,13 @@ def _log_aislado(tmp_path, monkeypatch):
     # ntfy, cuando la suite pasó de 0.46s a 6.43s porque estaba saliendo a la
     # red en cada test.
     monkeypatch.setattr(W, "NTFY_ENV", tmp_path / "ntfy.env")
+    # Ni mata ni arranca nada de verdad. Desde el 2026-10-18 el watchdog
+    # relanza :8000 solo, y un test que llegue sin querer a `relanzar_weather`
+    # mataría el web del Pi: es la versión con kill del mismo problema que ya
+    # tuvo esta suite cuando escribía en el log de producción.
+    _RELANZOS.clear()
+    monkeypatch.setattr(W, "relanzar_weather",
+                        lambda: _RELANZOS.append(1) or True)
 
 
 def _db_con_ultimo_snapshot(tmp_path, hace_minutos):
@@ -490,13 +506,17 @@ def test_la_fuente_caida_no_empuja_cada_cinco_minutos(tmp_path, monkeypatch):
 
 
 def test_el_servicio_caido_avisa_al_tercero_y_no_antes(tmp_path, monkeypatch):
+    """Nada hasta el tercero, y en el tercero DOS: «no responde» y «relanzado
+    solo». Son dos cosas distintas —el diagnóstico y lo que se hizo con él— y
+    con una sola no sabrías si hay alguien actuando."""
     enviados = _topic_puesto(monkeypatch, tmp_path)
     estado = {}
     for i in range(1, W.FALLOS_HTTP_PARA_AVISAR + 1):
         _curl_que(monkeypatch, [W.CURL_SIN_CONEXION, True])
         W.revisar_servicios_web(estado)
-        esperados = 0 if i < W.FALLOS_HTTP_PARA_AVISAR else 1
+        esperados = 0 if i < W.FALLOS_HTTP_PARA_AVISAR else 2
         assert len(enviados) == esperados, f"en la comprobación {i}"
+    assert "no responde" in enviados[0] and "relanzado solo" in enviados[1]
 
 
 def test_un_push_que_falla_no_tumba_al_watchdog(tmp_path, monkeypatch):
@@ -518,3 +538,199 @@ def test_un_push_que_falla_no_tumba_al_watchdog(tmp_path, monkeypatch):
     assert W.revisar_analysis_poller({}) is True
     assert lanzados == ["analysis_poller.py"], "el relanzamiento es lo que importa"
     assert "el push a ntfy falló" in W.LOG.read_text(encoding="utf-8")
+
+
+# --- :8000 se relanza solo (2026-10-18) -------------------------------------
+#
+# El 10-10 el aviso salió 131 veces en 27 horas y :8000 sólo volvió con el
+# reinicio del Pi — 2h45m DESPUÉS de que la red estuviera bien, o sea que no
+# era la red. Lo que estos tests fijan es sobre todo a quién NO mata: weather y
+# crypto corren los dos `predictor_web.py`, y aquí el que mata es un cron.
+
+
+def _ss_dice(monkeypatch, salida):
+    def falso_run(cmd, **kw):
+        if cmd[:1] == ["ss"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout=salida)
+        return subprocess.CompletedProcess(cmd, 0, stdout="")
+    monkeypatch.setattr(W.subprocess, "run", falso_run)
+
+
+LINEA_8000 = ('LISTEN 0 128 0.0.0.0:8000 0.0.0.0:* '
+              'users:(("python3",pid=46407,fd=4))\n')
+
+
+def test_identifica_al_que_escucha_en_8000(monkeypatch):
+    _ss_dice(monkeypatch, LINEA_8000)
+    assert W.pid_en_puerto(8000) == 46407
+
+
+def _proc_falso(tmp_path, monkeypatch, partes, cwd_real):
+    """/proc/46407 de mentira, con su cmdline y su enlace `cwd`."""
+    proc = tmp_path / "proc" / "46407"
+    proc.mkdir(parents=True)
+    (proc / "cmdline").write_bytes(("\0".join(partes) + "\0").encode())
+    cwd_real.mkdir(parents=True, exist_ok=True)
+    (proc / "cwd").symlink_to(cwd_real)
+    monkeypatch.setattr(W, "Path", lambda p: tmp_path / "proc"
+                        if str(p) == "/proc" else Path(p))
+    return proc
+
+
+def test_no_mata_al_crypto_aunque_escuche_en_8000(tmp_path, monkeypatch):
+    """La trampa del roster, con un cron empuñando el kill: los dos procesos
+    corren `predictor_web.py` y sólo la RUTA los distingue."""
+    _ss_dice(monkeypatch, LINEA_8000)
+    monkeypatch.setattr(W, "WEATHER", tmp_path / "weather-predictor")
+    _proc_falso(tmp_path, monkeypatch,
+                ["/sitio/crypto-predictor/venv/bin/python3",
+                 "/sitio/crypto-predictor/predictor_web.py"],
+                cwd_real=tmp_path / "crypto-predictor")
+    assert W.pid_del_weather() is None
+    assert "no es de" in W.LOG.read_text(encoding="utf-8")
+
+
+def test_reconoce_al_que_relanzo_el_propio_watchdog(tmp_path, monkeypatch):
+    """`start_weather_with_retry` hace `cd` y lanza con rutas RELATIVAS, así
+    que el cmdline no lleva la ruta y sólo el cwd lo identifica.
+
+    Mirando sólo el cmdline, el watchdog no reconocía al proceso que él mismo
+    acababa de arrancar: en el atasco siguiente no habría tenido a quién matar
+    y habría lanzado un segundo que ni siquiera puede enlazar el puerto. Salió
+    en la prueba en vivo del 2026-10-18, no en la suite — el relanzamiento
+    funcionó a la primera y dejó el sistema preparado para fallar a la
+    segunda.
+    """
+    _ss_dice(monkeypatch, LINEA_8000)
+    monkeypatch.setattr(W, "WEATHER", tmp_path / "weather-predictor")
+    _proc_falso(tmp_path, monkeypatch,
+                ["./venv/bin/python3", "predictor_web.py"],
+                cwd_real=tmp_path / "weather-predictor")
+    assert W.pid_del_weather() == 46407
+
+
+def test_reconoce_al_arrancado_a_mano_con_rutas_absolutas(tmp_path, monkeypatch):
+    """El otro modo, que es como estaba corriendo el del Pi: cwd=/home/popeye
+    y las rutas enteras en el cmdline."""
+    _ss_dice(monkeypatch, LINEA_8000)
+    weather = tmp_path / "weather-predictor"
+    monkeypatch.setattr(W, "WEATHER", weather)
+    _proc_falso(tmp_path, monkeypatch,
+                [f"{weather}/venv/bin/python3", f"{weather}/predictor_web.py"],
+                cwd_real=tmp_path / "casa")
+    assert W.pid_del_weather() == 46407
+
+
+def test_no_toca_a_quien_no_es_predictor_web(tmp_path, monkeypatch):
+    _ss_dice(monkeypatch, LINEA_8000)
+    monkeypatch.setattr(W, "WEATHER", tmp_path / "weather-predictor")
+    _proc_falso(tmp_path, monkeypatch, ["/usr/bin/nginx"],
+                cwd_real=tmp_path / "weather-predictor")
+    assert W.pid_del_weather() is None
+
+
+
+def test_relanza_al_tercer_fallo_y_no_antes(tmp_path, monkeypatch, relanzos):
+    enviados = _topic_puesto(monkeypatch, tmp_path)
+    relanzados = relanzos
+    monkeypatch.setattr(W, "recuperacion_en_curso", lambda e: False)
+    estado = {}
+    for i in range(1, W.FALLOS_HTTP_PARA_AVISAR + 1):
+        _curl_que(monkeypatch, [W.CURL_SIN_CONEXION, True])
+        W.revisar_servicios_web(estado)
+        assert len(relanzados) == (1 if i == W.FALLOS_HTTP_PARA_AVISAR else 0)
+    assert any("relanzado solo" in t for t in enviados)
+
+
+def test_no_relanza_crypto_que_es_de_systemd(tmp_path, monkeypatch, relanzos):
+    _topic_puesto(monkeypatch, tmp_path)
+    relanzados = relanzos
+    estado = {}
+    for _ in range(W.FALLOS_HTTP_PARA_AVISAR + 2):
+        _curl_que(monkeypatch, [True, W.CURL_SIN_CONEXION])  # cae crypto
+        W.revisar_servicios_web(estado)
+    assert relanzados == [], "crypto lo reinicia systemd, no esto"
+
+
+def test_el_cooldown_impide_encadenar_relanzamientos(tmp_path, monkeypatch, relanzos):
+    _topic_puesto(monkeypatch, tmp_path)
+    relanzados = relanzos
+    monkeypatch.setattr(W, "recuperacion_en_curso", lambda e: False)
+    estado = {}
+    for _ in range(W.FALLOS_HTTP_PARA_AVISAR + 5):
+        _curl_que(monkeypatch, [W.CURL_SIN_CONEXION, True])
+        W.revisar_servicios_web(estado)
+    assert len(relanzados) == 1, "uno cada 30 min, no uno cada 5"
+
+
+def test_no_se_le_pisa_un_intento_en_curso(tmp_path, monkeypatch, relanzos):
+    """start_weather_with_retry puede tardar media hora esperando a la API.
+    Lanzar otro encima mataría el que acaba de arrancar."""
+    _topic_puesto(monkeypatch, tmp_path)
+    relanzados = relanzos
+    monkeypatch.setattr(W, "recuperacion_en_curso", lambda e: True)
+    estado = {}
+    for _ in range(W.FALLOS_HTTP_PARA_AVISAR + 2):
+        _curl_que(monkeypatch, [W.CURL_SIN_CONEXION, True])
+        W.revisar_servicios_web(estado)
+    assert relanzados == []
+
+
+def test_el_cooldown_del_web_es_mas_largo_que_el_de_los_pollers():
+    """Levantar el web tarda minutos entre esperas y reintentos; el cooldown
+    de 15 min de los pollers le pisaría el arranque."""
+    assert W.COOLDOWN_WEB_MIN > W.COOLDOWN_MIN
+
+
+# --- soltar el puerto antes de arrancar otro --------------------------------
+#
+# Un proceso de verdad atascado puede no atender el SIGTERM. Si el puerto
+# sigue enlazado, el que arranca después muere con «address already in use» y
+# start_weather_with_retry quema sus cinco intentos contra un puerto ocupado.
+# Comprobado en vivo el 2026-10-18 con un SIGSTOP, que es justo el caso del
+# 10-10: escucha, no contesta, y SIGTERM se queda pendiente.
+
+
+def _kill_falso(monkeypatch, muere_con):
+    """Registra las señales; el proceso sólo suelta el puerto con `muere_con`."""
+    enviadas, vivo = [], {"si": True}
+
+    def kill(pid, sig):
+        enviadas.append(sig)
+        if sig == muere_con:
+            vivo["si"] = False
+
+    monkeypatch.setattr(W.os, "kill", kill)
+    monkeypatch.setattr(W, "pid_en_puerto",
+                        lambda p: 46407 if vivo["si"] else None)
+    monkeypatch.setattr(W.time, "sleep", lambda s: None)
+    return enviadas
+
+
+def test_con_SIGTERM_basta_y_no_se_usa_el_SIGKILL(monkeypatch):
+    enviadas = _kill_falso(monkeypatch, muere_con=15)
+    assert W._liberar_puerto(46407) is True
+    assert enviadas == [15], "no se mata a lo bruto si no hace falta"
+
+
+def test_si_el_SIGTERM_no_lo_tumba_va_el_SIGKILL(monkeypatch):
+    """El caso del SIGSTOP: la señal se queda pendiente y el puerto sigue."""
+    enviadas = _kill_falso(monkeypatch, muere_con=9)
+    assert W._liberar_puerto(46407) is True
+    assert enviadas == [15, 9]
+
+
+def test_si_ni_el_SIGKILL_libera_el_puerto_no_se_arranca_otro(monkeypatch):
+    """Arrancar encima de un puerto ocupado es gastar los cinco intentos."""
+    _kill_falso(monkeypatch, muere_con=None)
+    monkeypatch.setattr(W, "pid_en_puerto", lambda p: 46407)
+    assert W._liberar_puerto(46407) is False
+    assert "sigue enlazado" in W.LOG.read_text(encoding="utf-8")
+
+
+def test_si_ya_estaba_muerto_el_puerto_esta_libre(monkeypatch):
+    def kill(pid, sig):
+        raise ProcessLookupError
+
+    monkeypatch.setattr(W.os, "kill", kill)
+    assert W._liberar_puerto(46407) is True
