@@ -101,3 +101,33 @@ def test_el_intervalo_no_puede_divergir_del_poller(pw):
     """Se importa en vez de copiarse; si alguien cambia uno, esto lo dice."""
     import analysis_poller
     assert pw._AP_INTERVAL_S == analysis_poller.INTERVAL_S
+
+
+# --- el cwd del proceso (2026-10-18) ----------------------------------------
+
+def test_el_poller_se_planta_en_su_propio_directorio():
+    """Arrancado a mano desde `~` el 2026-10-12, el poller llevaba seis días
+    con cwd=/home/popeye. No rompió nada —`DB_PATH`, `CALIBRATION_DB` y
+    `LOG_DIR` salen todos de `Path(__file__).parent`— y por eso no se vio.
+
+    El riesgo es el de después: `start_all.sh` y el watchdog hacen `cd` antes
+    de lanzar, así que el día que aparezca una ruta relativa el mismo código
+    escribirá en dos sitios distintos según quién lo arrancó, y en `~` hay un
+    `calibration.db` de 0 bytes esperando justo eso.
+
+    Se comprueba sobre el AST y no con un `in` sobre el texto: un comentario
+    que mencione `os.chdir` no debe dar por bueno el test.
+    """
+    import ast
+
+    fuente = (Path(__file__).resolve().parent.parent
+              / "analysis_poller.py").read_text(encoding="utf-8")
+    bloques = [n for n in ast.parse(fuente).body
+               if isinstance(n, ast.If)
+               and ast.dump(n.test).count("__main__")]
+    assert bloques, "no hay bloque __main__"
+    llamadas = [n for n in ast.walk(bloques[0])
+                if isinstance(n, ast.Call)
+                and isinstance(n.func, ast.Attribute)
+                and n.func.attr == "chdir"]
+    assert llamadas, "el entrypoint no fija su cwd — ver el docstring"

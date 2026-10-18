@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sqlite3
 import sys
 import time
@@ -589,6 +590,18 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    # Plantarse en el directorio propio, venga de donde venga el arranque.
+    # Hoy no cambia nada —DB_PATH, CALIBRATION_DB y LOG_DIR salen todos de
+    # `Path(__file__).parent`— y por eso el poller llevaba desde el 2026-10-12
+    # corriendo con cwd=/home/popeye sin que se notara: lo arrancaron a mano
+    # desde ~ y escribía donde debía igual.
+    #
+    # Se cierra de todos modos porque el día que alguien escriba una ruta
+    # relativa, este proceso irá a `~` mientras `start_all.sh` y el watchdog
+    # —que sí hacen `cd`— van al sitio bueno, y el mismo código hará dos cosas
+    # distintas según quién lo lanzó. En `~` ya hay un `calibration.db` de 0
+    # bytes esperando a que eso pase.
+    os.chdir(Path(__file__).resolve().parent)
     try:
         main()
     except KeyboardInterrupt:
