@@ -38,3 +38,19 @@ def test_la_revision_del_offset_no_esta_vencida():
     """
     assert date.today().isoformat() <= bt.SEASONAL_OFFSET_REVISADO_HASTA, (
         "la revisión de SEASONAL_OFFSET_F está vencida — ver el docstring")
+
+
+def test_la_pregunta_de_KPHX_no_se_queda_dormida():
+    """El déficit de KPHX quedó confirmado en dos ventanas (−1.23 el 09-10 y
+    −1.29 el 10-18) y la decisión de subirlo se aplazó a propósito, porque el
+    tamaño del aumento se habría ajustado sobre el dato ya mirado.
+
+    Un aplazamiento sin fecha es un olvido con buena letra; éste tiene las dos
+    mitades que pide la doctrina: fecha Y destinatario que falla solo.
+
+    Si falla: la serie ya tiene ~30 días posteriores al 2026-10-18. Mide el
+    candidato −2.84 contra el −1.55 actual con el criterio YA ESCRITO en la
+    fila ⏳ de DECISIONES.md —no uno nuevo— y cierra la fila con el número.
+    """
+    assert date.today().isoformat() < bt.KPHX_EMPUJE_DECIDE_DESDE, (
+        "toca decidir el empuje de KPHX — ver el docstring y DECISIONES.md")

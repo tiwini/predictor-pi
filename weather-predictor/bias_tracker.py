@@ -166,8 +166,48 @@ SEASONAL_OFFSET_ACTIVE_SINCE = "2026-07-06"  # ISO date
 #
 # La revisión anterior venció en septiembre sin que nadie la viera durante dos
 # meses. Por eso ahora hay fecha Y un test que falla cuando pasa
-# (`test_bias_tracker.py::test_la_revision_del_offset_no_esta_vencida`).
-SEASONAL_OFFSET_REVISADO_HASTA = "2026-10-15"
+# (`test_seasonal_offset.py::test_la_revision_del_offset_no_esta_vencida`).
+
+# ── Revisión del 2026-10-18, disparada por ese test al vencer el 10-15 ──────
+# Mismo script, mismo criterio pre-registrado, y una muestra que **no comparte
+# un solo día** con la del 09-10 (aquélla cubría 08-11 → 09-10; ésta 09-20 →
+# 10-18, N=26-28 por estación):
+#
+#   est    empuje   |err| ahora   sin offset      días que gana   veredicto
+#   KBOS   +0.99       1.81          1.97  (+0.16)     11/28      MANTENER
+#   KLAS   +1.70       0.79          1.63  (+0.84)      6/27      MANTENER
+#   KPHX   +1.55       1.99          3.10  (+1.11)      3/26      MANTENER
+#
+# 🟢 Las tres otra vez, y ninguna se acerca al criterio: quitar el offset
+# empeora en las tres. Control de las 17 sin offset: sesgo medio −0.09°F, o sea
+# que sigue sin haber un sesgo general del sistema al que achacarlo.
+#
+# Lo que esta corrida SÍ cierra es la duda que dejó abierta la anterior —«en
+# KLAS y KPHX el offset se queda corto, hace falta una corrida con días
+# frescos»— y la cierra en direcciones opuestas:
+#
+#   · **KLAS: refutado.** Su residual era −0.57 (9/30 positivos, p=0.043) y
+#     ahora es **+0.12** (14/27, p=1.0000). No era un déficit estable.
+#   · **KPHX: confirmado fuera de muestra.** Era −1.23 (5/30, p=0.0003) y ahora
+#     es **−1.29** (5/26, p=0.0025). Dos ventanas independientes, mismo signo,
+#     mismo tamaño.
+#
+# ⚠ Confirmado NO es aplicado: subir el empuje de KPHX es una decisión nueva y
+# necesita su propio criterio pre-registrado y su propio contrafactual, porque
+# el TAMAÑO del aumento se ajustaría sobre el dato que acaba de mirarse. Queda
+# como fila ⏳ en DECISIONES.md, no como cambio aquí.
+#
+# Próxima fecha a dos meses y no a uno: la constante es estacional, Sep-Oct ya
+# tiene dos lecturas que dicen lo mismo, y el régimen que de verdad puede
+# romperla es el invierno.
+SEASONAL_OFFSET_REVISADO_HASTA = "2026-12-15"
+
+# La pregunta abierta de KPHX tiene su propia fecha, porque se decide antes
+# que la revisión siguiente: en cuanto haya ~30 días posteriores al 10-18,
+# que es cuando la serie deja de contener los que ya se miraron. El criterio
+# y el candidato (−2.84) están fijados en DECISIONES.md desde hoy; aquí sólo
+# vive la fecha, para que el aviso no dependa de que alguien se acuerde.
+KPHX_EMPUJE_DECIDE_DESDE = "2026-11-17"
 
 
 def _early_pred(cur, station_id: str, date_str: str) -> Optional[float]:
