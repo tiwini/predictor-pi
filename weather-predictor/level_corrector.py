@@ -164,6 +164,37 @@ ENABLED_STATIONS: set[str] = {"KLAX", "KSFO", "KNYC", "KMIA", "KLAS", "KHOU"}
 # 05, 08, 09, 10 y 11 sin que nadie lo viera: `NTFY_TOPIC` está vacío y el log
 # dice `sin NTFY_TOPIC, no se empuja` cada día. Lo rojo salía en la primera
 # línea del informe diario; lo que falló fue el empujón, no la medida.
+# KSFO sigue congelada el 2026-10-18 **contra el 🟢 REACTIVAR del watchdog**,
+# que lo venía pidiendo desde el 10-13. La decisión se tomó mirando lo que el
+# criterio de reactivación no mira —el régimen de ahora— y las ventanas cortas
+# dicen lo contrario que las largas:
+#
+#            |err| publicado   |err| con corrector   días a favor
+#   KSFO 27d      3.99               2.60               23/27
+#   KSFO 20d      3.99               2.86               16/20
+#   KSFO 10d      3.47               3.26                6/10
+#   KSFO  7d      1.60               2.50                3/7   ← daña
+#   KSFO  5d      1.13               3.35                1/5   ← daña
+#
+# Entre el 10-12 y el 10-16 el error publicado se desplomó (−0.80, −1.60,
+# +0.20, +0.45, +2.60) mientras la corrección mediana seguía en +3.34°F,
+# dimensionada para el sesgo de primeros de octubre (+13.1, +9.7, +7.0 el 05,
+# 07 y 08). Encenderla hoy habría triplicado el error de la última semana.
+#
+# No es ignorar al watchdog: su criterio se arregló el mismo día. Decide sobre
+# los N primeros días de la fase —el diseño que impide que mirar a diario
+# multiplique las ocasiones de acertar por ruido— y eso lo dejaba ciego a un
+# giro posterior a esa ventana. `seguimiento_corrector.veto_por_regimen` añade
+# un veto que sólo puede bloquear, nunca encender, así que no devuelve falsos
+# positivos a la puerta. Con él KSFO sale 🟡 REACTIVACIÓN EN ESPERA.
+#
+# Condición de reactivación, escrita hoy para no volver a decidirlo a ojo:
+# **ninguna de las ventanas 10d/7d/5d en contra por ≥0.50°F durante 3 miradas
+# seguidas**, con el 🟢 de los N primeros todavía en pie. El veto entra con 3
+# miradas malas y sale con 3 limpias —histéresis— porque sin la segunda mitad
+# bastaría un día afortunado para resucitar el 🟢, y mirando a diario eso
+# llega solo. Es el espejo de lo que se le exigió a KHOU para congelarla:
+# allí, ninguna ventana a favor.
 FROZEN_STATIONS: set[str] = {"KLAX", "KSFO", "KHOU"}
 
 # Ventana horaria local, inclusive, para las estaciones que sólo lo llevan parte

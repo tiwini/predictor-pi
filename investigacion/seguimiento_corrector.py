@@ -305,6 +305,64 @@ def _p_signos(a_favor: int, n: int) -> float:
     return cola / (2 ** n)
 
 
+VENTANAS_VETO = (10, 7, 5)   # ventanas cortas que miran el régimen de AHORA
+
+
+def _dana_en(e_pub: list[float], e_alt: list[float],
+             fin: int) -> list[tuple[int, float, float]]:
+    """Ventanas cortas que terminan en `fin` donde el corrector DAÑA.
+
+    «Daña» con el mismo suelo de materialidad que se le pide para reactivar
+    (`MEJORA_MIN_F`), para que la puerta mida en la misma unidad en los dos
+    sentidos y no se pueda bloquear por una décima.
+    """
+    malas = []
+    for w in VENTANAS_VETO:
+        if fin < w:
+            continue
+        pub = statistics.mean([abs(x) for x in e_pub[fin - w:fin]])
+        alt = statistics.mean([abs(x) for x in e_alt[fin - w:fin]])
+        if alt - pub >= MEJORA_MIN_F:
+            malas.append((w, pub, alt))
+    return malas
+
+
+def veto_por_regimen(e_pub: list[float],
+                     e_alt: list[float]) -> tuple[bool, list]:
+    """(¿vetado hoy?, ventanas malas de hoy).
+
+    Igual que `racha_en_contra`, una «mirada» es lo que el cron habría visto
+    ese día, y el resultado se recalcula del dato en vez de persistirse.
+
+    Con **histéresis**, y es lo que impide que esto reabra por el otro lado el
+    problema que el diseño de «N primeros» cerró: entra al vetar `K_SOSTENIDO`
+    miradas malas seguidas —para que un día raro no bloquee— y sale sólo con
+    `K_SOSTENIDO` limpias seguidas, para que un día afortunado no desbloquee.
+    En la zona mixta mantiene lo que hubiera. Sin esa segunda mitad bastaría
+    con una mirada limpia para resucitar el 🟢, y mirando a diario eso llega
+    solo: exactamente las treinta monedas de las que huye el criterio.
+
+    El estado no se guarda: se **reconstruye** reproduciendo todas las miradas
+    de la fase desde la primera, que es determinista a partir del mismo dato.
+    """
+    malas_por_mirada = []
+    for fin in range(min(VENTANAS_VETO), len(e_pub) + 1):
+        malas_por_mirada.append(_dana_en(e_pub, e_alt, fin))
+    if not malas_por_mirada:
+        return False, []
+
+    vetado = False
+    for i in range(len(malas_por_mirada)):
+        ultimas = malas_por_mirada[max(0, i + 1 - K_SOSTENIDO):i + 1]
+        if len(ultimas) < K_SOSTENIDO:
+            continue
+        if all(ultimas):
+            vetado = True
+        elif not any(ultimas):
+            vetado = False
+    return vetado, malas_por_mirada[-1]
+
+
 def veredicto_congelado(e_pub: list[float], e_alt: list[float],
                         corr_mediana: float) -> tuple[str, str, int]:
     """(estado, texto, n_a_favor) — cuándo se descongela una estación.
@@ -352,6 +410,35 @@ def veredicto_congelado(e_pub: list[float], e_alt: list[float],
 
       🔵 SIGUE CONGELADA — todo lo demás.
 
+      🟡 REACTIVACIÓN EN ESPERA — el 🟢 se cumple pero el régimen de AHORA lo
+         contradice (`veto_por_regimen`). Añadido el **2026-10-18**, con KSFO
+         encima de la mesa: sus 20 primeros daban 20/20 y p=0.000, y sus
+         ventanas cortas decían lo contrario de forma material:
+
+             KSFO 27d  |err| pub 3.99   con corrector 2.60   23/27  ayuda
+             KSFO 20d            3.99                2.86    16/20  ayuda
+             KSFO 10d            3.47                3.26     6/10  ayuda
+             KSFO  7d            1.60                2.50      3/7   DAÑA
+             KSFO  5d            1.13                3.35      1/5   DAÑA
+
+         Mirar los N primeros protege del peeking, pero deja ciega a la puerta
+         ante un giro posterior a su ventana: entre el 10-12 y el 10-16 el
+         error publicado de KSFO se desplomó a 1.13°F mientras la corrección
+         mediana seguía en +3.34°F, dimensionada para el sesgo de primeros de
+         octubre. Encenderla habría triplicado el error.
+
+         El veto **sólo puede bloquear, nunca reactivar**, así que no añade
+         ocasiones de falso 🟢 y la doctrina de «dos decisiones, no treinta»
+         sigue en pie: las miradas de más sólo pueden convertir un sí en
+         esperar, que es el lado seguro. Por eso tampoco se aplica al 🔴
+         RETIRAR: la asimetría no es entre dos contrastes, es entre encender
+         algo y no encenderlo. Nada se enciende al retirar.
+
+         Es además el espejo de lo que se le exigió a KHOU para CONGELARLA el
+         10-12: allí se pidió que ninguna ventana estuviera a favor. Aquí se
+         pide que ninguna esté en contra. Antes del 10-18 la salida era
+         estricta y la entrada no.
+
     **Mirar a diario ya no suma oportunidades.** El veredicto se calcula sobre
     los **N primeros** días de la fase, no sobre los últimos ni sobre todos: en
     cuanto hay 10, ese conjunto ya no cambia, y el informe diario repite el
@@ -386,6 +473,17 @@ def veredicto_congelado(e_pub: list[float], e_alt: list[float],
                 f"así que ni reactivar ni retirar significan algo {cola}",
                 a_favor)
     if p_favor < 0.05 and mejora >= listón:
+        vetado, malas = veto_por_regimen(e_pub, e_alt)
+        if vetado:
+            detalle = ("; ".join(f"{w}d {pub:.2f}→{alt:.2f}"
+                                 for w, pub, alt in malas)
+                       if malas else
+                       f"aún no acumula {K_SOSTENIDO} miradas limpias")
+            return ("congelado_veto",
+                    f"🟡 REACTIVACIÓN EN ESPERA — las {usar} primeras dicen "
+                    f"que sí, pero el régimen de ahora dice que no: el "
+                    f"corrector DAÑA en {detalle}. Sigue congelada {cola}",
+                    a_favor)
         return ("reactivar",
                 f"🟢 REACTIVAR — el corrector gana de forma significativa y "
                 f"material {cola}", a_favor)

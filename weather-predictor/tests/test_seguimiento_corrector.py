@@ -267,3 +267,83 @@ def test_la_historia_vieja_no_diluye_lo_reciente():
     estado, _, contra = sg.veredicto_por_signos(
         e, corr_mediana=+2.5, m_pub=1.0, m_sin=2.0)
     assert (estado, contra) == ("amarillo", 10)
+
+
+# ─── veto de régimen en la puerta de entrada (2026-10-18) ──────────────────
+#
+# La decisión se toma sobre los N PRIMEROS días de la fase congelada, que es
+# lo que impide que mirar a diario multiplique las ocasiones de acertar por
+# ruido. El precio es que la puerta no ve nada de lo que pase DESPUÉS de esa
+# ventana, y KSFO lo enseñó: 20/20 con p=0.000 en los 20 primeros, y a la vez
+# |err| 1.13 publicado contra 3.35 con corrector en los últimos 5 días.
+#
+# El veto sólo puede convertir un 🟢 en esperar, nunca al revés: por eso no
+# devuelve a la puerta las ocasiones de falso positivo que el diseño de «N
+# primeros» le quitó.
+
+
+def test_sin_contradiccion_reciente_reactiva():
+    pub, alt = _fase([1.8] * 30)
+    estado, _, _ = sg.veredicto_congelado(pub, alt, corr_mediana=2.5)
+    assert estado == "reactivar"
+
+
+def test_el_regimen_reciente_en_contra_deja_la_reactivacion_en_espera():
+    """El caso KSFO: las primeras dicen que sí y las últimas que no."""
+    pub, alt = _fase([1.8] * 20 + [-4.0] * 10)
+    assert sg.veto_por_regimen(pub, alt)[0] is True
+    estado, texto, _ = sg.veredicto_congelado(pub, alt, corr_mediana=2.5)
+    assert estado == "congelado_veto"
+    assert "REACTIVACIÓN EN ESPERA" in texto
+    # El veredicto de los 20 primeros se sigue publicando: el veto no lo tapa.
+    assert "signos 20/20" in texto
+
+
+def test_dos_miradas_malas_no_bastan_para_vetar():
+    """Mismo K_SOSTENIDO que la guarda de salida: un mal día no decide."""
+    pub, alt = _fase([1.8] * 20 + [0.0] * 8 + [-4.0] * 2)
+    assert sg.veto_por_regimen(pub, alt)[0] is False
+    estado, _, _ = sg.veredicto_congelado(pub, alt, corr_mediana=2.5)
+    assert estado == "reactivar"
+
+
+def test_una_mirada_limpia_no_levanta_el_veto():
+    """La histéresis. Sin ella bastaría un día afortunado para resucitar el
+    🟢, y mirando a diario eso llega solo: las mismas treinta monedas de las
+    que huye el criterio de los N primeros."""
+    pub, alt = _fase([1.8] * 20 + [-4.0] * 10 + [0.0] * 1)
+    assert sg.veto_por_regimen(pub, alt)[0] is True
+    estado, _, _ = sg.veredicto_congelado(pub, alt, corr_mediana=2.5)
+    assert estado == "congelado_veto"
+
+
+def test_tres_miradas_limpias_si_levantan_el_veto():
+    pub, alt = _fase([1.8] * 20 + [-4.0] * 10 + [1.8] * 10)
+    assert sg.veto_por_regimen(pub, alt)[0] is False
+    estado, _, _ = sg.veredicto_congelado(pub, alt, corr_mediana=2.5)
+    assert estado == "reactivar"
+
+
+def test_el_veto_no_puede_encender_nada():
+    """Unas primeras que no reactivan siguen sin reactivar por buena que sea
+    la cola. El veto resta, nunca suma."""
+    pub, alt = _fase([0.3] * 20 + [5.0] * 10)
+    estado, _, _ = sg.veredicto_congelado(pub, alt, corr_mediana=2.5)
+    assert estado == "congelado"
+
+
+def test_el_veto_no_toca_al_rojo_de_retirada():
+    """Retirar no enciende nada, así que no hay nada que vetar."""
+    pub, alt = _fase([-1.8] * 20 + [-4.0] * 10)
+    estado, _, _ = sg.veredicto_congelado(pub, alt, corr_mediana=2.5)
+    assert estado == "retirar"
+
+
+def test_dana_en_reconoce_la_ventana_real_de_ksfo():
+    """Los 5 días del 10-12 al 10-16 medidos en el Pi, tal cual."""
+    pub = [-0.80, -1.60, +0.20, +0.45, +2.60]
+    alt = [-4.14, -4.94, -3.14, -3.77, -0.74]
+    malas = sg._dana_en(pub, alt, len(pub))
+    assert [w for w, _, _ in malas] == [5]
+    _, m_pub, m_alt = malas[0]
+    assert round(m_pub, 2) == 1.13 and round(m_alt, 2) == 3.35
