@@ -43,6 +43,10 @@ def _log_aislado(tmp_path, monkeypatch):
     """
     monkeypatch.setattr(W, "LOG", tmp_path / "watchdog.log")
     monkeypatch.setattr(W, "ESTADO", tmp_path / "estado.json")
+    # Ni la red. `causa_externa` sale a por DNS y a por api.weather.gov; sin
+    # esto la suite daría verde o rojo según cómo ande la línea, que es la
+    # definición de test inútil. Los tests de la guarda lo sobrescriben.
+    monkeypatch.setattr(W, "causa_externa", lambda con_api=True: None)
 
 
 def _db_con_ultimo_snapshot(tmp_path, hace_minutos):
@@ -194,13 +198,23 @@ def test_kalshi_fast_no_usa_frescura(tmp_path, monkeypatch):
 # --- un pico de latencia no es una caída ------------------------------------
 
 def _curl_que(monkeypatch, resultados):
-    """Encadena respuestas de curl: True = responde, False = timeout."""
+    """Encadena respuestas de curl: True = responde, False = timeout (28).
+
+    Un entero en vez del booleano fija el código exacto, que desde el
+    2026-10-18 cambia el diagnóstico: 7 es «no hay nadie escuchando» y 28 es
+    «escucha y no contesta».
+
+    Devuelve `CompletedProcess` con su returncode en lugar de lanzar, que es
+    lo que curl hace de verdad: la versión que lanzaba `CalledProcessError`
+    venía de cuando la llamada usaba `check=True`, y simulaba el envoltorio en
+    vez de la herramienta.
+    """
     pendientes = list(resultados)
 
     def falso_run(cmd, **kw):
-        if pendientes.pop(0):
-            return subprocess.CompletedProcess(cmd, 0)
-        raise subprocess.CalledProcessError(28, cmd)  # 28 = timeout en curl
+        r = pendientes.pop(0)
+        rc = 0 if r is True else (28 if r is False else int(r))
+        return subprocess.CompletedProcess(cmd, rc)
 
     monkeypatch.setattr(W.subprocess, "run", falso_run)
 
@@ -270,3 +284,137 @@ def test_timeout_con_holgura_sobre_la_cola_medida():
     """p50 0.169s, p90 0.289, máximo 4.27 en 60 medidas. Si alguien lo baja
     a 8s vuelven los falsos positivos que motivaron esto."""
     assert W.TIMEOUT_HTTP_S >= 15
+
+
+# --- la guarda de causa externa (2026-10-18, tras el apagón del 10-10) -------
+#
+# Aquel día el DNS dejó de resolver api.weather.gov durante 25 horas (1115
+# fallos de resolución en analysis_poller.log). El poller no estaba colgado:
+# estaba sano y sin fuente. El watchdog lo mató y lo relanzó ~15 veces, y lo
+# único que consiguió fue llenar el log. Lo que estos tests fijan es que la
+# pregunta «¿es mía la avería?» se hace ANTES de tocar nada.
+
+
+def test_con_el_DNS_caido_no_mata_ni_relanza(tmp_path, monkeypatch):
+    """El caso del 10-10, exactamente: dato de hace 1502 min y DNS muerto."""
+    monkeypatch.setattr(W, "ANALYSIS_DB", _db_con_ultimo_snapshot(tmp_path, 1502))
+    monkeypatch.setattr(W, "pids_de", lambda s: [4242])
+    monkeypatch.setattr(W, "causa_externa",
+                        lambda con_api=True: "el DNS no resuelve api.weather.gov")
+    tocado = []
+    monkeypatch.setattr(W, "parar", lambda pids, s: tocado.append("parar"))
+    monkeypatch.setattr(W, "lanzar", lambda s: tocado.append("lanzar") or True)
+    assert W.revisar_analysis_poller({}) is False
+    assert tocado == [], "matar un proceso sano no devuelve el DNS"
+
+
+def test_con_la_API_caida_tampoco(tmp_path, monkeypatch):
+    """Resolver no es alcanzar: una caché de DNS contesta por un host muerto.
+    Es la distinción que start_all.sh ya hacía y que aquí faltaba."""
+    monkeypatch.setattr(W, "ANALYSIS_DB", _db_con_ultimo_snapshot(tmp_path, 1502))
+    monkeypatch.setattr(W, "pids_de", lambda s: [])
+    monkeypatch.setattr(W, "causa_externa",
+                        lambda con_api=True: "https://api.weather.gov/ no responde")
+    lanzados = []
+    monkeypatch.setattr(W, "lanzar", lambda s: lanzados.append(s) or True)
+    assert W.revisar_analysis_poller({}) is False
+    assert lanzados == []
+
+
+def test_la_guarda_va_antes_del_cooldown(tmp_path, monkeypatch):
+    """No es «espera para reintentar», es «no reintentes». Si fuera al revés,
+    al caducar el cooldown volvería el bucle de reinicios."""
+    monkeypatch.setattr(W, "ANALYSIS_DB", _db_con_ultimo_snapshot(tmp_path, 1502))
+    monkeypatch.setattr(W, "pids_de", lambda s: [])
+    monkeypatch.setattr(W, "causa_externa", lambda con_api=True: "sin red")
+    lanzados = []
+    monkeypatch.setattr(W, "lanzar", lambda s: lanzados.append(s) or True)
+    viejo = datetime.now(timezone.utc) - timedelta(minutes=W.COOLDOWN_MIN + 1)
+    estado = {"ultimo_relanzamiento:analysis_poller.py": viejo.isoformat()}
+    assert W.revisar_analysis_poller(estado) is False
+    assert lanzados == []
+
+
+def test_cuando_vuelve_la_red_se_relanza(tmp_path, monkeypatch):
+    """La guarda aplaza, no indulta."""
+    monkeypatch.setattr(W, "ANALYSIS_DB", _db_con_ultimo_snapshot(tmp_path, 1502))
+    monkeypatch.setattr(W, "pids_de", lambda s: [])
+    lanzados = []
+    monkeypatch.setattr(W, "lanzar", lambda s: lanzados.append(s) or True)
+    estado = {}
+    monkeypatch.setattr(W, "causa_externa", lambda con_api=True: "sin red")
+    assert W.revisar_analysis_poller(estado) is False
+    monkeypatch.setattr(W, "causa_externa", lambda con_api=True: None)
+    assert W.revisar_analysis_poller(estado) is True
+    assert lanzados == ["analysis_poller.py"]
+
+
+def test_no_escribe_una_linea_cada_cinco_minutos(tmp_path, monkeypatch):
+    """25 horas a una línea cada 5 minutos son 300 líneas que nadie lee."""
+    monkeypatch.setattr(W, "ANALYSIS_DB", _db_con_ultimo_snapshot(tmp_path, 1502))
+    monkeypatch.setattr(W, "pids_de", lambda s: [])
+    monkeypatch.setattr(W, "causa_externa", lambda con_api=True: "sin red")
+    monkeypatch.setattr(W, "lanzar", lambda s: True)
+    estado = {}
+    for _ in range(W.RECORDATORIO_EXTERNO_CADA):
+        W.revisar_analysis_poller(estado)
+    lineas = W.LOG.read_text(encoding="utf-8").splitlines()
+    assert len(lineas) == 2, f"una al entrar y una por hora, no {len(lineas)}"
+
+
+def test_kalshi_no_se_queda_sin_vigilancia_por_una_caida_ajena(tmp_path, monkeypatch):
+    """kalshi_fast vive de Kalshi. Si lo que está caído es api.weather.gov, su
+    watchdog tiene que seguir funcionando: `causa_externa(con_api=False)`."""
+    monkeypatch.setattr(W, "pids_de", lambda s: [])
+    vistos = []
+    monkeypatch.setattr(W, "causa_externa",
+                        lambda con_api=True: vistos.append(con_api) or None)
+    lanzados = []
+    monkeypatch.setattr(W, "lanzar", lambda s: lanzados.append(s) or True)
+    assert W.revisar_kalshi_fast({}) is True
+    assert vistos == [False], "a kalshi no se le pregunta por api.weather.gov"
+    assert lanzados == ["kalshi_fast_poller.py"]
+
+
+def test_kalshi_con_el_DNS_caido_tampoco_se_relanza(tmp_path, monkeypatch):
+    monkeypatch.setattr(W, "pids_de", lambda s: [])
+    monkeypatch.setattr(W, "causa_externa", lambda con_api=True: "el DNS no resuelve")
+    lanzados = []
+    monkeypatch.setattr(W, "lanzar", lambda s: lanzados.append(s) or True)
+    assert W.revisar_kalshi_fast({}) is False
+    assert lanzados == []
+
+
+# --- la sonda HTTP y lo que significa fallar --------------------------------
+
+
+def test_la_sonda_de_weather_es_la_barata():
+    """`/` renderiza la home (176 ms); `/api/ping` lee memoria (3 ms). Lo que
+    se quiere saber es si ATIENDE, no si la página sale."""
+    assert W.SONDA_HTTP[8000] == "/api/ping"
+
+
+def test_el_timeout_cubre_la_peticion_mas_lenta_medida():
+    """Barrido del 2026-10-18: /api/peak-status/refresh tarda 7.50s y Flask
+    sirve en un hilo, así que la sonda puede encolarse detrás. Si alguien baja
+    el timeout por debajo de ese techo, esto lo para."""
+    assert W.TIMEOUT_HTTP_S >= 2 * 7.50
+
+
+def test_curl_distingue_no_escucha_de_no_contesta():
+    """Dos averías distintas que piden dos respuestas distintas. El 10-10 el
+    log dijo 131 veces «sin responder» sin decir cuál de las dos era."""
+    sin_conexion = W.sintoma_curl(W.CURL_SIN_CONEXION)
+    atascado = W.sintoma_curl(W.CURL_TIMEOUT)
+    assert "nadie escuchando" in sin_conexion
+    assert "atascado" in atascado
+    assert sin_conexion != atascado
+
+
+def test_el_aviso_dice_cual_de_las_dos_averias_es(monkeypatch):
+    """De punta a punta: el código de curl llega hasta la línea del log."""
+    estado = {}
+    for _ in range(W.FALLOS_HTTP_PARA_AVISAR):
+        _curl_que(monkeypatch, [W.CURL_SIN_CONEXION, True])
+        W.revisar_servicios_web(estado)
+    assert "nadie escuchando" in W.LOG.read_text(encoding="utf-8")

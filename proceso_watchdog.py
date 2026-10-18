@@ -29,6 +29,12 @@ con `start_weather_with_retry`, que tiene lógica de reintento y de espera de DN
 que no se replica aquí a ciegas. Un caído de :8000 se nota al abrir la web; el
 poller caído es invisible, y ese es justo el agujero que esto cierra.
 
+Y antes de intervenir se pregunta DE QUIÉN es la avería (añadido el 2026-10-18,
+tras el apagón del 10-10): si el DNS no resuelve o api.weather.gov no responde,
+matar el poller no arregla nada y relanzarlo devuelve un proceso que tampoco
+puede escribir. Aquel día esto lo mató y lo relanzó ~15 veces durante 25 horas.
+Detectar funcionaba —12 minutos—; el remedio no correspondía a la avería.
+
 NO notifica: las alertas están pausadas a propósito (NTFY_TOPIC=""). Deja rastro
 en proceso_watchdog.log y nada más.
 """
@@ -55,10 +61,57 @@ FRESCURA_MAX_MIN = 40.0
 # un bucle de reinicios lo empeora y llena el log de ruido.
 COOLDOWN_MIN = 15.0
 
-# :8000 responde en 0.169s de mediana (p90 0.289) pero tiene cola larga —4.27s
-# de máximo en 60 medidas— porque Flask sirve las peticiones pesadas en el mismo
-# hilo. 20s deja 4.7x de holgura sobre ese máximo.
+# Qué se sondea en cada servicio (2026-10-18). Antes era `/` en los dos, que en
+# weather renderiza la home entera; ahora se pide la sonda más barata que cada
+# uno tenga, porque lo que se quiere saber es si el proceso ATIENDE, no si la
+# página sale. Medido el 10-18 con 40 muestras por endpoint:
+#
+#   weather /           p50 0.176s   p90 0.181   max 0.229
+#   weather /api/ping   p50 0.003s   p90 0.005   max 0.008   ← 22x más barata
+#   crypto  /           p50 0.209s   p90 0.293   max 0.332
+#
+# crypto sigue con `/` porque no tiene endpoint de salud, y añadírselo obligaría
+# a reiniciarlo para una mejora de 0.2s. Queda anotado, no hecho.
+SONDA_HTTP = {8000: "/api/ping", 8001: "/"}
+
+# El timeout ya NO es a ojo, que es como estaba y por lo que dio 3 de 3 falsos
+# en sus primeras 17 horas. Lo que puede retrasar legítimamente a la sonda no es
+# su propio coste —3 ms— sino quedarse encolada detrás de una petición pesada,
+# porque Flask las sirve en un solo hilo. Así que el techo lo fija la petición
+# MÁS LENTA que el servidor puede estar atendiendo cuando llega la sonda, barrida
+# entera el 10-18:
+#
+#   /calibration                4.61s   ← la página más lenta
+#   /api/peak-status/refresh    7.50s   ← el endpoint más lento, y el techo
+#   el resto de las 10 rutas    <0.22s
+#
+# 20s son 2.7x ese techo, así que el número se queda — pero ahora se queda
+# porque está medido, no porque nadie lo mirara.
 TIMEOUT_HTTP_S = 20
+# Y sobre todo: el veredicto ya no cuelga sólo del número. curl distingue «no
+# hay nadie escuchando» (7) de «escucha y no contesta» (28), que son dos averías
+# distintas y sólo la segunda depende del timeout.
+CURL_SIN_CONEXION = 7
+CURL_TIMEOUT = 28
+
+# ── Guarda de causa externa (2026-10-18) ────────────────────────────────────
+# El apagón del 10-10: el poller pasó 25h sin escribir porque el DNS no resolvía
+# api.weather.gov (1115 fallos de resolución en su log), y esto lo mató y lo
+# relanzó ~15 veces seguidas sin arreglar nada, porque el proceso nunca estuvo
+# colgado. Detectar funcionó —12 minutos—; el remedio no correspondía a la
+# avería.
+#
+# `start_all.sh` ya tenía la barrera (`wait_dns` + `wait_api_reachable`) desde el
+# apagón del 08-08, pero `lanzar()` replica a mano el arranque de start_all.sh
+# —lo dice su propio docstring— y se dejó la comprobación fuera. Esto la trae.
+#
+# Aquí no se ESPERA, se mira una vez: el cron pasa cada 5 minutos y la siguiente
+# pasada vuelve a preguntar. Y sólo se mira cuando ya hay algo que arreglar, así
+# que el camino sano no paga ni una petición de más.
+DNS_HOST = "api.weather.gov"
+API_URL = "https://api.weather.gov/"
+TIMEOUT_UPSTREAM_S = 10          # el mismo -m 10 de wait_api_reachable
+RECORDATORIO_EXTERNO_CADA = 12   # una línea por hora mientras dure, no doce
 # Y aun así el umbral solo no basta: se exigen fallos CONSECUTIVOS, porque un
 # timeout aislado no es una caída.
 FALLOS_HTTP_PARA_AVISAR = 3      # ~15 min con el cron cada 5
@@ -146,6 +199,61 @@ def edad_dato_min() -> float | None:
     return (datetime.now(timezone.utc) - ultimo).total_seconds() / 60
 
 
+def dns_ok(host: str = DNS_HOST) -> bool:
+    """`getent hosts`, igual que `wait_dns` en start_all.sh."""
+    try:
+        return subprocess.run(["getent", "hosts", host],
+                              capture_output=True, timeout=TIMEOUT_UPSTREAM_S
+                              ).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def api_ok(url: str = API_URL) -> bool:
+    """Alcance REAL, no sólo resolución: una caché de DNS puede contestar por un
+    host que no responde. Es la distinción que ya hacía start_all.sh."""
+    try:
+        return subprocess.run(
+            ["curl", "-sf", "-o", "/dev/null", "-m", str(TIMEOUT_UPSTREAM_S), url],
+            capture_output=True, timeout=TIMEOUT_UPSTREAM_S + 5).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def causa_externa(con_api: bool = True) -> str | None:
+    """Motivo por el que relanzar NO puede arreglar nada, o None.
+
+    `con_api=False` para los pollers que no viven de api.weather.gov: ahí sólo
+    vale el DNS como señal de «no hay red», y cargarle la caída de un tercero
+    sería dejarlo sin vigilancia por una avería ajena.
+    """
+    if not dns_ok():
+        return f"el DNS no resuelve {DNS_HOST}"
+    if con_api and not api_ok():
+        return f"{API_URL} no responde"
+    return None
+
+
+def _anotar_causa_externa(estado: dict, script: str, edad_txt: str,
+                          motivo: str) -> None:
+    """Una línea al entrar y una por hora mientras dure. Un apagón de 25h con
+    una línea cada 5 minutos son 300 líneas que nadie lee."""
+    clave = f"externo:{script}"
+    veces = int(estado.get(clave, 0)) + 1
+    estado[clave] = veces
+    if veces == 1 or veces % RECORDATORIO_EXTERNO_CADA == 0:
+        log(f"{script}: {edad_txt} pero {motivo} — la causa NO es local, "
+            f"no se mata ni se relanza (van {veces} comprobaciones)")
+
+
+def _limpiar_causa_externa(estado: dict, script: str) -> None:
+    clave = f"externo:{script}"
+    if estado.get(clave):
+        log(f"{script}: la causa externa se despejó tras {estado[clave]} "
+            f"comprobaciones")
+        estado[clave] = 0
+
+
 def lanzar(script: str) -> bool:
     """Relanza un poller igual que lo hace start_all.sh: mismo cwd, mismo venv,
     mismo log. Se replica en vez de hacer `source` porque start_all.sh arranca
@@ -197,7 +305,19 @@ def revisar_analysis_poller(estado: dict) -> bool:
 
     fresco = edad <= FRESCURA_MAX_MIN
     if pids and fresco:
+        _limpiar_causa_externa(estado, script)
         return False  # el caso normal: silencio
+
+    # Antes de tocar nada: ¿es nuestro el problema? Si la fuente no está, matar
+    # el poller no lo arregla y relanzarlo devuelve un proceso que tampoco puede
+    # escribir. Es la lección del 10-10, y por eso va ANTES del cooldown: no es
+    # que haya que esperar para reintentar, es que no hay que reintentar.
+    motivo = causa_externa()
+    if motivo:
+        _anotar_causa_externa(estado, script, f"dato de hace {edad:.1f} min",
+                              motivo)
+        return False
+    _limpiar_causa_externa(estado, script)
 
     if en_cooldown(estado, script):
         log(f"{script}: degradado (pids={pids or 'ninguno'}, dato de hace "
@@ -220,7 +340,15 @@ def revisar_kalshi_fast(estado: dict) -> bool:
     """Sólo existencia: su tabla no crece fuera de la ventana de mercado."""
     script = "kalshi_fast_poller.py"
     if pids_de(script):
+        _limpiar_causa_externa(estado, script)
         return False
+    # Sin api.weather.gov: éste vive de Kalshi, así que sólo el DNS dice «no hay
+    # red». Achacarle la caída de un tercero lo dejaría sin vigilancia.
+    motivo = causa_externa(con_api=False)
+    if motivo:
+        _anotar_causa_externa(estado, script, "no corre", motivo)
+        return False
+    _limpiar_causa_externa(estado, script)
     if en_cooldown(estado, script):
         log(f"{script}: caído pero en cooldown, no se toca")
         return False
@@ -228,6 +356,24 @@ def revisar_kalshi_fast(estado: dict) -> bool:
     if lanzar(script):
         estado[f"ultimo_relanzamiento:{script}"] = datetime.now(timezone.utc).isoformat()
     return True
+
+
+def sintoma_curl(rc: int) -> str:
+    """Qué avería es, no sólo que falló.
+
+    Son dos cosas distintas y piden respuestas distintas: sin conexión el
+    proceso no está escuchando y hay que arrancarlo; con timeout está
+    escuchando y atascado, y hay que mirar en qué. El 10-10 fueron 131
+    comprobaciones seguidas de «sin responder» sin decir cuál de las dos era,
+    y resultó ser la segunda: :8000 siguió sin contestar 2h45m DESPUÉS de que
+    el DNS volviera, y sólo lo arregló el reinicio.
+    """
+    if rc == CURL_SIN_CONEXION:
+        return "sin aceptar conexión (no hay nadie escuchando en el puerto)"
+    if rc == CURL_TIMEOUT:
+        return (f"aceptando la conexión y sin contestar en {TIMEOUT_HTTP_S}s "
+                f"(vivo pero atascado)")
+    return f"fallando (curl {rc})"
 
 
 def revisar_servicios_web(estado: dict) -> bool:
@@ -245,21 +391,23 @@ def revisar_servicios_web(estado: dict) -> bool:
     for nombre, puerto in (("weather", 8000), ("crypto", 8001)):
         clave = f"fallos_http:{puerto}"
         previos = int(estado.get(clave, 0))
+        ruta = SONDA_HTTP.get(puerto, "/")
         try:
-            subprocess.run(
+            rc = subprocess.run(
                 ["curl", "-sf", "-o", "/dev/null", "-m", str(TIMEOUT_HTTP_S),
-                 f"http://127.0.0.1:{puerto}/"],
-                check=True, capture_output=True,
-            )
-        except (subprocess.CalledProcessError, OSError):
+                 f"http://127.0.0.1:{puerto}{ruta}"],
+                capture_output=True).returncode
+        except (OSError, subprocess.SubprocessError):
+            rc = -1
+        if rc != 0:
             fallos = previos + 1
             estado[clave] = fallos
             sostenido = fallos - FALLOS_HTTP_PARA_AVISAR
             if sostenido == 0 or (sostenido > 0 and sostenido % RECORDATORIO_CADA == 0):
                 quien = ("lo reinicia systemd (Restart=always)" if puerto == 8001
                          else "relanzar con start_all.sh: start_weather_with_retry")
-                log(f"ATENCIÓN: {nombre} :{puerto} lleva {fallos} comprobaciones "
-                    f"sin responder — {quien}")
+                log(f"ATENCIÓN: {nombre} :{puerto}{ruta} lleva {fallos} "
+                    f"comprobaciones {sintoma_curl(rc)} — {quien}")
                 incidencia = True
         else:
             if previos:
