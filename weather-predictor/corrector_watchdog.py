@@ -69,16 +69,23 @@ def _push_ntfy(title: str, msg: str) -> None:
         print("[corrector_watchdog] sin NTFY_TOPIC, no se empuja")
         return
     try:
+        # El título va en una cabecera HTTP y las cabeceras son latin-1: los
+        # emoji de los veredictos (🔴, 🔔) levantan UnicodeEncodeError dentro
+        # de http.client y el push no sale. Llevaba así desde agosto sin que
+        # se notara, porque sin topic nunca se llegaba a intentar; salió al
+        # encender ntfy el 2026-10-18. El icono lo pone `Tags`.
         req = urllib.request.Request(
             f"https://ntfy.sh/{topic}",
             data=msg.encode("utf-8"),
-            headers={"Title": title, "Priority": "high",
+            headers={"Title": title.encode("ascii", "ignore").decode().strip(),
+                     "Priority": "high",
                      "Tags": "warning,thermometer"},
         )
         urllib.request.urlopen(req, timeout=10)
         print(f"[corrector_watchdog] ntfy pushed: {title}")
-    except urllib.error.URLError as e:
-        print(f"[corrector_watchdog] ntfy push failed: {e}", file=sys.stderr)
+    except Exception as e:                                  # noqa: BLE001
+        print(f"[corrector_watchdog] ntfy push failed: "
+              f"{type(e).__name__}: {e}", file=sys.stderr)
 
 
 def main() -> int:

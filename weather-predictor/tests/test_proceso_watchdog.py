@@ -47,6 +47,12 @@ def _log_aislado(tmp_path, monkeypatch):
     # esto la suite daría verde o rojo según cómo ande la línea, que es la
     # definición de test inútil. Los tests de la guarda lo sobrescriben.
     monkeypatch.setattr(W, "causa_externa", lambda con_api=True: None)
+    # Ni ntfy. Apuntando a un fichero que no existe, `push` es un no-op y
+    # ningún test manda una notificación de verdad al móvil. Sin esto la suite
+    # leía ~/.config/ntfy.env y empujaba al topic real: se vio al encender
+    # ntfy, cuando la suite pasó de 0.46s a 6.43s porque estaba saliendo a la
+    # red en cada test.
+    monkeypatch.setattr(W, "NTFY_ENV", tmp_path / "ntfy.env")
 
 
 def _db_con_ultimo_snapshot(tmp_path, hace_minutos):
@@ -418,3 +424,97 @@ def test_el_aviso_dice_cual_de_las_dos_averias_es(monkeypatch):
         _curl_que(monkeypatch, [W.CURL_SIN_CONEXION, True])
         W.revisar_servicios_web(estado)
     assert "nadie escuchando" in W.LOG.read_text(encoding="utf-8")
+
+
+# --- ntfy (2026-10-18) ------------------------------------------------------
+#
+# El watchdog diagnosticó bien los dos apagones y no se enteró nadie. Lo que
+# estos tests fijan no es que empuje, sino que empuje POCO —un push por
+# ejecución serían 288 al día y el canal se volvería a apagar, esta vez de
+# hartazgo— y que no se rompa al hacerlo.
+
+
+def _topic_puesto(monkeypatch, tmp_path):
+    f = tmp_path / "ntfy.env"
+    f.write_text("NTFY_TOPIC=el-de-pruebas\n", encoding="utf-8")
+    monkeypatch.setattr(W, "NTFY_ENV", f)
+    enviados = []
+
+    def falso_urlopen(req, timeout=None):
+        # Pasa por la codificación de cabeceras de verdad: así un título con
+        # emoji vuelve a fallar aquí y no en el móvil.
+        for _k, v in req.headers.items():
+            str(v).encode("latin-1")
+        enviados.append(req.headers.get("Title", ""))
+
+    monkeypatch.setattr(W.urllib.request, "urlopen", falso_urlopen)
+    return enviados
+
+
+def test_sin_fichero_de_topic_no_empuja(tmp_path, monkeypatch):
+    """El estado en el que vivió hasta hoy: silencioso y sin romperse."""
+    monkeypatch.setattr(W.urllib.request, "urlopen",
+                        lambda *a, **k: pytest.fail("no debía empujar"))
+    assert W.push("t", "m") is False
+
+
+def test_los_titulos_caben_en_una_cabecera_HTTP(tmp_path, monkeypatch):
+    """El bug que salió al encender ntfy: las cabeceras son latin-1 y un emoji
+    en el Title levanta UnicodeEncodeError dentro de http.client. El icono va
+    en Tags, que sí lo admite, y el cuerpo es UTF-8 y aguanta lo que sea."""
+    enviados = _topic_puesto(monkeypatch, tmp_path)
+    assert W.push("🔴 Poller relanzado", "cuerpo con emoji 🌐 sin problema")
+    assert enviados == ["Poller relanzado"]
+
+
+def test_empuja_cuando_relanza_el_poller(tmp_path, monkeypatch):
+    enviados = _topic_puesto(monkeypatch, tmp_path)
+    monkeypatch.setattr(W, "ANALYSIS_DB", _db_con_ultimo_snapshot(tmp_path, 1603))
+    monkeypatch.setattr(W, "pids_de", lambda s: [])
+    monkeypatch.setattr(W, "lanzar", lambda s: True)
+    assert W.revisar_analysis_poller({}) is True
+    assert len(enviados) == 1 and "Poller relanzado" in enviados[0]
+
+
+def test_la_fuente_caida_no_empuja_cada_cinco_minutos(tmp_path, monkeypatch):
+    """25h de apagón a un push cada 5 min son 300 notificaciones."""
+    enviados = _topic_puesto(monkeypatch, tmp_path)
+    monkeypatch.setattr(W, "ANALYSIS_DB", _db_con_ultimo_snapshot(tmp_path, 1502))
+    monkeypatch.setattr(W, "pids_de", lambda s: [])
+    monkeypatch.setattr(W, "causa_externa", lambda con_api=True: "sin red")
+    monkeypatch.setattr(W, "lanzar", lambda s: True)
+    estado = {}
+    for _ in range(W.RECORDATORIO_EXTERNO_CADA):
+        W.revisar_analysis_poller(estado)
+    assert len(enviados) == 2, f"uno al entrar y uno por hora, no {len(enviados)}"
+
+
+def test_el_servicio_caido_avisa_al_tercero_y_no_antes(tmp_path, monkeypatch):
+    enviados = _topic_puesto(monkeypatch, tmp_path)
+    estado = {}
+    for i in range(1, W.FALLOS_HTTP_PARA_AVISAR + 1):
+        _curl_que(monkeypatch, [W.CURL_SIN_CONEXION, True])
+        W.revisar_servicios_web(estado)
+        esperados = 0 if i < W.FALLOS_HTTP_PARA_AVISAR else 1
+        assert len(enviados) == esperados, f"en la comprobación {i}"
+
+
+def test_un_push_que_falla_no_tumba_al_watchdog(tmp_path, monkeypatch):
+    """Un vigilante que se cae al avisar deja de vigilar, que es peor. El
+    `except` es ancho a propósito: el bug del emoji no era URLError ni OSError,
+    salía de las tripas de http.client."""
+    f = tmp_path / "ntfy.env"
+    f.write_text("NTFY_TOPIC=el-de-pruebas\n", encoding="utf-8")
+    monkeypatch.setattr(W, "NTFY_ENV", f)
+
+    def revienta(*a, **k):
+        raise UnicodeEncodeError("latin-1", "x", 0, 1, "lo que pasó de verdad")
+
+    monkeypatch.setattr(W.urllib.request, "urlopen", revienta)
+    monkeypatch.setattr(W, "ANALYSIS_DB", _db_con_ultimo_snapshot(tmp_path, 1603))
+    monkeypatch.setattr(W, "pids_de", lambda s: [])
+    lanzados = []
+    monkeypatch.setattr(W, "lanzar", lambda s: lanzados.append(s) or True)
+    assert W.revisar_analysis_poller({}) is True
+    assert lanzados == ["analysis_poller.py"], "el relanzamiento es lo que importa"
+    assert "el push a ntfy falló" in W.LOG.read_text(encoding="utf-8")

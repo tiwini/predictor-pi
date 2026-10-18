@@ -35,8 +35,13 @@ matar el poller no arregla nada y relanzarlo devuelve un proceso que tampoco
 puede escribir. Aquel día esto lo mató y lo relanzó ~15 veces durante 25 horas.
 Detectar funcionaba —12 minutos—; el remedio no correspondía a la avería.
 
-NO notifica: las alertas están pausadas a propósito (NTFY_TOPIC=""). Deja rastro
-en proceso_watchdog.log y nada más.
+Notifica desde el 2026-10-18, y hasta entonces no: el canal estaba pausado y
+esto sólo dejaba rastro en proceso_watchdog.log. Los dos apagones que cazó —el
+del 09-22 y el del 10-10— los diagnosticó bien y no se enteró nadie, porque
+nadie lee un log por gusto. Empuja los cuatro sucesos que piden una mano
+—poller relanzado, fuente caída, servicio HTTP mudo, y la vuelta de los dos
+últimos— con la cadencia que ya tenían los contadores, no una por ejecución.
+Si no hay ~/.config/ntfy.env, sigue siendo un no-op silencioso.
 """
 from __future__ import annotations
 
@@ -46,6 +51,8 @@ import re
 import sqlite3
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -126,6 +133,64 @@ def log(msg: str) -> None:
             fh.write(linea + "\n")
     except OSError:
         pass
+
+
+# ── ntfy (2026-10-18) ───────────────────────────────────────────────────────
+# Hasta hoy esto no notificaba: el canal estaba pausado a propósito y el
+# docstring lo decía. El resultado se vio dos veces — el apagón del 09-22 tardó
+# 5 días en notarse y el del 10-10 nadie lo vio nunca— y la causa no fue la
+# medida sino el empujón, igual que con KHOU y con KSFO en el corrector.
+#
+# Mismo mecanismo que `corrector_watchdog`: el topic vive en ~/.config/ntfy.env,
+# fuera del repo y con permisos 600, y si el fichero no está esto es un no-op
+# silencioso. Así los tests no empujan nada sin tener que simular la red.
+#
+# La cadencia NO la pone el push: la ponen los contadores que ya existían
+# (3 fallos consecutivos para avisar, recordatorio cada 12). Un push por
+# ejecución serían 288 al día.
+NTFY_ENV = Path.home() / ".config" / "ntfy.env"
+
+
+def _topic() -> str:
+    try:
+        for ln in NTFY_ENV.read_text(encoding="utf-8").splitlines():
+            if ln.startswith("NTFY_TOPIC="):
+                return ln.split("=", 1)[1].strip()
+    except OSError:
+        pass
+    return ""
+
+
+def push(titulo: str, mensaje: str, prioridad: str = "high",
+         tags: str = "warning") -> bool:
+    """Empuja a ntfy si hay topic. Devuelve si se envió.
+
+    El TÍTULO viaja en una cabecera HTTP, y las cabeceras son latin-1: un
+    emoji ahí levanta `UnicodeEncodeError` dentro de http.client y el push no
+    sale. Se descubrió al escribir estos tests, con títulos tipo «🔴 Poller
+    relanzado» — y es el mismo patrón que lleva en `corrector_watchdog` desde
+    agosto, donde nunca se notó porque no había topic que probarlo. El emoji
+    va en `Tags`, que ntfy convierte en icono, y en el cuerpo, que sí es UTF-8.
+
+    Y no levanta pase lo que pase: un vigilante que se cae al avisar deja de
+    vigilar, que es peor que no avisar. Por eso el `except` es ancho a
+    propósito — el bug de arriba no era ni URLError ni OSError.
+    """
+    topic = _topic()
+    if not topic:
+        return False
+    try:
+        urllib.request.urlopen(
+            urllib.request.Request(
+                f"https://ntfy.sh/{topic}",
+                data=mensaje.encode("utf-8"),
+                headers={"Title": titulo.encode("ascii", "ignore").decode().strip(),
+                         "Priority": prioridad, "Tags": tags},
+            ), timeout=10)
+        return True
+    except Exception as e:                                  # noqa: BLE001
+        log(f"el push a ntfy falló: {type(e).__name__}: {e}")
+        return False
 
 
 def _estado() -> dict:
@@ -244,13 +309,24 @@ def _anotar_causa_externa(estado: dict, script: str, edad_txt: str,
     if veces == 1 or veces % RECORDATORIO_EXTERNO_CADA == 0:
         log(f"{script}: {edad_txt} pero {motivo} — la causa NO es local, "
             f"no se mata ni se relanza (van {veces} comprobaciones)")
+        push(f"Sin fuente: {script}",
+             f"{edad_txt} y {motivo}.\n\nNo es el Pi: el poller está sano y "
+             f"sin datos que leer. No se toca hasta que vuelva la red.\n"
+             f"Van {veces} comprobaciones ({veces * 5} min).",
+             prioridad="high", tags="globe_with_meridians")
 
 
 def _limpiar_causa_externa(estado: dict, script: str) -> None:
     clave = f"externo:{script}"
     if estado.get(clave):
-        log(f"{script}: la causa externa se despejó tras {estado[clave]} "
+        veces = estado[clave]
+        log(f"{script}: la causa externa se despejó tras {veces} "
             f"comprobaciones")
+        if veces >= RECORDATORIO_EXTERNO_CADA:
+            push(f"Vuelve la fuente: {script}",
+                 f"La red volvió tras {veces} comprobaciones "
+                 f"({veces * 5} min). El watchdog retoma lo suyo.",
+                 prioridad="default", tags="white_check_mark")
         estado[clave] = 0
 
 
@@ -333,6 +409,12 @@ def revisar_analysis_poller(estado: dict) -> bool:
 
     if lanzar(script):
         estado[f"ultimo_relanzamiento:{script}"] = datetime.now(timezone.utc).isoformat()
+        push("Poller relanzado",
+             f"{script} llevaba {edad:.0f} min sin escribir con la red OK, "
+             f"así que el problema era local. Terminado y relanzado.\n\n"
+             f"Si se repite, no es un cuelgue suelto: mira "
+             f"weather-predictor/analysis_poller.log.",
+             prioridad="high", tags="rotating_light")
     return True
 
 
@@ -408,6 +490,10 @@ def revisar_servicios_web(estado: dict) -> bool:
                          else "relanzar con start_all.sh: start_weather_with_retry")
                 log(f"ATENCIÓN: {nombre} :{puerto}{ruta} lleva {fallos} "
                     f"comprobaciones {sintoma_curl(rc)} — {quien}")
+                push(f"{nombre} :{puerto} no responde",
+                     f"{fallos} comprobaciones ({fallos * 5} min) "
+                     f"{sintoma_curl(rc)}.\n\nQué hacer: {quien}.",
+                     prioridad="high", tags="rotating_light")
                 incidencia = True
         else:
             if previos:
@@ -415,6 +501,10 @@ def revisar_servicios_web(estado: dict) -> bool:
                 # si no, un pico suelto dejaría dos líneas en vez de cero.
                 if previos >= FALLOS_HTTP_PARA_AVISAR:
                     log(f"{nombre} :{puerto} vuelve a responder tras {previos} fallos")
+                    push(f"{nombre} :{puerto} responde",
+                         f"Vuelve tras {previos} comprobaciones "
+                         f"({previos * 5} min).",
+                         prioridad="default", tags="white_check_mark")
                     incidencia = True
                 estado[clave] = 0
     return incidencia
