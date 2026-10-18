@@ -10,6 +10,25 @@ log() { echo "[start_all] $*"; }
 
 is_up() { curl -sf -o /dev/null -m 8 "http://127.0.0.1:$1/" ; }
 
+# El topic de ntfy NO vive aquí y no puede vivir aquí: este repo es PÚBLICO y
+# en ntfy el topic es la credencial — quien lo lea puede además PUBLICAR en él,
+# o sea mandarte avisos falsos por el canal que usas para enterarte de las
+# averías. Vive en ~/.config/ntfy.env con permisos 600.
+#
+# Lo que sí va aquí es notar su AUSENCIA. Tras una reinstalación el fichero no
+# estará, los watchdogs volverán a ser no-ops silenciosos y todo parecerá
+# normal: es el mismo fallo que nos ha costado el día entero —KHOU pidiendo
+# revertir 10 días, KSFO 5, dos apagones— y siempre por el mismo motivo, un
+# canal mudo que no avisa de que está mudo. Ver NTFY.md para restaurarlo.
+check_ntfy() {
+  if [ -s "$HOME/.config/ntfy.env" ]; then
+    log "  ✓ ntfy configurado"
+  else
+    log "  ✗ FALTA ~/.config/ntfy.env — los watchdogs NO avisarán de nada."
+    log "    Restaurar el topic (ver NTFY.md) o los avisos se pierden en silencio."
+  fi
+}
+
 # Espera resolución DNS (rápido, solo pre-check antes del reachability real).
 wait_dns() {
   local host="${1:-api.weather.gov}"
@@ -155,6 +174,7 @@ main() {
   log "estado:"
   is_up 8000 && log "  ✓ weather :8000 responde" || log "  ✗ weather :8000 NO responde"
   is_up 8001 && log "  ✓ crypto  :8001 responde" || log "  ✗ crypto  :8001 NO responde"
+  check_ntfy
   pgrep -f "python.*analysis_poller\.py" > /dev/null && log "  ✓ analysis_poller corre" || log "  ✗ analysis_poller NO corre"
   pgrep -f "python.*btc_quarter_poller\.py" > /dev/null && log "  ✓ btc_quarter_poller corre" || log "  ✗ btc_quarter_poller NO corre"
   pgrep -f "python.*kalshi_fast_poller\.py" > /dev/null && log "  ✓ kalshi_fast_poller corre" || log "  ✗ kalshi_fast_poller NO corre"
