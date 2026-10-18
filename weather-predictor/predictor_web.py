@@ -5,6 +5,7 @@ Run with the venv python:
 
     ./venv/bin/python3 predictor_web.py [STATION_ID] [PORT]
 """
+import os
 import socket
 import sqlite3
 import sys
@@ -4057,4 +4058,14 @@ _GRID_ANALYSIS_DB = _Path_modes(__file__).resolve().parent / "analysis.db"
 
 
 if __name__ == "__main__":
+    # La misma línea que el poller, y por el mismo motivo: que el cwd no
+    # dependa de quién lo arrancó. Hoy no cambia nada —las rutas del módulo
+    # salen todas de `Path(__file__)`— y el proceso vivo ya tiene el cwd bueno
+    # porque lo relanzó el watchdog; esto es para los arranques de mañana.
+    #
+    # El antecedente: el 2026-10-12 este mismo fichero y el poller se
+    # arrancaron a mano desde `~` y se quedaron seis días con cwd=/home/popeye
+    # sin que fallara nada. Lo que no falla no avisa, y en `~` hay un
+    # `calibration.db` de 0 bytes esperando a la primera ruta relativa.
+    os.chdir(Path(__file__).resolve().parent)
     main()
