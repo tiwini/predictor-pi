@@ -564,6 +564,10 @@ def _liberar_puerto(pid: int) -> bool:
 # orden en que corran.
 _ultimo_pid_recuperacion = [0]
 
+# Lo que tiene que aparecer en el cmdline del lanzador para creerse
+# que la recuperación sigue viva. Ver `recuperacion_en_curso`.
+MARCA_RECUPERACION = "start_weather_with_retry"
+
 
 def relanzar_weather() -> bool:
     """Mata el :8000 atascado y lanza la recuperación, en segundo plano.
@@ -601,11 +605,24 @@ def relanzar_weather() -> bool:
 
 
 def recuperacion_en_curso(estado: dict) -> bool:
-    """¿Hay ya un intento corriendo? Dura minutos; no se le pisa."""
+    """¿Hay ya un intento corriendo? Dura minutos; no se le pisa.
+
+    No basta con que el PID exista. El número se queda escrito en el estado
+    hasta el relanzamiento siguiente —que puede no llegar en semanas— y Linux
+    recicla los PID. El día que ese número le toque a cualquier otro proceso,
+    esta función diría «ya hay una recuperación en curso» para siempre y
+    :8000 se quedaría sin auto-arreglo, en silencio y justo cuando hiciera
+    falta. Por eso se exige además el cmdline del lanzador: dos señales que
+    tienen que concordar, el mismo criterio que en `pid_del_weather`.
+    """
     pid = estado.get("recuperacion_web_pid")
     if not pid:
         return False
-    return (Path("/proc") / str(pid)).exists()
+    try:
+        cmdline = (Path("/proc") / str(pid) / "cmdline").read_bytes()
+    except OSError:
+        return False          # ya no existe: no hay nada en curso
+    return MARCA_RECUPERACION in cmdline.decode("utf-8", "replace")
 
 
 def sintoma_curl(rc: int) -> str:

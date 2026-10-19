@@ -734,3 +734,48 @@ def test_si_ya_estaba_muerto_el_puerto_esta_libre(monkeypatch):
 
     monkeypatch.setattr(W.os, "kill", kill)
     assert W._liberar_puerto(46407) is True
+
+
+# --- ¿sigue vivo el intento de recuperación? --------------------------------
+#
+# El PID del lanzador se queda escrito en el estado hasta el relanzamiento
+# siguiente, que puede tardar semanas. Linux recicla los PID, así que «existe
+# /proc/<pid>» no dice que sea NUESTRO lanzador, y confundirlos deja :8000 sin
+# auto-arreglo para siempre y sin una línea en el log. Encontrado el 10-18 en
+# el estado de producción: apuntaba al 347329, muerto hacía horas.
+
+
+def _proc_con_cmdline(tmp_path, monkeypatch, pid, partes):
+    """Un /proc de mentira en el que SÓLO existe `pid`, con su cmdline."""
+    raiz = tmp_path / "proc"
+    d = raiz / str(pid)
+    d.mkdir(parents=True)
+    (d / "cmdline").write_bytes(("\0".join(partes) + "\0").encode())
+    monkeypatch.setattr(W, "Path",
+                        lambda q: raiz if str(q) == "/proc" else Path(q))
+    return raiz
+
+
+def test_sin_pid_apuntado_no_hay_recuperacion_en_curso():
+    assert W.recuperacion_en_curso({}) is False
+
+
+def test_hay_recuperacion_en_curso_si_el_lanzador_sigue_vivo(tmp_path, monkeypatch):
+    _proc_con_cmdline(tmp_path, monkeypatch, 347329,
+                      ["bash", "-c",
+                       'source "/x/start_all.sh" && start_weather_with_retry'])
+    assert W.recuperacion_en_curso({"recuperacion_web_pid": 347329}) is True
+
+
+def test_un_pid_muerto_no_bloquea_el_auto_arreglo(tmp_path, monkeypatch):
+    _proc_con_cmdline(tmp_path, monkeypatch, 1, ["/sbin/init"])
+    assert W.recuperacion_en_curso({"recuperacion_web_pid": 347329}) is False
+
+
+def test_un_pid_RECICLADO_no_bloquea_el_auto_arreglo(tmp_path, monkeypatch):
+    """El fallo que esto cierra. El número sobrevive al proceso; mirando sólo
+    si existe /proc/<pid>, el inquilino siguiente de ese número congelaría el
+    auto-arreglo de :8000 hasta el reinicio del Pi, callando."""
+    _proc_con_cmdline(tmp_path, monkeypatch, 347329,
+                      ["/usr/bin/python3", "analysis_poller.py"])
+    assert W.recuperacion_en_curso({"recuperacion_web_pid": 347329}) is False
