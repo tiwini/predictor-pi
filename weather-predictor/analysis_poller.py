@@ -212,6 +212,16 @@ def _conn() -> sqlite3.Connection:
         "PRAGMA table_info(kalshi_snapshots)").fetchall()}
     if "our_p_calibrated" not in existing_k:
         c.execute("ALTER TABLE kalshi_snapshots ADD COLUMN our_p_calibrated REAL")
+    # 2026-10-31: las dos patas del libro. Guardábamos sólo el punto medio, y el
+    # mid de un libro de un solo lado no es el precio de nadie: el 97,2% de los
+    # bins con mid <=0.02 no tiene bid (medido sobre 74 días de kalshi_fast,
+    # investigacion/preregistro_mid_libro_vacio_2026_10_31.md). Un edge contra
+    # ese mid mide el tick mínimo, no un error del mercado — y sin estas dos
+    # columnas la serie con la que se DECIDE no puede distinguir una cosa de la
+    # otra. Cuarta vez que un dato no guardado impide contestar después.
+    for col in ("yes_bid", "yes_ask"):
+        if col not in existing_k:
+            c.execute(f"ALTER TABLE kalshi_snapshots ADD COLUMN {col} REAL")
     c.commit()
     return c
 
@@ -551,10 +561,11 @@ def poll_one(station_id: str, c: sqlite3.Connection) -> None:
         our_p = kalshi.our_p_for_bin(snap.ensemble_daily_maxes, b.bin_lo, b.bin_hi)
         our_p_cal = cal_ps[i] if i < len(cal_ps) else None
         c.execute("""INSERT INTO kalshi_snapshots
-            (ts, station, ticker, bin_lo, bin_hi, label, yes_mid, our_p, our_p_calibrated)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (ts, station, ticker, bin_lo, bin_hi, label, yes_bid, yes_ask,
+             yes_mid, our_p, our_p_calibrated)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (ts, station_id, b.ticker, b.bin_lo, b.bin_hi, b.label,
-             b.yes_mid, our_p, our_p_cal))
+             b.yes_bid, b.yes_ask, b.yes_mid, our_p, our_p_cal))
     c.commit()
     log.info("  saved %s: current=%.1f med=%.1f kalshi_bins=%d diff=%s%s",
              station_id, snap.current_temp_f or 0, med, len(bins),

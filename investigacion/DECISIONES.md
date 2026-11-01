@@ -456,3 +456,39 @@ decidir**. Un script que se cuelga no es un resultado negativo, es la
 ausencia de resultado — y el que daba antes, con 99 settles de 418, tampoco
 habría valido. Primero se pone el instrumento a medir bien, y después el
 número decide si el instrumento se queda.
+
+## 2026-10-31 — el mid pegado no es opinión: el 97,2% de los bins baratos no tiene comprador
+
+Pregunta 3 de las cinco que quedaron escritas al montar el colector rápido el
+2026-08-20 («con ~10 días hay N para (1) y (3)»). Han pasado 74 días, y la
+razón por la que hay tantos es que **la purga de `analysis_poller.py:570-571`
+nombra `station_snapshots` y `kalshi_snapshots` y no nombra `kalshi_fast`**: la
+retención de 30 días era por tabla, no por DB, y esta se quedó fuera de una
+lista de dos nombres. Nadie lo decidió; esta vez salió a favor.
+
+Criterio en `preregistro_mid_libro_vacio_2026_10_31.md`, escrito a las 21:40:43
+y con la primera consulta de precios después. Resultado: **97,2%** de las 8.849
+tripletas (día, estación, bin) con `yes_mid ≤ 0.02` están **sin bid** en la
+mediana de sus observaciones; por fila 95,2%; uniforme en las 20 estaciones
+(87,0% KSFO → 99,8% KDFW); el ask es el tick mínimo 0.01 en el 97,5% de esos
+casos. La casilla del criterio era ≥60%.
+
+El espejo por arriba sale igual: **92,1%** de los `yes_mid ≥ 0.98` no tienen
+ask. [[precio_095_nunca_falla]] sigue siendo cierta sobre el resultado y no
+describe una entrada: a esos precios nadie vende.
+
+Concuerda con lo ya medido y lo **explica**: [[edges_no_estructurales_brier]]
+(el Brier de Kalshi nos gana 7/9), [[mercado_gana_20_de_20]], y el techo del
+calibrador ([[calibrador_techo_050]], our_p 0.80 acierta 0.35). Los edges de
++80/+90pp contra bins baratos no eran señal ni eran error del mercado: son el
+suelo del tick enfrentado a un modelo sobreconfiado, en bins que **dos tercios
+del libro** ocupan sin comprador.
+
+🔑 La lección es de instrumento, no de mercado: `kalshi_snapshots` guarda
+`yes_mid` y no guarda `yes_bid`/`yes_ask`, así que **la serie con la que se
+decide no puede distinguir una opinión de un libro vacío**, y los 74 días que
+lo han demostrado existen por un descuido de la purga. Es la cuarta vez que un
+dato no guardado impide contestar después —`current_temp_stable_min`,
+`current_obs_ts`, `today_max_asos_6h`— y la primera en que el descuido salva el
+análisis en vez de matarlo.
+
