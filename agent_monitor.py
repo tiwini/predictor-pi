@@ -6,7 +6,7 @@ estructurado + reglas duras de memoria, parsea respuesta JSON y guarda
 decisiones + alertas en agent.db.
 
 Hard cap soft: si total_spend ≥ SOFT_CAP, exit con log.
-Pause flag: si agent_state.paused=1, exit silencioso.
+Pause flag: si agent_state.paused=1, no trabaja (deja 1 linea/hora).
 
 Diseño: 1 call por cron, ~3.5K in + 500 out = ~$0.0015/call. 96 calls/día →
 ~$0.15/día. $15 dura ~100 días.
@@ -25,6 +25,7 @@ from zoneinfo import ZoneInfo
 
 PR_TZ = ZoneInfo("America/Puerto_Rico")
 VALID_INTERVALS = {1, 5, 10, 30, 60, 120, 240, 480, 600, 800, 1000}
+SKIP_NOTICE_MIN = 60  # cada cuanto deja constancia de que NO hizo trabajo
 
 STATION_CITY = {
     "KPHX": "Phoenix", "KLAX": "Los Angeles", "KLAS": "Las Vegas",
@@ -158,6 +159,27 @@ def _should_skip(c: sqlite3.Connection) -> tuple[bool, str]:
 def _total_spend(c: sqlite3.Connection) -> float:
     row = c.execute("SELECT COALESCE(SUM(cost_usd), 0) FROM agent_decisions").fetchone()
     return float(row[0])
+
+
+def _log_skip(c: sqlite3.Connection, reason: str) -> None:
+    """Deja una linea cada SKIP_NOTICE_MIN cuando el monitor NO hace trabajo.
+
+    El `return` del skip iba antes del print, asi que interval_min="off" no
+    escribia nada: 4 meses parado (2026-06-24 a 2026-10-31) con el cron
+    corriendo cada minuto y un log que se leia igual que un proceso tranquilo.
+    """
+    now = datetime.now(timezone.utc)
+    last = _state(c, "last_skip_notice", "")
+    if last:
+        try:
+            if (now - datetime.fromisoformat(last)).total_seconds() < SKIP_NOTICE_MIN * 60:
+                return
+        except ValueError:
+            pass
+    print(f"{now.isoformat()} skip: {reason}")
+    c.execute("INSERT OR REPLACE INTO agent_state (key, value) VALUES (?, ?)",
+              ("last_skip_notice", now.isoformat()))
+    c.commit()
 
 
 def _is_paused(c: sqlite3.Connection) -> bool:
@@ -1085,10 +1107,11 @@ def clear_last_home_ask() -> None:
 def main() -> None:
     c = _conn()
     if _is_paused(c):
-        print(f"{datetime.now(timezone.utc).isoformat()} pausado, skip")
+        _log_skip(c, "pausado")
         return
     skip, reason = _should_skip(c)
     if skip:
+        _log_skip(c, reason)
         return
     print(f"{datetime.now(timezone.utc).isoformat()} {reason}")
     cap = _budget_cap(c)
